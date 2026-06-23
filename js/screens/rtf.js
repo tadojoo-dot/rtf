@@ -24,7 +24,9 @@ var METRIC_WIDTHS = {
   "판매계획":GRID_COL_WIDTH, "RTF":GRID_COL_WIDTH, "Shortage":GRID_COL_WIDTH,
   "매출":GRID_COL_WIDTH, "매출차질예상":GRID_COL_WIDTH, "기말재고":GRID_COL_WIDTH, "재고일수":GRID_COL_WIDTH,
 };
-// 기본(축소) 모드에서 월별 하위 컬럼 표시명
+// 모드 무관 표시명 override (내부 키 → 화면 표시명)
+var METRIC_DISPLAY = { "Shortage":"부족" };
+// 축소 모드 약칭
 var METRIC_DISPLAY_SHORT = { "판매계획":"판매", "Shortage":"부족" };
 
 // ── RTF 계산 ─────────────────────────────────────────────────────────────────
@@ -620,7 +622,7 @@ function renderMatrixSection(title, mode, items, sectionId) {
   const metricHeader = months.flatMap(() =>
     monthCols.map((m, ci) => {
       const active   = rtfSortState[sectionId]?.colKey === m;
-      const dispName = compressed ? (METRIC_DISPLAY_SHORT[m] || m) : m;
+      const dispName = compressed ? (METRIC_DISPLAY_SHORT[m] || m) : (METRIC_DISPLAY[m] || m);
       const isKey    = ["RTF","Shortage"].includes(m);
       const cls      = `rtf-th-sortable rtf-sub-head${isKey ? " rtf-key-sub" : ""}${ci === 0 ? " rtf-month-start" : ""}`;
       return `<th class="${cls}" data-sort-col="${escapeHtml(m)}" data-sort-section="${escapeHtml(sectionId)}">${escapeHtml(dispName)}<span class="rtf-sort-icon${active ? " is-active" : ""}">${sortIconText(sectionId, m)}</span></th>`;
