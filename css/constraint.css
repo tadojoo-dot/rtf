@@ -305,8 +305,57 @@
   font-size: 12px;
 }
 
-.cst-detail-data-row td:nth-child(2) { max-width: 200px; overflow: hidden; text-align: left; text-overflow: ellipsis; }
 .cst-detail-data-row:hover td { background: #fff4cc !important; }
+
+/* ── 펼침 상세 영역 개선 ── */
+
+/* 완제품 정보 컬럼 — 연한 배경으로 수량 영역과 구분 */
+.cst-detail-data-row td.cst-dtl-info {
+  background: #f3f6fc;
+}
+
+/* 정보 영역 헤더 (dark bg 위에서 배경 변경 없이 정렬만) */
+.cst-detail-head th.cst-dtl-info-h {
+  background: #2d3039;
+}
+
+/* 단위 컬럼 — 정보 영역 오른쪽 구분선 */
+.cst-detail-head th.cst-dtl-unit,
+.cst-detail-data-row td.cst-dtl-unit {
+  border-right: 2px solid #b0bdd0 !important;
+  color: #6b7280;
+  font-size: 11px;
+}
+
+/* 정렬 */
+.cst-dtl-center { text-align: center !important; }
+
+.cst-dtl-name {
+  max-width: 200px;
+  overflow: hidden;
+  text-align: left !important;
+  text-overflow: ellipsis;
+}
+
+.cst-dtl-num {
+  background: #fff;
+  text-align: right !important;
+}
+
+/* 월별 헤더 */
+.cst-dtl-month {
+  background: #24272b;
+  border-left: 2px solid #94a3b8 !important;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.cst-dtl-sub {
+  background: #30343a;
+  color: #f8f9fa;
+  font-size: 11px;
+  font-weight: 700;
+}
 
 .cst-h-scroll {
   max-width: 100%;

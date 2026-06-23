@@ -597,27 +597,60 @@ function renderConstraintTableBody(items, months, detailMode) {
         var EXPAND_LIMIT = 20;
         var hasMore = sortedParents.length > EXPAND_LIMIT;
         var shownParents = sortedParents.slice(0, EXPAND_LIMIT);
+        var totalShown = shownParents.length;
 
-        var detailMonthHeads = months.map(function(m) { return "<th colspan=\"2\">" + escapeHtml(monthLabel(m)) + "</th>"; }).join("");
-        var detailSubHeads   = months.map(function() { return "<th>생산계획</th><th>필요수량</th>"; }).join("");
-        var detailBodyRows   = shownParents.map(function(p) {
-          var monthlyCells = p.monthly.map(function(md) {
-            return "<td>" + (md.prodQty > 0 ? formatNumber(Math.round(md.prodQty)) : "-") + "</td>" +
-                   "<td>" + (md.reqQty  > 0 ? formatNumber(Math.round(md.reqQty))  : "-") + "</td>";
-          }).join("");
-          return "<tr class=\"cst-detail-data-row\">" +
-                 "<td title=\"" + escapeHtml(p.code) + "\">" + escapeHtml(p.code) + "</td>" +
-                 "<td title=\"" + escapeHtml(p.name) + "\">" + escapeHtml(p.name) + "</td>" +
-                 "<td>" + escapeHtml(p.itemGroup === NEED_MASTER ? "확인필요" : p.itemGroup) + "</td>" +
-                 "<td>" + escapeHtml(item.unit) + "</td>" +
-                 monthlyCells + "</tr>";
+        // 품목군 연속 동일값 rowspan 계산
+        var groupRowspan = new Array(totalShown).fill(1);
+        var groupSkip    = new Array(totalShown).fill(false);
+        for (var gi = 0; gi < totalShown; gi++) {
+          if (groupSkip[gi]) continue;
+          var gSpan = 1;
+          for (var gj = gi + 1; gj < totalShown; gj++) {
+            if (shownParents[gj].itemGroup === shownParents[gi].itemGroup) { gSpan++; groupSkip[gj] = true; }
+            else break;
+          }
+          groupRowspan[gi] = gSpan;
+        }
+
+        var detailMonthHeads = months.map(function(m) {
+          return "<th class=\"cst-dtl-month\" colspan=\"2\">" + escapeHtml(monthLabel(m)) + "</th>";
         }).join("");
+        var detailSubHeads = months.map(function() {
+          return "<th class=\"cst-dtl-sub\">생산계획</th><th class=\"cst-dtl-sub\">필요수량</th>";
+        }).join("");
+
+        var detailBodyRows = shownParents.map(function(p, pi) {
+          var monthlyCells = p.monthly.map(function(md) {
+            return "<td class=\"cst-dtl-num\">" + (md.prodQty > 0 ? formatNumber(Math.round(md.prodQty)) : "-") + "</td>" +
+                   "<td class=\"cst-dtl-num\">" + (md.reqQty  > 0 ? formatNumber(Math.round(md.reqQty))  : "-") + "</td>";
+          }).join("");
+
+          // 품목군: 연속 동일값이면 첫 행에서만 rowspan 셀 출력
+          var groupCell = groupSkip[pi] ? "" :
+            "<td class=\"cst-dtl-info cst-dtl-center\" rowspan=\"" + groupRowspan[pi] + "\">" +
+            escapeHtml(p.itemGroup === NEED_MASTER ? "확인필요" : p.itemGroup) + "</td>";
+
+          // 단위: 항상 동일값이므로 첫 행에서만 rowspan=전체로 출력
+          var unitCell = pi === 0 ?
+            "<td class=\"cst-dtl-info cst-dtl-center cst-dtl-unit\" rowspan=\"" + totalShown + "\">" + escapeHtml(item.unit) + "</td>" : "";
+
+          return "<tr class=\"cst-detail-data-row\">" +
+                 "<td class=\"cst-dtl-info cst-dtl-center\" title=\"" + escapeHtml(p.code) + "\">" + escapeHtml(p.code) + "</td>" +
+                 "<td class=\"cst-dtl-info cst-dtl-name\" title=\"" + escapeHtml(p.name) + "\">" + escapeHtml(p.name) + "</td>" +
+                 groupCell + unitCell + monthlyCells + "</tr>";
+        }).join("");
+
         var moreMsg = hasMore ? "<div class=\"cst-detail-more\">전체 " + sortedParents.length + "개 중 " + EXPAND_LIMIT + "개 표시</div>" : "";
 
         detailRow = "<tr class=\"cst-detail-row\"><td colspan=\"" + totalCols + "\" class=\"cst-detail-cell\">" +
                     "<div class=\"cst-detail-inner\"><table class=\"cst-detail-table\"><thead>" +
-                    "<tr class=\"cst-detail-head\"><th>완제품 코드</th><th>완제품명</th><th>품목군</th><th>단위</th>" + detailMonthHeads + "</tr>" +
-                    "<tr class=\"cst-detail-head\"><th></th><th></th><th></th><th></th>" + detailSubHeads + "</tr>" +
+                    "<tr class=\"cst-detail-head\">" +
+                    "<th class=\"cst-dtl-info-h\" rowspan=\"2\">완제품 코드</th>" +
+                    "<th class=\"cst-dtl-info-h\" rowspan=\"2\">완제품명</th>" +
+                    "<th class=\"cst-dtl-info-h\" rowspan=\"2\">품목군</th>" +
+                    "<th class=\"cst-dtl-info-h cst-dtl-unit\" rowspan=\"2\">단위</th>" +
+                    detailMonthHeads + "</tr>" +
+                    "<tr class=\"cst-detail-head\">" + detailSubHeads + "</tr>" +
                     "</thead><tbody>" + detailBodyRows + "</tbody></table>" + moreMsg + "</div></td></tr>";
       }
 
