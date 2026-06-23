@@ -314,9 +314,9 @@
   background: #f3f6fc;
 }
 
-/* 정보 영역 헤더 — 수량 영역보다 미세하게 어둡게 */
+/* 정보 영역 헤더 — 전체 헤더와 동일 색상으로 통일 */
 .cst-detail-head th.cst-dtl-info-h {
-  background: #3a4050;
+  background: #424854;
 }
 
 /* 단위 컬럼 — 정보↔수량 구분선만 유지, 색상은 일반 컬럼과 동일하게 */
@@ -350,10 +350,10 @@
 }
 
 .cst-dtl-sub {
-  background: #4e5566;
-  color: #f0f2f7;
+  background: #424854;
+  color: #fff;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .cst-h-scroll {
