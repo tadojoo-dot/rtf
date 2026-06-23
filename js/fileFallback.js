@@ -691,11 +691,11 @@
     }).join("");
 
     return `<tr class="${rowClass}" data-node-id="${escapeHtml(node.id)}" data-parent-id="${escapeHtml(node.parentId)}" data-level="${node.level}" ${node.parentId ? "hidden" : ""}>
-      <td class="rtf-sticky rtf-tree-cell">${hasChildren ? `<button type="button" class="rtf-tree-toggle" data-node-id="${escapeHtml(node.id)}">+</button>` : ""}<span class="rtf-indent rtf-indent-${node.level}"></span>${escapeHtml(firstCol)}</td>
+      <td class="rtf-sticky rtf-tree-cell">${hasChildren ? `<button type="button" class="rtf-tree-toggle" data-node-id="${escapeHtml(node.id)}">확대</button>` : ""}<span class="rtf-indent rtf-indent-${node.level}"></span>${escapeHtml(firstCol)}</td>
       <td class="rtf-sticky rtf-left-type">${escapeHtml(typeCol)}</td>
       <td class="rtf-sticky rtf-left-group">${escapeHtml(groupCol)}</td>
       <td class="rtf-sticky rtf-left-code">${escapeHtml(codeCol)}</td>
-      <td class="rtf-sticky rtf-left-name">${escapeHtml(nameCol)}</td>
+      <td class="rtf-sticky rtf-left-name" title="${escapeHtml(nameCol)}">${escapeHtml(nameCol)}</td>
       <td class="rtf-sticky rtf-left-base">${escapeHtml(baseQty)}</td>
       ${cells}
       <td class="rtf-action-cell">${escapeHtml(actionForNode(node))}</td>
@@ -846,7 +846,7 @@
       if (!visible) {
         row.classList.remove("expanded");
         const button = row.querySelector(".rtf-tree-toggle");
-        if (button) button.textContent = "+";
+        if (button) { button.textContent = "확대"; button.classList.remove("expanded"); }
         setChildrenVisible(row.dataset.nodeId, false);
       }
     });
@@ -859,7 +859,8 @@
       const row = button.closest("tr");
       const expanded = !row.classList.contains("expanded");
       row.classList.toggle("expanded", expanded);
-      button.textContent = expanded ? "-" : "+";
+      button.textContent = expanded ? "축소" : "확대";
+      button.classList.toggle("expanded", expanded);
       setChildrenVisible(button.dataset.nodeId, expanded);
     }));
     document.querySelectorAll(".rtf-h-row.is-group").forEach((row) => row.addEventListener("click", (event) => {

@@ -4,7 +4,7 @@
   background: #f1f3f5;
   color: #212529;
   font-family: 'Nanum Gothic', '나눔고딕', 'Malgun Gothic', sans-serif;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.45;
 }
 
@@ -31,7 +31,7 @@
 
 .rtf-meta {
   color: #6c757d;
-  font-size: 11px;
+  font-size: 12px;
   margin-bottom: 10px;
 }
 
@@ -55,17 +55,17 @@
   align-items: stretch;
   border-bottom: 1px solid #dee2e6;
   display: grid;
-  gap: 12px;
+  gap: 8px;
   grid-template-columns: minmax(0, 1fr) auto;
-  padding: 13px 16px 12px;
+  padding: 8px 12px;
 }
 
 .rtf-nav-summary h3 {
   color: #212529;
   font-family: 'ChosunilboNM', Georgia, 'Times New Roman', serif;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 700;
-  margin: 0 0 4px;
+  margin: 0 0 2px;
 }
 
 .rtf-nav-summary p {
@@ -87,9 +87,9 @@
   border-left: 1px solid #dee2e6;
   color: #6c757d;
   display: flex;
-  font-size: 10px;
+  font-size: 11px;
   justify-content: center;
-  padding: 0 10px;
+  padding: 0 8px;
   text-align: center;
   white-space: nowrap;
 }
@@ -106,7 +106,7 @@
 
 .rtf-nav-table {
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 12px;
   min-width: 860px;
   table-layout: fixed;
   width: 100%;
@@ -124,7 +124,7 @@
 .rtf-nav-table th {
   background: #212529;
   color: #fff;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -169,7 +169,7 @@
   border: 1px solid #adb5bd;
   border-radius: 4px;
   color: #212529;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
   height: 24px;
   padding: 0 9px;
@@ -187,14 +187,14 @@
   display: flex;
   flex-wrap: wrap;
   gap: 6px 14px;
-  padding: 8px 12px;
+  padding: 7px 12px;
 }
 
 .rtf-legend-row span {
   align-items: center;
   color: #6c757d;
   display: inline-flex;
-  font-size: 10px;
+  font-size: 11px;
   gap: 5px;
   white-space: nowrap;
 }
@@ -247,7 +247,7 @@
   color: #fff;
   display: flex;
   font-family: 'ChosunilboNM', Georgia, 'Times New Roman', serif;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
   justify-content: space-between;
   padding: 9px 12px;
@@ -256,7 +256,7 @@
 .rtf-unit {
   color: #f1f3f5;
   font-family: 'Nanum Gothic', '나눔고딕', 'Malgun Gothic', sans-serif;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 400;
 }
 
@@ -273,7 +273,7 @@
   border-collapse: separate;
   border-spacing: 0;
   font-family: 'Nanum Gothic', '나눔고딕', 'Malgun Gothic', sans-serif;
-  font-size: 10px;
+  font-size: 12px;
   min-width: 2380px;
   table-layout: fixed;
   width: max-content;
@@ -287,7 +287,7 @@
 .rtf-h-matrix-table td {
   border-right: 1px solid #d8dde3;
   border-bottom: 1px solid #d8dde3;
-  padding: 4px 5px;
+  padding: 5px 8px;
   text-align: center;
   vertical-align: middle;
   white-space: nowrap;
@@ -297,18 +297,21 @@
   background: #212529;
   color: #fff;
   font-weight: 800;
+  padding: 6px 8px;
 }
 
 .rtf-h-matrix-table .rtf-month-head {
   background: #343a40;
   border-left: 3px solid #111820;
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 6px 8px;
 }
 
 .rtf-h-matrix-table .rtf-sub-head {
   background: #495057;
   color: #f8f9fa;
-  font-size: 9px;
+  font-size: 12px;
   width: 72px;
 }
 
@@ -350,21 +353,23 @@
 
 .rtf-left-code {
   left: 322px;
-  min-width: 86px;
-  width: 86px;
+  min-width: 90px;
+  width: 90px;
 }
 
 .rtf-left-name {
-  left: 408px;
+  left: 412px;
   min-width: 240px;
+  overflow: hidden;
   text-align: left !important;
+  text-overflow: ellipsis;
   width: 240px;
 }
 
 .rtf-left-base {
-  left: 648px;
-  min-width: 76px;
-  width: 76px;
+  left: 652px;
+  min-width: 80px;
+  width: 80px;
 }
 
 .rtf-h-matrix-table tbody .rtf-sticky {
@@ -389,6 +394,12 @@
   background: #fff;
 }
 
+.rtf-h-row.level-0 td,
+.rtf-h-row.level-1 td {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
 .rtf-h-row:hover,
 .rtf-h-row.selected {
   background: #e7f1ff;
@@ -400,16 +411,27 @@
 
 .rtf-tree-toggle {
   background: #fff;
-  border: 1px solid #adb5bd;
+  border: 1px solid #ced4da;
   border-radius: 4px;
-  color: #212529;
-  font-size: 12px;
-  font-weight: 800;
-  height: 19px;
-  line-height: 16px;
-  margin-right: 4px;
-  padding: 0;
-  width: 19px;
+  color: #495057;
+  font-size: 11px;
+  font-weight: 700;
+  height: auto;
+  line-height: 1.4;
+  margin-right: 6px;
+  padding: 2px 7px;
+  white-space: nowrap;
+  width: auto;
+}
+
+.rtf-tree-toggle:hover {
+  background: #f1f3f5;
+}
+
+.rtf-tree-toggle.expanded {
+  background: #e7f1ff;
+  border-color: #86b7fe;
+  color: #084298;
 }
 
 .rtf-indent {
@@ -421,13 +443,15 @@
 .rtf-indent-3 { width: 30px; }
 
 .rtf-metric-cell {
-  color: #495057;
+  color: #212529;
+  font-weight: 600;
   width: 72px;
 }
 
 .rtf-muted-metric {
-  color: #8a939d;
-  font-size: 9px;
+  color: #6c757d;
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .rtf-rtf-cell {
@@ -436,7 +460,7 @@
 }
 
 .rtf-shortage-cell {
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .rtf-action-head,
@@ -513,7 +537,7 @@
 .rtf-matrix-table {
   border-collapse: collapse;
   font-family: 'Nanum Gothic', '나눔고딕', 'Malgun Gothic', sans-serif;
-  font-size: 10.5px;
+  font-size: 12px;
   table-layout: fixed;
   width: 100%;
 }
@@ -521,7 +545,7 @@
 .rtf-matrix-table th,
 .rtf-matrix-table td {
   border: 1px solid #d8dde3;
-  padding: 4px 5px;
+  padding: 5px 8px;
   text-align: center;
   vertical-align: middle;
 }
@@ -529,7 +553,7 @@
 .rtf-matrix-table thead th {
   background: #212529;
   color: #fff;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
   height: 28px;
   white-space: nowrap;
@@ -614,15 +638,15 @@
 
 .rtf-expand-btn {
   background: #fff;
-  border: 1px solid #adb5bd;
+  border: 1px solid #ced4da;
   border-radius: 4px;
-  color: #212529;
-  font-size: 12px;
-  font-weight: 800;
-  height: 20px;
-  line-height: 16px;
-  padding: 0;
-  width: 20px;
+  color: #495057;
+  font-size: 11px;
+  font-weight: 700;
+  height: auto;
+  line-height: 1.4;
+  padding: 2px 7px;
+  width: auto;
 }
 
 .rtf-month-cell {
@@ -631,7 +655,7 @@
 }
 
 .rtf-item-month {
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.35;
 }
 
@@ -639,7 +663,7 @@
 .rtf-sub {
   color: #495057;
   display: block;
-  font-size: 10px;
+  font-size: 11px;
   margin-top: 2px;
 }
 
@@ -648,7 +672,7 @@
   border: 1px solid currentColor;
   border-radius: 3px;
   display: inline-block;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
   line-height: 1.15;
   padding: 2px 5px;
@@ -680,7 +704,8 @@
 }
 
 .rtf-status-text.shortage {
-  color: #721c24;
+  color: #842029;
+  font-weight: 700;
 }
 
 .rtf-status-text.unknown {
@@ -706,7 +731,7 @@
   border-radius: 3px;
   color: #495057;
   display: inline-block;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
   line-height: 1.3;
   padding: 2px 5px;
@@ -789,7 +814,7 @@
   border-bottom: 1px solid #dee2e6;
   color: #343a40;
   font-family: 'ChosunilboNM', Georgia, 'Times New Roman', serif;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
   margin-bottom: 7px;
   padding-bottom: 4px;
@@ -797,7 +822,7 @@
 
 .rtf-dtl-table {
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 12px;
   width: 100%;
 }
 
@@ -813,7 +838,7 @@
 .rtf-dtl-table thead th {
   background: #343a40;
   color: #fff;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -826,7 +851,7 @@
   border: 1px solid #dee2e6;
   border-radius: 4px;
   color: #343a40;
-  font-size: 11px;
+  font-size: 12px;
   margin: 0;
   padding: 8px 10px;
 }
@@ -850,7 +875,7 @@
   border: 1px solid #dee2e6;
   border-radius: 4px;
   display: flex;
-  font-size: 11px;
+  font-size: 12px;
   gap: 8px;
   justify-content: space-between;
   padding: 7px 9px;
@@ -859,7 +884,7 @@
 .rtf-q-list li {
   border-bottom: 1px dashed #dee2e6;
   color: #212529;
-  font-size: 11px;
+  font-size: 12px;
   padding: 6px 0;
 }
 
