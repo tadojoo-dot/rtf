@@ -166,10 +166,7 @@
   width: max-content;
 }
 
-/* 기본: 880 + 7*(75+75+80)px = 880+1610 = 2490 */
-.rtf-h-matrix-table.is-collapsed { min-width: 2490px; }
-/* 확대: 880 + 7*(75+75+80+75+90+75+75)px = 880+3815 = 4695 */
-.rtf-h-matrix-table.is-expanded  { min-width: 4695px; }
+/* min-width는 JS에서 섹션·모드별로 inline style로 동적 계산 */
 
 .rtf-h-matrix-table th,
 .rtf-h-matrix-table td {
@@ -252,15 +249,9 @@
 .rtf-h-matrix-table thead .rtf-sticky { z-index: 5; }
 .rtf-h-matrix-table tbody .rtf-sticky { background: inherit; }
 
-/* 좌측 컬럼 너비 & sticky 위치 */
-.rtf-col-div   { left: 0px;   min-width: 90px;  width: 90px;  }
-.rtf-col-bu    { left: 90px;  min-width: 90px;  width: 90px;  }
-.rtf-col-plant { left: 180px; min-width: 90px;  width: 90px;  }
-.rtf-col-type  { left: 270px; min-width: 80px;  width: 80px;  }
-.rtf-col-group { left: 350px; min-width: 130px; width: 130px; }
-.rtf-col-code  { left: 480px; min-width: 90px;  width: 90px;  }
-.rtf-col-name  { left: 570px; min-width: 220px; width: 220px; overflow: hidden; text-overflow: ellipsis; }
-.rtf-col-base  { left: 790px; min-width: 90px;  width: 90px;  border-right: 2px solid #adb5bd !important; }
+/* 좌측 컬럼 — 위치·폭은 inline style로 관리, 시각 스타일만 유지 */
+.rtf-col-name        { overflow: hidden; text-overflow: ellipsis; }
+.rtf-col-last-sticky { border-right: 2px solid #adb5bd !important; }
 
 /* ── 셀 정렬 ── */
 .rtf-cell-center { text-align: center !important; }
@@ -315,12 +306,6 @@
 /* hover */
 .rtf-h-row:not(.is-total):hover td {
   background: #f0f5ff !important;
-}
-
-/* ── 구분 컬럼 레이블 ── */
-.rtf-div-label {
-  color: #6c757d;
-  font-size: 11px;
 }
 
 /* ── + 버튼 ── */

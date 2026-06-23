@@ -6,21 +6,13 @@ var rtfSortState = {
 };
 var _rtfItems = []; // 정렬 재빌드용 캐시
 
-// ── 컬럼 공통 정의 (header·body·colgroup 동일 배열 사용) ─────────────────────
-var LEFT_COL_CONFIG = [
-  { key:"div",   label:"구분",     width:90,  align:"center", sortCol:"div",   cssClass:"rtf-col-div"   },
-  { key:"bu",    label:"사업부",   width:90,  align:"center", sortCol:"bu",    cssClass:"rtf-col-bu"    },
-  { key:"plant", label:"플랜트",   width:90,  align:"center", sortCol:"plant", cssClass:"rtf-col-plant" },
-  { key:"type",  label:"유형",     width:80,  align:"center", sortCol:"type",  cssClass:"rtf-col-type"  },
-  { key:"group", label:"품목군",   width:130, align:"left",   sortCol:"group", cssClass:"rtf-col-group" },
-  { key:"code",  label:"자재코드", width:90,  align:"center", sortCol:"code",  cssClass:"rtf-col-code"  },
-  { key:"name",  label:"자재명",   width:220, align:"left",   sortCol:"name",  cssClass:"rtf-col-name"  },
-  { key:"base",  label:"기초재고", width:90,  align:"right",  sortCol:"base",  cssClass:"rtf-col-base"  },
-];
+// ── 컬럼 공통 메타 ────────────────────────────────────────────────────────────
 var METRIC_WIDTHS = {
   "판매계획":75, "RTF":75, "Shortage":80,
   "매출":75, "매출차질예상":90, "기말재고":75, "재고일수":75,
 };
+// 기본(축소) 모드에서 월별 하위 컬럼 표시명
+var METRIC_DISPLAY_SHORT = { "판매계획":"판매", "Shortage":"부족" };
 
 // ── RTF 계산 ─────────────────────────────────────────────────────────────────
 function itemTypeGroup(item) {
@@ -267,6 +259,54 @@ function sortIconText(sectionId, colKey) {
   return s.dir === "asc" ? "↑" : "↓";
 }
 
+// ── 좌측 컬럼 정의 (섹션·확대 여부별 동적 생성) ─────────────────────────────────
+function getLeftColDefs(mode) {
+  const compressed = !state.rtfExpanded;
+  const firstKey   = { "business":"bu", "plant":"plant", "type":"type" }[mode];
+  const firstLabel = { "business":"사업부", "plant":"플랜트", "type":"유형" }[mode];
+  let defs;
+
+  if (compressed) {
+    // 기본: 발표용 — 핵심 컬럼만
+    defs = [
+      { key: firstKey, label: firstLabel, width: 120, align: "center", isFirst: true },
+      { key: "base",   label: "기초재고", width: 90,  align: "right",  isBase: true, isLast: true },
+    ];
+  } else {
+    // 확대: 분석용 — 섹션별 상세 컬럼
+    let mid = [];
+    if (mode === "business" || mode === "plant") {
+      mid = [
+        { key: "type",  label: "유형",   width: 80,  align: "center" },
+        { key: "group", label: "품목군", width: 130, align: "left", isToggle: true },
+      ];
+    } else { // type
+      mid = [
+        { key: "bu",    label: "사업부", width: 90,  align: "center" },
+        { key: "plant", label: "플랜트", width: 90,  align: "center" },
+        { key: "group", label: "품목군", width: 130, align: "left", isToggle: true },
+      ];
+    }
+    defs = [
+      { key: firstKey, label: firstLabel, width: 120, align: "center", isFirst: true },
+      ...mid,
+      { key: "code",   label: "자재코드", width: 90,  align: "center" },
+      { key: "name",   label: "자재명",   width: 220, align: "left",  isName: true },
+      { key: "base",   label: "기초재고", width: 90,  align: "right", isBase: true, isLast: true },
+    ];
+  }
+  // 누적 sticky left 좌표 계산
+  let left = 0;
+  return defs.map(d => { const r = { ...d, left }; left += d.width; return r; });
+}
+
+function getTableMinWidth(leftColDefs) {
+  const leftW   = leftColDefs.reduce((s, c) => s + c.width, 0);
+  const mCols   = getVisibleMonthColumns();
+  const metricW = getRtfMonths().length * mCols.reduce((s, m) => s + (METRIC_WIDTHS[m] || 75), 0);
+  return leftW + metricW;
+}
+
 // ── 상태 표시 ─────────────────────────────────────────────────────────────────
 function statusClass(status) {
   return { 대응가능:"ok", 주의:"warn", 공급부족:"shortage", 판단불가:"unknown" }[status] ?? "unknown";
@@ -338,86 +378,98 @@ function renderMetricCell(row, metric, metricIndex, compressed) {
 }
 
 // ── 행 렌더 ──────────────────────────────────────────────────────────────────
-function renderHierarchyRow(node) {
+function renderHierarchyRow(node, leftColDefs, compressed) {
   const isTotal     = node.kind === "total";
   const isItem      = node.kind === "item";
   const isItemGroup = node.kind === "itemGroup";
   const item        = isItem ? node.items[0] : null;
-  const { div, bu, plant, type, group, code } = node.cols;
-  const compressed  = !state.rtfExpanded;
-  const baseQty     = formatBaseForNode(node, compressed);
   const isHidden    = isTotal ? false : (compressed ? node.level > 0 : (isItem && !state.expandedItemGroups.has(node.parentId)));
   const monthCols   = getVisibleMonthColumns();
   const cells = getRtfMonths().map((_, mIdx) => {
     const monthRow = isItem ? item.monthlyStatus[mIdx] : aggregateMonth(node.items, mIdx);
     return monthCols.map((metric, colIdx) => renderMetricCell(monthRow, metric, colIdx, compressed)).join("");
   }).join("");
-  const toggleBtn = isItemGroup && state.rtfExpanded
-    ? `<button type="button" class="rtf-item-toggle" data-node-id="${escapeHtml(node.id)}">${state.expandedItemGroups.has(node.id) ? "-" : "+"}</button>`
-    : "";
+
+  const leftCells = leftColDefs.map(col => {
+    let value;
+    if (col.isBase) {
+      value = formatBaseForNode(node, compressed);
+    } else if (col.isName) {
+      value = node.label;
+    } else {
+      const raw = node.cols[col.key] || "";
+      value = (col.isFirst && !raw) ? node.label : raw; // 총합계 행 fallback
+    }
+    const toggleBtn = (col.isToggle && isItemGroup && !compressed)
+      ? `<button type="button" class="rtf-item-toggle" data-node-id="${escapeHtml(node.id)}">${state.expandedItemGroups.has(node.id) ? "-" : "+"}</button>`
+      : "";
+    const alignCls  = col.align === "left" ? "rtf-cell-left" : col.align === "right" ? "rtf-cell-right" : "rtf-cell-center";
+    const extraCls  = col.isName ? " rtf-col-name" : col.isLast ? " rtf-col-last-sticky" : "";
+    const titleAttr = col.isName ? ` title="${escapeHtml(node.label)}"` : "";
+    return `<td class="rtf-sticky ${alignCls}${extraCls}" style="left:${col.left}px;width:${col.width}px;"${titleAttr}>${toggleBtn}${escapeHtml(value)}</td>`;
+  }).join("");
+
   const kindCls = isTotal ? "is-total" : (isItem ? "is-item" : "is-group");
   return `<tr class="rtf-h-row level-${node.level} ${kindCls}" data-node-id="${escapeHtml(node.id)}" data-parent-id="${escapeHtml(node.parentId)}"${isHidden ? " hidden" : ""}>
-    <td class="rtf-sticky rtf-col-div rtf-cell-center">${toggleBtn}${div ? `<span class="rtf-div-label">${escapeHtml(div)}</span>` : ""}</td>
-    <td class="rtf-sticky rtf-col-bu rtf-cell-center">${escapeHtml(bu)}</td>
-    <td class="rtf-sticky rtf-col-plant rtf-cell-center">${escapeHtml(plant)}</td>
-    <td class="rtf-sticky rtf-col-type rtf-cell-center">${escapeHtml(type)}</td>
-    <td class="rtf-sticky rtf-col-group rtf-cell-left">${escapeHtml(group)}</td>
-    <td class="rtf-sticky rtf-col-code rtf-cell-center">${escapeHtml(code)}</td>
-    <td class="rtf-sticky rtf-col-name rtf-cell-left" title="${escapeHtml(node.label)}">${escapeHtml(node.label)}</td>
-    <td class="rtf-sticky rtf-col-base rtf-cell-right">${escapeHtml(baseQty)}</td>
-    ${cells}
+    ${leftCells}${cells}
   </tr>`;
 }
 
 // ── 섹션 렌더 ────────────────────────────────────────────────────────────────
 function renderMatrixSection(title, mode, items, sectionId) {
-  const months    = getRtfMonths();
-  const monthCols = getVisibleMonthColumns(); // string[]
-  const colCount  = LEFT_COL_CONFIG.length + months.length * monthCols.length;
-  const nodes     = sortHierarchyNodes(buildHierarchy(items, mode), sectionId);
-  const body      = nodes.length
-    ? nodes.map((n) => renderHierarchyRow(n)).join("")
+  const compressed  = !state.rtfExpanded;
+  const leftColDefs = getLeftColDefs(mode);
+  const months      = getRtfMonths();
+  const monthCols   = getVisibleMonthColumns();
+  const minWidth    = getTableMinWidth(leftColDefs);
+  const colCount    = leftColDefs.length + months.length * monthCols.length;
+  const nodes       = sortHierarchyNodes(buildHierarchy(items, mode), sectionId);
+  const body        = nodes.length
+    ? nodes.map(n => renderHierarchyRow(n, leftColDefs, compressed)).join("")
     : `<tr><td colspan="${colCount}" class="rtf-empty">데이터 없음</td></tr>`;
 
-  // colgroup: 좌측 + 월별 지표 (inline width로 table-layout: fixed 정확히 고정)
+  // colgroup: 좌측(inline width) + 월별 지표
   const colgroup = [
-    ...LEFT_COL_CONFIG.map(c => `<col style="width:${c.width}px;">`),
+    ...leftColDefs.map(c => `<col style="width:${c.width}px;">`),
     ...months.flatMap(() => monthCols.map(m => `<col style="width:${METRIC_WIDTHS[m] || 75}px;">`)),
   ].join("");
 
-  // 정렬 th: 아이콘은 절대 배치 → 텍스트 완전 중앙 정렬 유지
-  function mkSortTh(label, colKey, extraCls, rowspan) {
+  // 정렬 th 헬퍼 (아이콘 절대 배치 → 텍스트 중앙 정렬 유지)
+  function mkSortTh(label, colKey, extraCls, rowspan, stickyStyle) {
     const active = rtfSortState[sectionId]?.colKey === colKey;
     const rs     = rowspan ? ` rowspan="${rowspan}"` : "";
-    return `<th class="rtf-th-sortable${extraCls ? " " + extraCls : ""}" data-sort-col="${escapeHtml(colKey)}" data-sort-section="${escapeHtml(sectionId)}"${rs}>${escapeHtml(label)}<span class="rtf-sort-icon${active ? " is-active" : ""}">${sortIconText(sectionId, colKey)}</span></th>`;
+    const style  = stickyStyle ? ` style="${stickyStyle}"` : "";
+    return `<th class="rtf-th-sortable${extraCls ? " " + extraCls : ""}" data-sort-col="${escapeHtml(colKey)}" data-sort-section="${escapeHtml(sectionId)}"${rs}${style}>${escapeHtml(label)}<span class="rtf-sort-icon${active ? " is-active" : ""}">${sortIconText(sectionId, colKey)}</span></th>`;
   }
 
-  // 좌측 고정 헤더 (rowspan=2, 정렬 클래스 없음 → thead th CSS로 center 유지)
-  const leftHeaders = LEFT_COL_CONFIG.map(c =>
-    mkSortTh(c.label, c.sortCol, `rtf-sticky ${c.cssClass}`, 2)
-  ).join("");
-
-  // 월 그룹 헤더 (colspan = 하위 컬럼 수)
-  const monthHeader = months.map((m, mi) => {
-    const borderCls = mi > 0 ? " rtf-month-start" : "";
-    return `<th class="rtf-month-head${borderCls}" colspan="${monthCols.length}">${escapeHtml(monthLabel(m))}</th>`;
+  // 좌측 고정 헤더 (rowspan=2, 위치·폭은 inline style)
+  const leftHeaders = leftColDefs.map(col => {
+    const alignCls  = col.align === "left" ? "rtf-cell-left" : col.align === "right" ? "rtf-cell-right" : "";
+    const extraCls  = col.isName ? " rtf-col-name" : col.isLast ? " rtf-col-last-sticky" : "";
+    const cls       = `rtf-sticky${alignCls ? " " + alignCls : ""}${extraCls}`;
+    return mkSortTh(col.label, col.key, cls, 2, `left:${col.left}px;width:${col.width}px;`);
   }).join("");
 
-  // 월 하위 지표 헤더
+  // 월 그룹 헤더 (colspan = 하위 컬럼 수)
+  const monthHeader = months.map((m, mi) =>
+    `<th class="rtf-month-head${mi > 0 ? " rtf-month-start" : ""}" colspan="${monthCols.length}">${escapeHtml(monthLabel(m))}</th>`
+  ).join("");
+
+  // 월 하위 지표 헤더 (기본: 판매/RTF/부족 표시명)
   const metricHeader = months.flatMap(() =>
     monthCols.map((m, ci) => {
-      const active  = rtfSortState[sectionId]?.colKey === m;
-      const isFirst = ci === 0;
-      const isKey   = ["RTF","Shortage"].includes(m);
-      const cls     = `rtf-th-sortable rtf-sub-head${isKey ? " rtf-key-sub" : ""}${isFirst ? " rtf-month-start" : ""}`;
-      return `<th class="${cls}" data-sort-col="${escapeHtml(m)}" data-sort-section="${escapeHtml(sectionId)}">${escapeHtml(m)}<span class="rtf-sort-icon${active ? " is-active" : ""}">${sortIconText(sectionId, m)}</span></th>`;
+      const active   = rtfSortState[sectionId]?.colKey === m;
+      const dispName = compressed ? (METRIC_DISPLAY_SHORT[m] || m) : m;
+      const isKey    = ["RTF","Shortage"].includes(m);
+      const cls      = `rtf-th-sortable rtf-sub-head${isKey ? " rtf-key-sub" : ""}${ci === 0 ? " rtf-month-start" : ""}`;
+      return `<th class="${cls}" data-sort-col="${escapeHtml(m)}" data-sort-section="${escapeHtml(sectionId)}">${escapeHtml(dispName)}<span class="rtf-sort-icon${active ? " is-active" : ""}">${sortIconText(sectionId, m)}</span></th>`;
     })
   ).join("");
 
   return `<section id="${escapeHtml(sectionId)}" class="rtf-card rtf-block rtf-matrix-block">
     <div class="rtf-sec-title">${escapeHtml(title)}</div>
     <div class="rtf-h-scroll">
-      <table class="rtf-h-matrix-table ${state.rtfExpanded ? "is-expanded" : "is-collapsed"}">
+      <table class="rtf-h-matrix-table" style="min-width:${minWidth}px;">
         <colgroup>${colgroup}</colgroup>
         <thead>
           <tr>${leftHeaders}${monthHeader}</tr>
@@ -448,7 +500,7 @@ function renderRtf() {
         기준월: ${escapeHtml(months[0])} | 대상기간: ${escapeHtml(months.map(monthLabel).join(" ~ "))} | 표시: ${state.rtfDisplayMode === "qty" ? "수량" : "금액"}
         ${verifyHtml}
       </div>
-      <div class="rtf-insight">RTF 컬럼은 판매계획 대비 공급 가능 수량(또는 금액)입니다. Shortage 발생 시 붉은색으로 표시됩니다.</div>
+      <div class="rtf-insight">RTF 컬럼은 판매계획 대비 공급 가능 수량(또는 금액)입니다. 부족 발생 시 부족 수량(또는 금액)을 표시합니다.</div>
     </section>
     <div class="rtf-toolbar">
       <div class="rtf-mode-group" aria-label="표시 단위">
@@ -456,7 +508,7 @@ function renderRtf() {
         <button type="button" class="rtf-mode-btn ${state.rtfDisplayMode === "amount" ? "active" : ""}" data-rtf-mode="amount">금액</button>
       </div>
       <button type="button" id="rtfExpandToggle" class="rtf-extra-toggle ${state.rtfExpanded ? "active" : ""}">${state.rtfExpanded ? "축소" : "확대"}</button>
-      <span class="rtf-toolbar-hint">${state.rtfExpanded ? "품목군까지 표시 · + 버튼으로 자재 상세" : "계 행 + 판매계획 / RTF / Shortage"}</span>
+      <span class="rtf-toolbar-hint">${state.rtfExpanded ? "분석용 상세 · 품목군 + 버튼으로 자재 상세" : "발표용 기본 · 판매 / RTF / 부족"}</span>
     </div>
     ${renderMatrixSection("01. 사업부별", "business", items, "rtfBusinessMatrix")}
     ${renderMatrixSection("02. 플랜트별", "plant",    items, "rtfPlantMatrix")}
