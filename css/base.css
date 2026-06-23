@@ -1,0 +1,70 @@
+:root {
+  --color-primary: #1d2783;
+  --color-primary-dark: #10145c;
+  --color-accent: #c46b4d;
+  --color-bg: #f0f1f5;
+  --color-card: #ffffff;
+  --color-card-soft: #f8f9fd;
+  --color-border: #e4e6ef;
+  --color-text: #1a1a2e;
+  --color-muted: #7a8099;
+  --color-warn: #c46b2d;
+  --color-danger: #d64545;
+  --color-ok: #2d7652;
+  --radius-card: 8px;
+  --shadow-card: 0 2px 12px rgba(16, 20, 92, 0.08);
+  --space-section: 20px;
+  --font-size-kpi: 28px;
+  --font-size-body: 14px;
+  --bg: var(--color-bg);
+  --panel: var(--color-card);
+  --panel-soft: var(--color-card-soft);
+  --ink: var(--color-text);
+  --muted: var(--color-muted);
+  --line: var(--color-border);
+  --accent: var(--color-accent);
+  --accent-dark: var(--color-primary);
+  --warn: var(--color-warn);
+  --danger: var(--color-danger);
+  --ok: var(--color-ok);
+  --shadow: var(--shadow-card);
+  font-family: "Segoe UI", "Malgun Gothic", Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  color: var(--ink);
+  background: var(--bg);
+  font-size: var(--font-size-body);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+.eyebrow {
+  margin-bottom: 6px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}

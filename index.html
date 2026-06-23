@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RTF Dashboard</title>
+    <link rel="stylesheet" href="./css/base.css" />
+    <link rel="stylesheet" href="./css/layout.css" />
+    <link rel="stylesheet" href="./css/components.css" />
+    <link rel="stylesheet" href="./css/tables.css" />
+    <link rel="stylesheet" href="./css/charts.css" />
+    <link rel="stylesheet" href="./css/rtf.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topnav">
+        <div class="brand">
+          <strong>RTF Dashboard</strong>
+          <span>로컬 파일 모드</span>
+        </div>
+        <nav class="tab-nav" id="tabNav" aria-label="대시보드 메뉴"></nav>
+        <div class="topbar-status">
+          <span class="status-dot"></span>
+          <span>RAW 파일 선택 필요</span>
+        </div>
+      </header>
+
+      <main class="main-panel">
+        <div class="screen-titlebar">
+          <h1 id="screenTitle">회의체계</h1>
+        </div>
+        <section id="screenRoot" class="screen-root" aria-live="polite"></section>
+      </main>
+    </div>
+
+    <script src="./vendor/xlsx.full.min.js"></script>
+    <script defer src="./js/fileFallback.js"></script>
+  </body>
+</html>
