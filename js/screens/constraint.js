@@ -139,9 +139,12 @@ function computeBomExpansion() {
 
   // 구성품별 소요량 집계 — 완제품(9코드) BOM만 전개, 반제품·재공품 하위 BOM 자동전개 방지
   var compReqs = new Map();
+  var missingCompCodeCount = 0;
   baseBomRows.forEach(function(bom) {
     // 9코드 완제품 루트만 소요량/부모 집계에 사용 → 반제품 하위 BOM 중복 전개 방지
     if (!bom.rootItemCode || !bom.rootItemCode.startsWith("9")) return;
+    // 구성요소코드 누락 행 → 집계 제외, 별도 카운트
+    if (!bom.componentCode || !String(bom.componentCode).trim()) { missingCompCodeCount++; return; }
 
     var rootKey    = bom.rootItemCode + "|" + bom.plant;
     var compKey    = bom.componentCode + "|" + bom.plant;
@@ -274,10 +277,13 @@ function computeBomExpansion() {
       };
     });
 
+    var resolvedCompName = cleanText(comp.componentName, null);
+    if (!resolvedCompName) resolvedCompName = "자재명 확인필요";
+
     resultItems.push({
       plant:           comp.plant,
       componentCode:   comp.componentCode,
-      componentName:   cleanText(comp.componentName, comp.componentCode),
+      componentName:   resolvedCompName,
       itemCategory:    comp.itemCategory,
       displayCategory: displayItemCategory(comp.itemCategory),
       parentItemGroup: parentItemGroup,
@@ -313,6 +319,7 @@ function computeBomExpansion() {
     dedicatedShortage: sorted.filter(function(i) { return !i.isShared && i.hasAnyShortage; }).length,
     needMaster:        sorted.filter(function(i) { return i.needsMaster; }).length,
     needData:          sorted.filter(function(i) { return !i.hasInventory; }).length,
+    missingCompCode:   missingCompCodeCount,
   };
   return result;
 }
@@ -378,6 +385,7 @@ function renderConstraintSummaryCard(result) {
     { label:"전용자재 부족",     value:s.dedicatedShortage > 0 ? s.dedicatedShortage + "건" : "-",  cls:s.dedicatedShortage > 0 ? "shortage" : "" },
     { label:"기준정보 확인 필요",value:s.needMaster        > 0 ? s.needMaster        + "건" : "-",  cls:s.needMaster        > 0 ? "warn"     : "" },
     { label:"데이터 연결 필요",  value:s.needData          > 0 ? s.needData          + "건" : "-",  cls:s.needData          > 0 ? "warn"     : "" },
+    { label:"BOM 코드 누락",     value:s.missingCompCode   > 0 ? s.missingCompCode   + "행" : "-",  cls:s.missingCompCode   > 0 ? "warn"     : "" },
   ];
   return "<section class=\"cst-card cst-summary-card\"><div class=\"cst-summary-grid\">" +
     items.map(function(i) {
@@ -424,6 +432,400 @@ function compactCellValue(item, md) {
   return { text:"-", cls:"cst-neutral-cell" };
 }
 
+// ── 정합성 검증 헬퍼 ─────────────────────────────────────────────────────────
+function vldNum(v) {
+  if (v === null || v === undefined) return "-";
+  var n = (typeof v === "number") ? v : cleanNumber(v);
+  if (n === null || n === undefined || !isFinite(n) || isNaN(n)) return "-";
+  return formatNumber(Math.round(n));
+}
+function vldRatio(v) {
+  if (v === null || v === undefined || !isFinite(v) || isNaN(v)) return "-";
+  return v.toFixed(4);
+}
+var VLD_STATUS_CLS = {
+  "정상":"vld-s-ok","연결필요":"vld-s-link","확인필요":"vld-s-check",
+  "단위 정합 확인":"vld-s-unit","판단불가":"vld-s-unknown","부족":"vld-s-short",
+};
+function vldBadge(status) {
+  var cls = VLD_STATUS_CLS[status] || "vld-s-check";
+  return "<span class=\"vld-badge " + cls + "\">" + escapeHtml(status || "확인필요") + "</span>";
+}
+
+// ── 정합성 검증 계산 ─────────────────────────────────────────────────────────
+function computeValidation() {
+  var planRows      = state.mappedData.plan_monthly;
+  var inventoryRows = state.mappedData.inventory_base;
+  var bomRows       = state.mappedData.bom_components;
+  var masterRows    = state.mappedData.item_master;
+  var months        = getRtfMonths();
+  var items         = (state.bomResult && state.bomResult.items) || [];
+
+  var baseBomRows = bomRows.filter(function(r) {
+    var alt = cleanOptional(r.alternativeBom); return alt === "" || alt === "1";
+  });
+
+  // 완제품 생산계획 map
+  var prodPlanMap = new Map();
+  planRows.forEach(function(r) {
+    var code = cleanOptional(r.itemCode);
+    if (!code || !code.startsWith("9")) return;
+    var key = code + "|" + cleanOptional(r.plant) + "|" + cleanOptional(r.month);
+    prodPlanMap.set(key, (prodPlanMap.get(key) || 0) + (cleanNumber(r.supplyQty) || 0));
+  });
+  // 현재고 map
+  var inventoryMap = new Map();
+  inventoryRows.forEach(function(r) {
+    var code = cleanOptional(r.itemCode), plant = cleanOptional(r.plant);
+    if (!code || !plant) return;
+    var key = code + "|" + plant;
+    var qty = cleanNumber(r.baseQty) || 0, unit = cleanOptional(r.unit) || "";
+    var ex = inventoryMap.get(key);
+    if (ex) { ex.qty += qty; if (!ex.unit && unit) ex.unit = unit; }
+    else inventoryMap.set(key, { qty:qty, unit:unit });
+  });
+  // 공급계획 map
+  var supplyMap = new Map();
+  planRows.forEach(function(r) {
+    var code = cleanOptional(r.itemCode), plant = cleanOptional(r.plant), month = cleanOptional(r.month);
+    if (!code || !plant || !month) return;
+    var key = code + "|" + plant + "|" + month;
+    var qty = cleanNumber(r.supplyQty) || 0, unit = cleanOptional(r.unit) || "";
+    var ex = supplyMap.get(key);
+    if (ex) { ex.qty += qty; if (!ex.unit && unit) ex.unit = unit; }
+    else supplyMap.set(key, { qty:qty, unit:unit });
+  });
+  // 기준정보 map
+  var masterMap = new Map();
+  masterRows.forEach(function(r) { if (r.itemCode && !masterMap.has(r.itemCode)) masterMap.set(r.itemCode, r); });
+
+  // ① 대상 품목 검증
+  var planKeys9 = new Set(), planKeys7 = new Set(); var missingKeyRows = 0;
+  planRows.forEach(function(r) {
+    var code = cleanOptional(r.itemCode), plant = cleanOptional(r.plant);
+    if (!code || !plant) { missingKeyRows++; return; }
+    if (code.startsWith("9")) planKeys9.add(code + "|" + plant);
+    else if (code.startsWith("7")) planKeys7.add(code + "|" + plant);
+  });
+  var semiInBomRoot = new Set();
+  bomRows.forEach(function(r) { if (r.rootItemCode && r.rootItemCode.startsWith("8")) semiInBomRoot.add(r.rootItemCode); });
+  var sec1 = {
+    totalRtf:   planKeys9.size + planKeys7.size,
+    codes9:     planKeys9.size,
+    codes7:     planKeys7.size,
+    semiInRoot: semiInBomRoot.size,
+    missingKey: missingKeyRows,
+    semiList:   Array.from(semiInBomRoot),
+  };
+
+  // ② BOM 매칭 검증
+  var bomRoots9 = new Set();
+  baseBomRows.forEach(function(r) {
+    if (r.rootItemCode && r.rootItemCode.startsWith("9")) bomRoots9.add(r.rootItemCode + "|" + r.plant);
+  });
+  var unmatchedList = [];
+  planKeys9.forEach(function(k) {
+    if (!bomRoots9.has(k)) { var p = k.split("|"); unmatchedList.push({ code:p[0], plant:p[1] }); }
+  });
+  var altBomRoots = new Set();
+  bomRows.forEach(function(r) {
+    if (!r.rootItemCode || !r.rootItemCode.startsWith("9")) return;
+    var alt = cleanOptional(r.alternativeBom);
+    if (alt !== "" && alt !== "1") altBomRoots.add(r.rootItemCode + "|" + r.plant);
+  });
+  var missingBase = 0, missingComp = 0, missingCode = 0;
+  baseBomRows.forEach(function(r) {
+    if (!r.rootItemCode || !r.rootItemCode.startsWith("9")) return;
+    if (!r.componentCode || !String(r.componentCode).trim()) { missingCode++; return; }
+    var bq = cleanNumber(r.baseQty);
+    if (!bq || bq === 0) missingBase++;
+    if (cleanNumber(r.componentQty) === null) missingComp++;
+  });
+  var sec2 = {
+    target9:planKeys9.size, matched:planKeys9.size - unmatchedList.length,
+    unmatched:unmatchedList.length, multiAlt:altBomRoots.size,
+    missingBase:missingBase, missingComp:missingComp, missingCode:missingCode,
+    unmatchedList:unmatchedList,
+  };
+
+  // ③ BOM 수량 검증 (부족·판단불가 대상)
+  var targetItems = items.filter(function(i) { return i.hasAnyShortage || i.unitMismatch || !i.hasInventory; });
+  var sec3 = [];
+  targetItems.forEach(function(item) {
+    baseBomRows.forEach(function(bom) {
+      if (!bom.componentCode || bom.componentCode !== item.componentCode || bom.plant !== item.plant) return;
+      if (!bom.rootItemCode || !bom.rootItemCode.startsWith("9")) return;
+      var baseQty = cleanNumber(bom.baseQty), compQty = cleanNumber(bom.componentQty);
+      var ratio = (baseQty && baseQty > 0 && compQty !== null) ? compQty / baseQty : null;
+      var totalProd = months.reduce(function(s, m) {
+        return s + (prodPlanMap.get(bom.rootItemCode + "|" + bom.plant + "|" + m) || 0);
+      }, 0);
+      sec3.push({
+        rootCode:cleanText(bom.rootItemCode, "확인필요"),
+        rootName:cleanText(bom.rootItemName, bom.rootItemCode || "확인필요"),
+        compCode:item.componentCode, compName:item.componentName,
+        plant:item.plant, baseQty:baseQty, compQty:compQty, ratio:ratio,
+        totalProd:totalProd, totalReq:(ratio !== null ? totalProd * ratio : null),
+      });
+    });
+  });
+
+  // ④ 현재고 연결 검증
+  var sec4 = items.map(function(item) {
+    var inv = inventoryMap.get(item.componentCode + "|" + item.plant);
+    return { code:item.componentCode, name:item.componentName, plant:item.plant,
+             hasInv:!!inv, qty:inv ? inv.qty : null, unit:inv ? inv.unit : "" };
+  });
+
+  // ⑤ 공급계획 연결 검증
+  var sec5 = items.map(function(item) {
+    var md = months.map(function(m) {
+      var sd = supplyMap.get(item.componentCode + "|" + item.plant + "|" + m);
+      return { month:m, qty:sd ? sd.qty : null, unit:sd ? sd.unit : "" };
+    });
+    var hasAny = md.some(function(d) { return d.qty !== null && d.qty > 0; });
+    var firstUnit = ""; md.some(function(d) { if (d.unit) { firstUnit = d.unit; return true; } return false; });
+    return { code:item.componentCode, name:item.componentName, plant:item.plant,
+             hasSupply:hasAny, unit:firstUnit, monthly:md };
+  });
+
+  // ⑥ 단위 정합 검증
+  var sec6 = items.map(function(item) {
+    var inv = inventoryMap.get(item.componentCode + "|" + item.plant);
+    var invUnit = inv ? inv.unit : "";
+    var firstSupplyUnit = "";
+    months.some(function(m) {
+      var sd = supplyMap.get(item.componentCode + "|" + item.plant + "|" + m);
+      if (sd && sd.unit) { firstSupplyUnit = sd.unit; return true; } return false;
+    });
+    var master = masterMap.get(item.componentCode);
+    var masterUnit = cleanOptional(master ? (master.unit || master.unitOfMeasure || master.baseUnit || "") : "") || "";
+    var bomUnit = "";
+    baseBomRows.some(function(r) {
+      if (r.componentCode === item.componentCode && r.plant === item.plant && r.componentUnit) {
+        bomUnit = cleanOptional(r.componentUnit) || ""; return true;
+      } return false;
+    });
+    var compareUnit = invUnit || masterUnit;
+    var mismatch = !!(bomUnit && compareUnit && bomUnit.toLowerCase() !== compareUnit.toLowerCase());
+    var status = mismatch ? "단위 정합 확인" : (!bomUnit && !invUnit && !firstSupplyUnit) ? "확인필요" : "정상";
+    return { code:item.componentCode, name:item.componentName,
+             bomUnit:bomUnit||"-", invUnit:invUnit||"-", supplyUnit:firstSupplyUnit||"-",
+             masterUnit:masterUnit||"-", mismatch:mismatch, status:status };
+  });
+
+  // ⑦ 부족 판정 검증
+  var sec7 = items.filter(function(i) { return i.hasAnyShortage || i.unitMismatch || !i.hasInventory; })
+    .map(function(item) {
+      var inv = inventoryMap.get(item.componentCode + "|" + item.plant);
+      var monthly = item.monthlyData.map(function(md) {
+        var sd = supplyMap.get(item.componentCode + "|" + item.plant + "|" + md.month);
+        var supplyQty = sd ? sd.qty : 0;
+        var judgment = item.unitMismatch ? "판단불가"
+          : !item.hasInventory ? "연결필요"
+          : md.shortageQty === null ? "판단불가"
+          : md.shortageQty > 0 ? "부족" : "정상";
+        return { month:md.month, required:md.requiredQty, supply:supplyQty,
+                 available:md.availableQty, shortage:md.shortageQty, judgment:judgment };
+      });
+      return { code:item.componentCode, name:item.componentName, plant:item.plant,
+               baseQty:inv ? inv.qty : null, unitMismatch:item.unitMismatch,
+               hasInv:item.hasInventory, monthly:monthly };
+    });
+
+  var summary = {
+    targetCount:   items.length,
+    bomUnmatched:  sec2.unmatched,
+    needInventory: sec4.filter(function(r) { return !r.hasInv; }).length,
+    needSupply:    sec5.filter(function(r) { return !r.hasSupply; }).length,
+    unitMismatch:  sec6.filter(function(r) { return r.mismatch; }).length,
+    uncertain:     items.filter(function(i) { return i.unitMismatch || !i.hasInventory; }).length,
+    shortage:      items.filter(function(i) { return i.hasAnyShortage; }).length,
+  };
+  return { summary:summary, sec1:sec1, sec2:sec2, sec3:sec3, sec4:sec4, sec5:sec5, sec6:sec6, sec7:sec7, months:months };
+}
+
+// ── 정합성 검증 패널 렌더 ─────────────────────────────────────────────────────
+function renderValidationPanel() {
+  if (!state.validationPanelOpen || !state.bomResult || state.bomResult.status !== BOM_STATUS.DONE) return "";
+  var vd = computeValidation(), tab = state.validationTab || 0, s = vd.summary;
+  var kpiItems = [
+    { label:"제약 대상",         v:s.targetCount,   warn:false },
+    { label:"BOM 미매칭",        v:s.bomUnmatched,  warn:s.bomUnmatched  > 0 },
+    { label:"현재고 연결 필요",  v:s.needInventory, warn:s.needInventory > 0 },
+    { label:"공급계획 연결 필요",v:s.needSupply,    warn:s.needSupply    > 0 },
+    { label:"단위 정합 확인",    v:s.unitMismatch,  warn:s.unitMismatch  > 0 },
+    { label:"판단불가",          v:s.uncertain,     warn:s.uncertain     > 0 },
+    { label:"확정 부족",         v:s.shortage,      warn:false, shortage:s.shortage > 0 },
+  ];
+  var kpiHtml = kpiItems.map(function(k) {
+    var cls = k.shortage ? " vld-kpi-shortage" : k.warn ? " vld-kpi-warn" : "";
+    return "<div class=\"vld-kpi" + cls + "\"><div class=\"vld-kpi-label\">" + escapeHtml(k.label) +
+           "</div><div class=\"vld-kpi-value\">" + k.v + "</div></div>";
+  }).join("");
+  var tabLabels = ["①대상품목","②BOM매칭","③BOM수량","④현재고","⑤공급계획","⑥단위정합","⑦부족판정"];
+  var tabBar = tabLabels.map(function(lbl, i) {
+    return "<button type=\"button\" class=\"vld-tab-btn" + (i === tab ? " active" : "") +
+           "\" data-vld-tab=\"" + i + "\">" + escapeHtml(lbl) + "</button>";
+  }).join("");
+  var secData = [vd.sec1, vd.sec2, vd.sec3, vd.sec4, vd.sec5, vd.sec6, vd.sec7];
+  var secFns  = [renderVldSec1, renderVldSec2, renderVldSec3, renderVldSec4, renderVldSec5, renderVldSec6, renderVldSec7];
+  var content = secFns[tab](secData[tab], vd.months);
+
+  return "<div class=\"vld-overlay\" id=\"validationOverlay\">" +
+         "<div class=\"vld-panel\">" +
+         "<div class=\"vld-panel-header\"><span class=\"vld-panel-title\">정합성 검증</span>" +
+         "<button type=\"button\" class=\"vld-close-btn\" id=\"vldCloseBtn\">✕ 닫기</button></div>" +
+         "<div class=\"vld-kpi-bar\">" + kpiHtml + "</div>" +
+         "<div class=\"vld-tab-bar\">" + tabBar + "</div>" +
+         "<div class=\"vld-content\">" + content + "</div>" +
+         "</div></div>";
+}
+
+function _vldKVTable(rows) {
+  return "<table class=\"vld-table vld-kv-table\"><thead><tr><th>검증 항목</th><th>결과</th><th>비고</th></tr></thead>" +
+    "<tbody>" + rows.map(function(r) {
+      return "<tr><td class=\"vld-td-label\">" + escapeHtml(r.label) + "</td>" +
+             "<td class=\"" + (r.warn ? "vld-td-warn" : "vld-td-ok") + "\">" + escapeHtml(String(r.value)) + "</td>" +
+             "<td class=\"vld-td-note\">" + escapeHtml(r.note || "") + "</td></tr>";
+    }).join("") + "</tbody></table>";
+}
+
+function renderVldSec1(s) {
+  return _vldKVTable([
+    { label:"RTF 대상 품목 수 (코드+플랜트 기준)", value: s.totalRtf + "건" },
+    { label:"완제품 9코드 수", value: s.codes9 + "건" },
+    { label:"상품 7코드 수",   value: s.codes7 + "건" },
+    { label:"반제품 8코드 BOM 루트 등록",
+      value: s.semiInRoot > 0 ? s.semiInRoot + "건 발견" : "없음", warn: s.semiInRoot > 0,
+      note:  s.semiInRoot > 0 ? "공급원인 분석은 9코드 완제품 기준으로만 전개함." : "" },
+    { label:"품목코드+플랜트 누락 행",
+      value: s.missingKey > 0 ? s.missingKey + "행" : "없음", warn: s.missingKey > 0 },
+  ]) + (s.semiList && s.semiList.length ?
+    "<div class=\"vld-sub-note\">반제품 루트: " + s.semiList.slice(0,10).map(escapeHtml).join(", ") + "</div>" : "");
+}
+
+function renderVldSec2(s) {
+  var summary = _vldKVTable([
+    { label:"9코드 완제품 대상", value: s.target9 + "건" },
+    { label:"BOM 매칭 성공",     value: s.matched + "건" },
+    { label:"BOM 미매칭",        value: s.unmatched > 0 ? s.unmatched + "건" : "없음", warn: s.unmatched > 0,
+      note: s.unmatched > 0 ? "BOM 데이터에 해당 완제품+플랜트 없음." : "" },
+    { label:"대체BOM 존재",      value: s.multiAlt > 0 ? s.multiAlt + "건" : "없음", warn: s.multiAlt > 0,
+      note: s.multiAlt > 0 ? "기본BOM(1번)만 사용. 대체BOM 제외됨." : "" },
+    { label:"BOM 기준수량 누락", value: s.missingBase > 0 ? s.missingBase + "행" : "없음", warn: s.missingBase > 0 },
+    { label:"구성요소수량 누락", value: s.missingComp > 0 ? s.missingComp + "행" : "없음", warn: s.missingComp > 0 },
+    { label:"구성요소코드 누락", value: s.missingCode > 0 ? s.missingCode + "행" : "없음", warn: s.missingCode > 0,
+      note: s.missingCode > 0 ? "해당 행은 집계에서 제외됨." : "" },
+  ]);
+  var detail = s.unmatchedList.length === 0 ? "" :
+    "<div class=\"vld-sub-title\">BOM 미매칭 목록</div>" +
+    "<div class=\"vld-scroll\"><table class=\"vld-table\"><thead><tr><th>완제품코드</th><th>플랜트</th></tr></thead><tbody>" +
+    s.unmatchedList.slice(0, 50).map(function(r) {
+      return "<tr><td>" + escapeHtml(r.code) + "</td><td>" + escapeHtml(displayPlantName(r.plant)) + "</td></tr>";
+    }).join("") + "</tbody></table></div>";
+  return summary + detail;
+}
+
+function renderVldSec3(rows) {
+  if (!rows || rows.length === 0) return "<div class=\"vld-empty\">부족·판단불가 대상 없음</div>";
+  var bodyHtml = rows.slice(0, 100).map(function(r) {
+    return "<tr><td>" + escapeHtml(r.rootCode) + "</td>" +
+           "<td class=\"vld-td-left\">" + escapeHtml(r.rootName) + "</td>" +
+           "<td>" + escapeHtml(r.compCode) + "</td>" +
+           "<td class=\"vld-td-left\">" + escapeHtml(r.compName) + "</td>" +
+           "<td class=\"vld-td-r\">" + vldNum(r.baseQty) + "</td>" +
+           "<td class=\"vld-td-r\">" + vldNum(r.compQty) + "</td>" +
+           "<td class=\"vld-td-r\">" + vldRatio(r.ratio) + "</td>" +
+           "<td class=\"vld-td-r\">" + vldNum(r.totalProd) + "</td>" +
+           "<td class=\"vld-td-r\">" + vldNum(r.totalReq) + "</td></tr>";
+  }).join("");
+  return "<div class=\"vld-scroll\"><table class=\"vld-table\"><thead><tr>" +
+    "<th>완제품코드</th><th>완제품명</th><th>하위품목코드</th><th>하위품목명</th>" +
+    "<th class=\"vld-th-r\">BOM 기준수량</th><th class=\"vld-th-r\">구성요소수량</th>" +
+    "<th class=\"vld-th-r\">BOM 환산계수</th><th class=\"vld-th-r\">총생산계획</th><th class=\"vld-th-r\">총필요수량</th>" +
+    "</tr></thead><tbody>" + bodyHtml + "</tbody></table></div>" +
+    (rows.length > 100 ? "<div class=\"vld-sub-note\">전체 " + rows.length + "건 중 100건 표시</div>" : "");
+}
+
+function renderVldSec4(rows) {
+  if (!rows || rows.length === 0) return "<div class=\"vld-empty\">제약 대상 없음</div>";
+  return "<div class=\"vld-scroll\"><table class=\"vld-table\"><thead><tr>" +
+    "<th>하위품목코드</th><th>하위품목명</th><th>플랜트</th><th>현재고 연결</th>" +
+    "<th class=\"vld-th-r\">현재고 수량</th><th>단위</th>" +
+    "</tr></thead><tbody>" + rows.map(function(r) {
+      return "<tr><td>" + escapeHtml(r.code) + "</td>" +
+             "<td class=\"vld-td-left\">" + escapeHtml(r.name) + "</td>" +
+             "<td>" + escapeHtml(displayPlantName(r.plant)) + "</td>" +
+             "<td>" + vldBadge(r.hasInv ? "정상" : "연결필요") + "</td>" +
+             "<td class=\"vld-td-r\">" + vldNum(r.qty) + "</td>" +
+             "<td>" + escapeHtml(r.unit || "-") + "</td></tr>";
+    }).join("") + "</tbody></table></div>";
+}
+
+function renderVldSec5(rows, months) {
+  if (!rows || rows.length === 0) return "<div class=\"vld-empty\">제약 대상 없음</div>";
+  var mHeads = months.map(function(m) { return "<th class=\"vld-th-r\">" + escapeHtml(monthLabel(m)) + "</th>"; }).join("");
+  return "<div class=\"vld-scroll\"><table class=\"vld-table\"><thead><tr>" +
+    "<th>하위품목코드</th><th>하위품목명</th><th>플랜트</th><th>공급계획 연결</th><th>단위</th>" + mHeads +
+    "</tr></thead><tbody>" + rows.map(function(r) {
+      var mCells = r.monthly.map(function(md) {
+        return "<td class=\"vld-td-r\">" + (md.qty !== null && md.qty > 0 ? vldNum(md.qty) : "-") + "</td>";
+      }).join("");
+      return "<tr><td>" + escapeHtml(r.code) + "</td>" +
+             "<td class=\"vld-td-left\">" + escapeHtml(r.name) + "</td>" +
+             "<td>" + escapeHtml(displayPlantName(r.plant)) + "</td>" +
+             "<td>" + vldBadge(r.hasSupply ? "정상" : "연결필요") + "</td>" +
+             "<td>" + escapeHtml(r.unit || "-") + "</td>" + mCells + "</tr>";
+    }).join("") + "</tbody></table></div>";
+}
+
+function renderVldSec6(rows) {
+  if (!rows || rows.length === 0) return "<div class=\"vld-empty\">제약 대상 없음</div>";
+  return "<div class=\"vld-scroll\"><table class=\"vld-table\"><thead><tr>" +
+    "<th>하위품목코드</th><th>하위품목명</th>" +
+    "<th>BOM 단위</th><th>현재고 단위</th><th>공급계획 단위</th><th>기준정보 단위</th><th>단위 정합</th>" +
+    "</tr></thead><tbody>" + rows.map(function(r) {
+      return "<tr><td>" + escapeHtml(r.code) + "</td>" +
+             "<td class=\"vld-td-left\">" + escapeHtml(r.name) + "</td>" +
+             "<td>" + escapeHtml(r.bomUnit) + "</td><td>" + escapeHtml(r.invUnit) + "</td>" +
+             "<td>" + escapeHtml(r.supplyUnit) + "</td><td>" + escapeHtml(r.masterUnit) + "</td>" +
+             "<td>" + vldBadge(r.status) + "</td></tr>";
+    }).join("") + "</tbody></table></div>";
+}
+
+function renderVldSec7(rows, months) {
+  if (!rows || rows.length === 0) return "<div class=\"vld-empty\">부족·판단불가 대상 없음</div>";
+  var mHeads = months.map(function(m) {
+    return "<th class=\"vld-month-head\" colspan=\"5\">" + escapeHtml(monthLabel(m)) + "</th>";
+  }).join("");
+  var subHeads = months.map(function() {
+    return "<th class=\"vld-th-r\">필요</th><th class=\"vld-th-r\">공급계획</th>" +
+           "<th class=\"vld-th-r\">가용</th><th class=\"vld-th-r\">부족</th><th>판정</th>";
+  }).join("");
+  var bodyHtml = rows.map(function(r) {
+    var mCells = r.monthly.map(function(md) {
+      var avail = md.available === null ? "-" : vldNum(md.available);
+      var short = md.shortage === null ? "-"
+        : md.shortage > 0 ? "<span class=\"vld-short-num\">" + vldNum(md.shortage) + "</span>" : "-";
+      return "<td class=\"vld-td-r\">" + vldNum(md.required) + "</td>" +
+             "<td class=\"vld-td-r\">" + (md.supply > 0 ? vldNum(md.supply) : "-") + "</td>" +
+             "<td class=\"vld-td-r\">" + avail + "</td>" +
+             "<td class=\"vld-td-r\">" + short + "</td>" +
+             "<td>" + vldBadge(md.judgment) + "</td>";
+    }).join("");
+    return "<tr><td>" + escapeHtml(r.code) + "</td>" +
+           "<td class=\"vld-td-left\">" + escapeHtml(r.name) + "</td>" +
+           "<td>" + escapeHtml(displayPlantName(r.plant)) + "</td>" +
+           "<td class=\"vld-td-r\">" + vldNum(r.baseQty) + "</td>" +
+           mCells + "</tr>";
+  }).join("");
+  return "<div class=\"vld-scroll\"><table class=\"vld-table\"><thead>" +
+    "<tr><th>하위품목코드</th><th>하위품목명</th><th>플랜트</th><th class=\"vld-th-r\">기초재고</th>" + mHeads + "</tr>" +
+    "<tr><th></th><th></th><th></th><th></th>" + subHeads + "</tr>" +
+    "</thead><tbody>" + bodyHtml + "</tbody></table></div>";
+}
+
 // ── 결과 표 섹션 ─────────────────────────────────────────────────────────────
 function renderConstraintTableSection(result, bomStatus, months) {
   var isRunning = bomStatus === BOM_STATUS.RUNNING;
@@ -437,6 +839,7 @@ function renderConstraintTableSection(result, bomStatus, months) {
   var headerRight = "<div class=\"cst-sec-actions\">" +
     "<span class=\"cst-status-badge" + statusCls + "\">전개상태: " + escapeHtml(statusLabel) + "</span>" +
     (lastTime ? "<span class=\"cst-status-time\">마지막 전개: " + escapeHtml(lastTime) + "</span>" : "") +
+    (isDone ? "<button type=\"button\" id=\"validationBtn\" class=\"cst-validate-btn\">정합성 검증</button>" : "") +
     "<button type=\"button\" id=\"bomExpandBtn\" class=\"cst-bom-btn" + (isRunning ? " running" : "") + "\"" +
     (isRunning ? " disabled" : "") + ">BOM 전개</button></div>";
 
@@ -682,6 +1085,7 @@ function renderConstraint() {
     "</section>" +
     (bomStatus === BOM_STATUS.DONE && state.bomResult ? renderConstraintSummaryCard(state.bomResult) : "") +
     renderConstraintTableSection(state.bomResult, bomStatus, months) +
+    renderValidationPanel() +
     "</div>";
 }
 
@@ -748,6 +1152,34 @@ function bindConstraint() {
     el.addEventListener("click", function() {
       var cur = state.constraintImpactSort || 0;
       state.constraintImpactSort = cur === 0 ? 1 : cur === 1 ? -1 : 0;
+      render("constraint");
+    });
+  });
+
+  // 정합성 검증 버튼
+  var valBtn = document.querySelector("#validationBtn");
+  if (valBtn) valBtn.addEventListener("click", function() {
+    state.validationPanelOpen = true;
+    state.validationTab = 0;
+    render("constraint");
+  });
+
+  // 패널 닫기
+  var closeBtn = document.querySelector("#vldCloseBtn");
+  if (closeBtn) closeBtn.addEventListener("click", function() {
+    state.validationPanelOpen = false;
+    render("constraint");
+  });
+  // 오버레이 배경 클릭으로 닫기
+  var overlay = document.querySelector("#validationOverlay");
+  if (overlay) overlay.addEventListener("click", function(e) {
+    if (e.target === overlay) { state.validationPanelOpen = false; render("constraint"); }
+  });
+
+  // 검증 탭 전환
+  document.querySelectorAll("[data-vld-tab]").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      state.validationTab = parseInt(btn.dataset.vldTab, 10) || 0;
       render("constraint");
     });
   });
