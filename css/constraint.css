@@ -394,3 +394,76 @@
   padding: 28px;
   text-align: center !important;
 }
+
+/* ── 필터 바 우측 (상세보기 토글 + 검색) ── */
+.cst-filter-right {
+  align-items: center;
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* ── 월별 상세보기 토글 버튼 ── */
+.cst-detail-toggle {
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 5px;
+  color: #374151;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  height: 26px;
+  padding: 0 10px;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+  white-space: nowrap;
+}
+
+.cst-detail-toggle:hover  { background: #e5e7eb; border-color: #9ca3af; }
+.cst-detail-toggle.active { background: #28278f; border-color: #28278f; color: #fff; }
+
+/* ── 압축 셀 ── */
+.cst-compact-cell {
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center !important;
+}
+
+.cst-compact-shared {
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center !important;
+}
+
+/* ── 영향품목수 정렬 헤더 ── */
+.cst-sort-th {
+  cursor: pointer;
+  display: inline-block;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.cst-sort-th:hover { color: #c7c6ff; text-decoration: underline; }
+
+/* ── 영향품목 개수 제한 안내 ── */
+.cst-detail-more {
+  color: #9ca3af;
+  font-size: 11px;
+  margin-top: 6px;
+  padding: 2px 4px;
+  text-align: right;
+}
+
+/* ── 조정안에 담기 (보조 버튼) ── */
+.cst-adj-btn-sub {
+  background: #f3f4f6;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  color: #9ca3af;
+  cursor: not-allowed;
+  font-size: 12px;
+  font-weight: 700;
+  height: 30px;
+  padding: 0 14px;
+}

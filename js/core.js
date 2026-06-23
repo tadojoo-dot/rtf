@@ -56,6 +56,8 @@ const state = {
   constraintFilter: "all",
   constraintSearch: "",
   expandedConstraintRows: new Set(),
+  constraintDetailMode: false,
+  constraintImpactSort: 0,
 };
 
 // DOM 참조
