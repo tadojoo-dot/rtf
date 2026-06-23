@@ -8,6 +8,7 @@
   const NEED_DATA = "데이터 연결 필요";
   const NO_PLAN = "판매계획 없음";
   const ERROR_TEXTS = new Set(["#REF!", "#VALUE!", "#DIV/0!", "undefined", "null", "NaN", "Infinity", "-Infinity"]);
+  const SHORT_TEXT = { [NEED_DATA]: "연결필요", [NEED_MASTER]: "확인필요" };
 
   const menus = [
     ["meeting", "회의체계"],
@@ -41,7 +42,8 @@
       bom_components: [],
       business_mapping: [],
     },
-    rtfExtraOpen: false,
+    rtfExpanded: false,
+    expandedItemGroups: new Set(),
     rtfDisplayMode: "qty",
   };
 
@@ -576,34 +578,81 @@
     };
   }
 
-  function makeNode(id, parentId, level, kind, label, items, meta = {}) {
-    return { id, parentId, level, kind, label, items, meta, expanded: false };
+  function makeNode(id, parentId, level, kind, label, items, cols = {}) {
+    return { id, parentId, level, kind, label, items, cols };
   }
+
+  function sortKo(arr) { return [...arr].sort((a, b) => String(a).localeCompare(String(b), "ko-KR")); }
+  function uniq(items, key) { return sortKo([...new Set(items.map((i) => i[key]))]); }
 
   function buildHierarchy(items, mode) {
     const nodes = [];
-    const firstKey = mode === "business" ? "businessUnit" : "plant";
-    const topValues = [...new Set(items.map((item) => item[firstKey]))].sort((a, b) => String(a).localeCompare(String(b), "ko-KR"));
-    topValues.forEach((topValue) => {
-      const topItems = items.filter((item) => item[firstKey] === topValue);
-      const topId = `${mode}|${topValue}`;
-      nodes.push(makeNode(topId, "", 0, mode, topValue, topItems));
-      const typeValues = [...new Set(topItems.map((item) => item.typeGroup))].sort();
-      typeValues.forEach((type) => {
-        const typeItems = topItems.filter((item) => item.typeGroup === type);
-        const typeId = `${topId}|${type}`;
-        nodes.push(makeNode(typeId, topId, 1, "type", `${type} 계`, typeItems, { type }));
-        const groupValues = [...new Set(typeItems.map((item) => item.itemGroup))].sort((a, b) => String(a).localeCompare(String(b), "ko-KR"));
-        groupValues.forEach((group) => {
-          const groupItems = typeItems.filter((item) => item.itemGroup === group);
-          const groupId = `${typeId}|${group}`;
-          nodes.push(makeNode(groupId, typeId, 2, "itemGroup", `${group} 계`, groupItems, { type, itemGroup: group }));
-          groupItems.forEach((item) => {
-            nodes.push(makeNode(`${groupId}|${item.itemCode}`, groupId, 3, "item", item.itemName, [item], { type, itemGroup: group, item }));
+    if (mode === "business") {
+      uniq(items, "businessUnit").forEach((bu) => {
+        const buItems = items.filter((i) => i.businessUnit === bu);
+        const buId = `b|${bu}`;
+        nodes.push(makeNode(buId, "", 0, "group", `${bu} 계`, buItems, { div: "사업부", bu, plant: "", type: "", group: "", code: "" }));
+        uniq(buItems, "typeGroup").forEach((type) => {
+          const typeItems = buItems.filter((i) => i.typeGroup === type);
+          const typeId = `${buId}|${type}`;
+          nodes.push(makeNode(typeId, buId, 1, "group", `${type} 계`, typeItems, { div: "유형", bu, plant: "", type, group: "", code: "" }));
+          uniq(typeItems, "itemGroup").forEach((group) => {
+            const groupItems = typeItems.filter((i) => i.itemGroup === group);
+            const groupId = `${typeId}|${group}`;
+            nodes.push(makeNode(groupId, typeId, 2, "itemGroup", `${group} 계`, groupItems, { div: "품목군", bu, plant: "", type, group, code: "" }));
+            groupItems.forEach((item) => {
+              nodes.push(makeNode(`${groupId}|${item.itemCode}`, groupId, 3, "item", item.itemName, [item],
+                { div: "자재", bu: item.businessUnit, plant: item.plant, type: item.typeGroup, group: item.itemGroup, code: item.itemCode }));
+            });
           });
         });
       });
-    });
+    } else if (mode === "plant") {
+      uniq(items, "plant").forEach((plant) => {
+        const plantItems = items.filter((i) => i.plant === plant);
+        const plantId = `p|${plant}`;
+        nodes.push(makeNode(plantId, "", 0, "group", `${plant} 계`, plantItems, { div: "플랜트", bu: "", plant, type: "", group: "", code: "" }));
+        uniq(plantItems, "typeGroup").forEach((type) => {
+          const typeItems = plantItems.filter((i) => i.typeGroup === type);
+          const typeId = `${plantId}|${type}`;
+          nodes.push(makeNode(typeId, plantId, 1, "group", `${type} 계`, typeItems, { div: "유형", bu: "", plant, type, group: "", code: "" }));
+          uniq(typeItems, "itemGroup").forEach((group) => {
+            const groupItems = typeItems.filter((i) => i.itemGroup === group);
+            const groupId = `${typeId}|${group}`;
+            nodes.push(makeNode(groupId, typeId, 2, "itemGroup", `${group} 계`, groupItems, { div: "품목군", bu: "", plant, type, group, code: "" }));
+            groupItems.forEach((item) => {
+              nodes.push(makeNode(`${groupId}|${item.itemCode}`, groupId, 3, "item", item.itemName, [item],
+                { div: "자재", bu: item.businessUnit, plant: item.plant, type: item.typeGroup, group: item.itemGroup, code: item.itemCode }));
+            });
+          });
+        });
+      });
+    } else {
+      uniq(items, "typeGroup").forEach((type) => {
+        const typeItems = items.filter((i) => i.typeGroup === type);
+        const typeId = `t|${type}`;
+        nodes.push(makeNode(typeId, "", 0, "group", `${type} 계`, typeItems, { div: "유형", bu: "", plant: "", type, group: "", code: "" }));
+        uniq(typeItems, "businessUnit").forEach((bu) => {
+          const buItems = typeItems.filter((i) => i.businessUnit === bu);
+          const buId = `${typeId}|${bu}`;
+          nodes.push(makeNode(buId, typeId, 1, "group", `${bu} 계`, buItems, { div: "사업부", bu, plant: "", type, group: "", code: "" }));
+          uniq(buItems, "plant").forEach((plant) => {
+            const plantItems = buItems.filter((i) => i.plant === plant);
+            const plantId = `${buId}|${plant}`;
+            nodes.push(makeNode(plantId, buId, 2, "group", `${plant} 계`, plantItems, { div: "플랜트", bu, plant, type, group: "", code: "" }));
+            uniq(plantItems, "itemGroup").forEach((group) => {
+              const groupItems = plantItems.filter((i) => i.itemGroup === group);
+              const groupId = `${plantId}|${group}`;
+              nodes.push(makeNode(groupId, plantId, 3, "itemGroup", `${group} 계`, groupItems, { div: "품목군", bu, plant, type, group, code: "" }));
+              groupItems.forEach((item) => {
+                nodes.push(makeNode(`${groupId}|${item.itemCode}`, groupId, 4, "item", item.itemName, [item],
+                  { div: "자재", bu: item.businessUnit, plant: item.plant, type: item.typeGroup, group: item.itemGroup, code: item.itemCode }));
+              });
+            });
+          });
+        });
+      });
+    }
     return nodes;
   }
 
@@ -616,7 +665,7 @@
   }
 
   function getVisibleMonthColumns() {
-    return state.rtfExtraOpen ? MONTH_COLUMNS : MONTH_COLUMNS.filter((metric) => !EXTRA_COLUMNS.includes(metric));
+    return state.rtfExpanded ? MONTH_COLUMNS : MONTH_COLUMNS.filter((metric) => !EXTRA_COLUMNS.includes(metric));
   }
 
   function formatQtyCell(value, noPlan = false) {
@@ -643,132 +692,97 @@
     return Number.isFinite(amount) ? formatMoney(amount) : NEED_DATA;
   }
 
-  function renderMetricCell(row, metric, muted = false, metricIndex = 0) {
-    const cls = `${muted ? " rtf-muted-metric" : ""}${metricIndex === 0 ? " rtf-month-start" : ""}`;
-    if (metric === "판매계획") return `<td class="rtf-metric-cell${cls}">${escapeHtml(formatDisplayQtyMoney(row.salesQty, row.salesAmount, row.hasNoPlan || row.noSalesPlan))}</td>`;
-    if (metric === "RTF") return `<td class="rtf-metric-cell rtf-rtf-cell rtf-status-text ${statusClass(row.status)}${cls}">${escapeHtml(formatDisplayQtyMoney(row.rtfQty, row.rtfAmount, row.hasNoPlan || row.noSalesPlan))}</td>`;
-    if (metric === "Shortage") {
-      const hasShortage = state.rtfDisplayMode === "amount"
-        ? Number.isFinite(row.shortageAmount) && row.shortageAmount > 0
-        : Number.isFinite(row.shortageQty) && row.shortageQty > 0;
-      const shortageText = state.rtfDisplayMode === "amount"
-        ? (hasShortage ? formatMoney(row.shortageAmount) : "-")
-        : (hasShortage ? formatNumber(row.shortageQty) : "-");
-      return `<td class="rtf-metric-cell rtf-shortage-cell ${hasShortage ? `rtf-status-text ${statusClass(row.status)}` : "rtf-neutral-text"}${cls}">${escapeHtml(shortageText)}</td>`;
+  function renderMetricCell(row, metric, metricIndex, compressed) {
+    const mb = metricIndex === 0 ? " rtf-month-start" : "";
+    const noPlan = row.hasNoPlan || row.noSalesPlan;
+    if (metric === "판매계획") {
+      const raw = formatDisplayQtyMoney(row.salesQty, row.salesAmount, noPlan);
+      const disp = compressed ? (SHORT_TEXT[raw] || raw) : raw;
+      return `<td class="rtf-metric-cell${mb}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
     }
-    if (metric === "매출") return `<td class="rtf-metric-cell${cls}">${escapeHtml(Number.isFinite(row.salesAmount) ? formatMoney(row.salesAmount) : NEED_DATA)}</td>`;
-    if (metric === "매출차질예상") return `<td class="rtf-metric-cell${cls}">${escapeHtml(Number.isFinite(row.lostSalesAmount) && row.lostSalesAmount > 0 ? formatMoney(row.lostSalesAmount) : "-")}</td>`;
-    if (metric === "기말재고") return `<td class="rtf-metric-cell${cls}">${escapeHtml(formatEnding(row))}</td>`;
-    if (metric === "재고일수") return `<td class="rtf-metric-cell${cls}">${escapeHtml(Number.isFinite(row.inventoryDays) ? `${formatNumber(row.inventoryDays, 1)}일` : "판단불가")}</td>`;
-    return `<td class="rtf-metric-cell${cls}">-</td>`;
+    if (metric === "RTF") {
+      const raw = formatDisplayQtyMoney(row.rtfQty, row.rtfAmount, noPlan);
+      const disp = compressed ? (SHORT_TEXT[raw] || raw) : raw;
+      return `<td class="rtf-metric-cell rtf-rtf-cell rtf-status-text ${statusClass(row.status)}${mb}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
+    }
+    if (metric === "Shortage") {
+      const isAmt = state.rtfDisplayMode === "amount";
+      const hasShortage = isAmt ? (Number.isFinite(row.shortageAmount) && row.shortageAmount > 0) : (Number.isFinite(row.shortageQty) && row.shortageQty > 0);
+      const raw = hasShortage ? (isAmt ? formatMoney(row.shortageAmount) : formatNumber(row.shortageQty)) : "-";
+      return `<td class="rtf-metric-cell rtf-shortage-cell ${hasShortage ? `rtf-status-text shortage` : "rtf-neutral-text"}${mb}">${escapeHtml(raw)}</td>`;
+    }
+    if (metric === "매출") return `<td class="rtf-metric-cell rtf-muted-metric${mb}">${escapeHtml(Number.isFinite(row.salesAmount) ? formatMoney(row.salesAmount) : NEED_DATA)}</td>`;
+    if (metric === "매출차질예상") {
+      const val = Number.isFinite(row.lostSalesAmount) && row.lostSalesAmount > 0 ? formatMoney(row.lostSalesAmount) : "-";
+      return `<td class="rtf-metric-cell ${val !== "-" ? "rtf-status-text shortage" : "rtf-neutral-text"}${mb}">${escapeHtml(val)}</td>`;
+    }
+    if (metric === "기말재고") return `<td class="rtf-metric-cell rtf-muted-metric${mb}">${escapeHtml(formatEnding(row))}</td>`;
+    if (metric === "재고일수") return `<td class="rtf-metric-cell rtf-muted-metric${mb}">${escapeHtml(Number.isFinite(row.inventoryDays) ? `${formatNumber(row.inventoryDays, 1)}일` : "판단불가")}</td>`;
+    return `<td class="rtf-metric-cell${mb}">-</td>`;
   }
 
-  function actionForNode(node) {
-    const worst = getRtfMonths().map((_, index) => aggregateMonth(node.items, index).status).reduce((a, b) => higherSeverity(a, b), STATUS.OK);
-    if (node.items.some(hasMasterGap)) return NEED_MASTER;
-    if (node.items.some((item) => !item.hasInventory)) return NEED_DATA;
-    if (worst === STATUS.SHORTAGE) return "공급계획 보강 또는 생산 Pull-in 검토";
-    if (worst === STATUS.WARN) return "Shortage 원인 확인";
-    if (worst === STATUS.UNKNOWN) return "기준정보 또는 판매계획 확인";
-    return "모니터링";
-  }
-
-  function renderHierarchyRow(node, mode) {
+  function renderHierarchyRow(node) {
     const isItem = node.kind === "item";
-    const hasChildren = !isItem;
-    const item = node.meta.item;
-    const firstCol = node.level === 0 ? node.label : "";
-    const typeCol = isItem ? item.typeGroup : node.kind === "type" ? node.label : node.meta.type || "";
-    const groupCol = isItem ? item.itemGroup : node.kind === "itemGroup" ? node.label : node.meta.itemGroup || "";
-    const codeCol = isItem ? item.itemCode : "";
-    const nameCol = isItem ? item.itemName : node.level === 0 ? `${node.label} 계` : node.label;
+    const isItemGroup = node.kind === "itemGroup";
+    const item = isItem ? node.items[0] : null;
+    const { div, bu, plant, type, group, code } = node.cols;
     const baseQty = formatBaseForNode(node);
-    const rowClass = `rtf-h-row level-${node.level} ${isItem ? "is-item" : "is-group"}`;
+    const compressed = !state.rtfExpanded;
+    const isHidden = compressed ? node.level > 0 : (isItem && !state.expandedItemGroups.has(node.parentId));
     const monthColumns = getVisibleMonthColumns();
-    const cells = getRtfMonths().map((month, index) => {
-      const monthRow = isItem ? item.monthlyStatus[index] : aggregateMonth(node.items, index);
-      return monthColumns.map((metric, metricIndex) => renderMetricCell(monthRow, metric, !["RTF", "Shortage"].includes(metric), metricIndex)).join("");
+    const cells = getRtfMonths().map((_, mIdx) => {
+      const monthRow = isItem ? item.monthlyStatus[mIdx] : aggregateMonth(node.items, mIdx);
+      return monthColumns.map((metric, colIdx) => renderMetricCell(monthRow, metric, colIdx, compressed)).join("");
     }).join("");
-
-    return `<tr class="${rowClass}" data-node-id="${escapeHtml(node.id)}" data-parent-id="${escapeHtml(node.parentId)}" data-level="${node.level}" ${node.parentId ? "hidden" : ""}>
-      <td class="rtf-sticky rtf-tree-cell">${hasChildren ? `<button type="button" class="rtf-tree-toggle" data-node-id="${escapeHtml(node.id)}">확대</button>` : ""}<span class="rtf-indent rtf-indent-${node.level}"></span>${escapeHtml(firstCol)}</td>
-      <td class="rtf-sticky rtf-left-type">${escapeHtml(typeCol)}</td>
-      <td class="rtf-sticky rtf-left-group">${escapeHtml(groupCol)}</td>
-      <td class="rtf-sticky rtf-left-code">${escapeHtml(codeCol)}</td>
-      <td class="rtf-sticky rtf-left-name" title="${escapeHtml(nameCol)}">${escapeHtml(nameCol)}</td>
-      <td class="rtf-sticky rtf-left-base">${escapeHtml(baseQty)}</td>
+    const toggleBtn = isItemGroup && state.rtfExpanded
+      ? `<button type="button" class="rtf-item-toggle" data-node-id="${escapeHtml(node.id)}">${state.expandedItemGroups.has(node.id) ? "-" : "+"}</button>`
+      : "";
+    const rowClass = `rtf-h-row level-${node.level} ${isItem ? "is-item" : "is-group"}`;
+    return `<tr class="${rowClass}" data-node-id="${escapeHtml(node.id)}" data-parent-id="${escapeHtml(node.parentId)}"${isHidden ? " hidden" : ""}>
+      <td class="rtf-sticky rtf-col-div">${toggleBtn}<span class="rtf-div-label">${escapeHtml(div)}</span></td>
+      <td class="rtf-sticky rtf-col-bu">${escapeHtml(bu)}</td>
+      <td class="rtf-sticky rtf-col-plant">${escapeHtml(plant)}</td>
+      <td class="rtf-sticky rtf-col-type">${escapeHtml(type)}</td>
+      <td class="rtf-sticky rtf-col-group">${escapeHtml(group)}</td>
+      <td class="rtf-sticky rtf-col-code">${escapeHtml(code)}</td>
+      <td class="rtf-sticky rtf-col-name" title="${escapeHtml(node.label)}">${escapeHtml(node.label)}</td>
+      <td class="rtf-sticky rtf-col-base">${escapeHtml(baseQty)}</td>
       ${cells}
-      <td class="rtf-action-cell">${escapeHtml(actionForNode(node))}</td>
     </tr>`;
-  }
-
-  function renderRtfGuide(items) {
-    const months = getRtfMonths();
-    const monthStatuses = months.map((_, index) => aggregateMonth(items, index).status);
-    const shortageMonths = monthStatuses.filter((status) => status === STATUS.SHORTAGE).length;
-    const warnMonths = monthStatuses.filter((status) => status === STATUS.WARN).length;
-    const worstStatus = monthStatuses.reduce((a, b) => higherSeverity(a, b), STATUS.OK);
-    const viewRows = [
-      ["사업부별", "사업부 > 유형 > 품목군 > 자재", `${formatNumber(items.length)}개 자재`, "사업부 책임 단위로 부족 월을 먼저 확인", "rtfBusinessMatrix"],
-      ["플랜트별", "플랜트 > 유형 > 품목군 > 자재", `${months.length}개월`, "생산/공급 실행 단위로 Shortage 원인 확인", "rtfPlantMatrix"],
-      ["자재상세", "선택 자재 월별 계산", state.rtfDisplayMode === "qty" ? "수량 기준" : "금액 기준", "행 클릭 후 BOM/기말재고/확인사항 확인", "rtfDetailPanel"],
-    ];
-    return `<section class="rtf-card rtf-nav-card" aria-label="RTF 화면 안내">
-      <div class="rtf-nav-summary">
-        <div>
-          <h3>RTF 확인 순서</h3>
-          <p>참고 리포트처럼 핵심 기준을 표로 먼저 정리했습니다. 아래 행을 누르면 해당 영역으로 이동합니다.</p>
-        </div>
-        <div class="rtf-nav-kpis">
-          <span><b>${escapeHtml(monthLabel(months[0]))}</b> 기준월</span>
-          <span><b>${escapeHtml(String(shortageMonths))}</b> 부족월</span>
-          <span><b>${escapeHtml(String(warnMonths))}</b> 주의월</span>
-          <span>${renderStatus(worstStatus)}</span>
-        </div>
-      </div>
-      <div class="rtf-nav-table-wrap">
-        <table class="rtf-nav-table">
-          <thead><tr><th>화면</th><th>구조</th><th>현재 기준</th><th>볼 것</th><th>이동</th></tr></thead>
-          <tbody>${viewRows.map(([name, structure, basis, focus, target]) => `<tr>
-            <td class="rtf-nav-name">${escapeHtml(name)}</td>
-            <td>${escapeHtml(structure)}</td>
-            <td>${escapeHtml(basis)}</td>
-            <td class="rtf-nav-focus">${escapeHtml(focus)}</td>
-            <td><button type="button" class="rtf-nav-jump" data-rtf-jump="${escapeHtml(target)}">보기</button></td>
-          </tr>`).join("")}</tbody>
-        </table>
-      </div>
-      <div class="rtf-legend-row">
-        <span>${renderStatus(STATUS.OK)} 판매계획 대응 가능</span>
-        <span>${renderStatus(STATUS.WARN)} 기말재고가 판매계획보다 낮음</span>
-        <span>${renderStatus(STATUS.SHORTAGE)} 공급 부족 발생</span>
-        <span>${renderStatus(STATUS.UNKNOWN)} 기준정보 또는 계획 확인 필요</span>
-      </div>
-    </section>`;
   }
 
   function renderMatrixSection(title, mode, items, sectionId) {
     const months = getRtfMonths();
     const nodes = buildHierarchy(items, mode);
     const monthColumns = getVisibleMonthColumns();
-    const firstHeader = mode === "business" ? "사업부" : mode === "plant" ? "플랜트" : "유형";
-    const monthHeader = months.map((month) => `<th class="rtf-month-head" colspan="${monthColumns.length}">${monthLabel(month)}</th>`).join("");
-    const metricHeader = months.map(() => monthColumns.map((metric, index) => `<th class="rtf-sub-head ${["RTF", "Shortage"].includes(metric) ? "rtf-key-sub" : ""}${index === 0 ? " rtf-month-start" : ""}">${escapeHtml(metric)}</th>`).join("")).join("");
-    const body = nodes.length ? nodes.map((node) => renderHierarchyRow(node, mode)).join("") : `<tr><td colspan="${6 + months.length * monthColumns.length + 1}" class="rtf-empty">데이터 없음</td></tr>`;
+    const monthHeader = months.map((month) => `<th class="rtf-month-head" colspan="${monthColumns.length}">${escapeHtml(monthLabel(month))}</th>`).join("");
+    const metricHeader = months.map(() => monthColumns.map((metric, idx) =>
+      `<th class="rtf-sub-head${["RTF", "Shortage"].includes(metric) ? " rtf-key-sub" : ""}${idx === 0 ? " rtf-month-start" : ""}">${escapeHtml(metric)}</th>`
+    ).join("")).join("");
+    const COL_W = { "판매계획": 75, "RTF": 75, "Shortage": 80, "매출": 75, "매출차질예상": 90, "기말재고": 75, "재고일수": 75 };
+    const metricCols = months.flatMap(() => monthColumns.map((m) => `<col style="width:${COL_W[m] || 75}px;min-width:${COL_W[m] || 75}px;">`)).join("");
+    const colCount = 8 + months.length * monthColumns.length;
+    const body = nodes.length ? nodes.map((node) => renderHierarchyRow(node)).join("") : `<tr><td colspan="${colCount}" class="rtf-empty">데이터 없음</td></tr>`;
     return `<section id="${escapeHtml(sectionId)}" class="rtf-card rtf-block rtf-matrix-block">
-      <div class="rtf-sec-title"><span>${escapeHtml(title)}</span><span class="rtf-unit">상위 그룹 클릭 시 유형 > 품목군 > 자재코드/자재명 순서로 펼침</span></div>
+      <div class="rtf-sec-title"><span>${escapeHtml(title)}</span></div>
       <div class="rtf-h-scroll">
-        <table class="rtf-h-matrix-table ${state.rtfExtraOpen ? "is-expanded" : "is-collapsed"}">
+        <table class="rtf-h-matrix-table ${state.rtfExpanded ? "is-expanded" : "is-collapsed"}">
+          <colgroup>
+            <col class="rtf-col-div"><col class="rtf-col-bu"><col class="rtf-col-plant"><col class="rtf-col-type">
+            <col class="rtf-col-group"><col class="rtf-col-code"><col class="rtf-col-name"><col class="rtf-col-base">
+            ${metricCols}
+          </colgroup>
           <thead>
             <tr>
-              <th class="rtf-sticky rtf-left-first" rowspan="2">${escapeHtml(firstHeader)}</th>
-              <th class="rtf-sticky rtf-left-type" rowspan="2">유형</th>
-              <th class="rtf-sticky rtf-left-group" rowspan="2">품목군</th>
-              <th class="rtf-sticky rtf-left-code" rowspan="2">자재코드</th>
-              <th class="rtf-sticky rtf-left-name" rowspan="2">자재명</th>
-              <th class="rtf-sticky rtf-left-base" rowspan="2">기초재고</th>
+              <th class="rtf-sticky rtf-col-div" rowspan="2">구분</th>
+              <th class="rtf-sticky rtf-col-bu" rowspan="2">사업부</th>
+              <th class="rtf-sticky rtf-col-plant" rowspan="2">플랜트</th>
+              <th class="rtf-sticky rtf-col-type" rowspan="2">유형</th>
+              <th class="rtf-sticky rtf-col-group" rowspan="2">품목군</th>
+              <th class="rtf-sticky rtf-col-code" rowspan="2">자재코드</th>
+              <th class="rtf-sticky rtf-col-name" rowspan="2">자재명</th>
+              <th class="rtf-sticky rtf-col-base" rowspan="2">기초재고</th>
               ${monthHeader}
-              <th class="rtf-action-head" rowspan="2">확인사항</th>
             </tr>
             <tr>${metricHeader}</tr>
           </thead>
@@ -778,57 +792,29 @@
     </section>`;
   }
 
-  function renderDetailEmpty() {
-    return `<div class="rtf-detail-empty">자재 상세행을 선택하면 월별 계산과 확인 필요사항을 표시합니다.</div>`;
-  }
-
-  function bomState(item) {
-    if (item.typeGroup !== "완제품") return "확인 필요";
-    const rows = state.mappedData.bom_components.filter((row) => cleanOptional(row.rootItemCode) === item.itemCode);
-    if (rows.length > 0) return "BOM 매칭";
-    if (state.mappedData.bom_components.length === 0) return "구성품 데이터 연결 필요";
-    return "BOM 미매칭";
-  }
-
-  function renderItemDetail(item) {
-    const worst = item.monthlyStatus.reduce((status, month) => higherSeverity(status, month.status), STATUS.OK);
-    const monthRows = item.monthlyStatus.map((m) => `<tr>
-      <td class="${m.month === getRtfMonths()[0] ? "rtf-base-col" : ""}">${monthLabel(m.month)}</td>
-      <td>${escapeHtml(formatDisplayQtyMoney(m.salesQty, m.salesAmount, m.noSalesPlan))}</td>
-      <td>${escapeHtml(formatDisplayQtyMoney(m.rtfQty, m.rtfAmount, m.noSalesPlan))}</td>
-      <td>${escapeHtml(state.rtfDisplayMode === "amount" ? (Number.isFinite(m.shortageAmount) && m.shortageAmount > 0 ? formatMoney(m.shortageAmount) : "-") : (Number.isFinite(m.shortageQty) && m.shortageQty > 0 ? formatNumber(m.shortageQty) : "-"))}</td>
-      <td>${escapeHtml(Number.isFinite(m.salesAmount) ? formatMoney(m.salesAmount) : NEED_DATA)}</td>
-      <td>${escapeHtml(Number.isFinite(m.lostSalesAmount) && m.lostSalesAmount > 0 ? formatMoney(m.lostSalesAmount) : "-")}</td>
-      <td>${escapeHtml(formatEnding(m))}</td>
-      <td>${escapeHtml(Number.isFinite(m.inventoryDays) ? `${formatNumber(m.inventoryDays, 1)}일` : "판단불가")}</td>
-      <td class="rtf-td-left">${escapeHtml(m.reason || actionForNode({ items: [item] }))}</td>
-    </tr>`).join("");
-    return `<div class="rtf-detail-grid">
-      <section class="rtf-dtl-section"><div class="rtf-dtl-stitle">선택 자재 정보</div><table class="rtf-dtl-table rtf-dtl-info"><tbody><tr><th>자재코드</th><td>${escapeHtml(item.itemCode)}</td><th>자재명</th><td>${escapeHtml(item.itemName)}</td></tr><tr><th>유형</th><td>${escapeHtml(item.typeGroup)}</td><th>대표 상태</th><td>${renderStatus(worst)}</td></tr></tbody></table></section>
-      <section class="rtf-dtl-section"><div class="rtf-dtl-stitle">월별 계산</div><table class="rtf-dtl-table"><thead><tr><th>월</th><th>판매계획</th><th>RTF</th><th>Shortage</th><th>매출</th><th>매출차질예상</th><th>기말재고</th><th>재고일수</th><th>확인 필요사항</th></tr></thead><tbody>${monthRows}</tbody></table></section>
-      <section class="rtf-dtl-section"><div class="rtf-dtl-stitle">BOM/구성품 점검</div><p class="rtf-dtl-note">${escapeHtml(bomState(item))}</p></section>
-    </div>`;
-  }
-
   function renderRtf() {
     const items = computeRtfItems();
     if (!state.mappedData.plan_monthly.length) {
-      return `<div class="rtf-screen"><section class="rtf-card rtf-top"><h2 class="rtf-title">▣ RTF 월별 대응 현황</h2><div class="rtf-nodata">데이터 연결 필요<br>데이터점검 화면에서 RAW 파일을 선택해 주세요.</div></section></div>`;
+      return `<div class="rtf-screen"><section class="rtf-card rtf-top"><h2 class="rtf-title">RTF 월별 대응 현황</h2><div class="rtf-nodata">데이터 연결 필요<br>데이터점검 화면에서 RAW 파일을 선택해 주세요.</div></section></div>`;
     }
+    const months = getRtfMonths();
     return `<div class="rtf-screen rtf-excel-layout">
-      <section class="rtf-card rtf-top"><h2 class="rtf-title">▣ RTF 월별 대응 현황</h2><div class="rtf-meta">기준월: ${getRtfMonths()[0]} | 대상기간: ${getRtfMonths().map(monthLabel).join("~")} | RTF_SAMPLE 예상 SHORTAGE 구조 반영</div><div class="rtf-insight">사업부별/플랜트별 계층형 월별 매트릭스입니다. RTF 컬럼은 상태명이 아니라 판매계획 대비 공급 가능한 수량 또는 금액을 표시합니다.</div></section>
-      ${renderRtfGuide(items)}
+      <section class="rtf-card rtf-top">
+        <h2 class="rtf-title">RTF 월별 대응 현황</h2>
+        <div class="rtf-meta">기준월: ${escapeHtml(months[0])} | 대상기간: ${escapeHtml(months.map(monthLabel).join(" ~ "))} | 표시: ${state.rtfDisplayMode === "qty" ? "수량" : "금액"}</div>
+        <div class="rtf-insight">RTF 컬럼은 판매계획 대비 공급 가능 수량(또는 금액)입니다. Shortage 발생 시 Shortage 컬럼에 붉은색으로 표시됩니다.</div>
+      </section>
       <div class="rtf-toolbar">
         <div class="rtf-mode-group" aria-label="표시 단위">
           <button type="button" class="rtf-mode-btn ${state.rtfDisplayMode === "qty" ? "active" : ""}" data-rtf-mode="qty">수량</button>
           <button type="button" class="rtf-mode-btn ${state.rtfDisplayMode === "amount" ? "active" : ""}" data-rtf-mode="amount">금액</button>
         </div>
-        <button type="button" id="rtfExtraToggle" class="rtf-extra-toggle ${state.rtfExtraOpen ? "active" : ""}">${state.rtfExtraOpen ? "축소" : "확대"}</button>
-        <span>확대 시 매출, 매출차질예상, 기말재고, 재고일수가 함께 표시됩니다.</span>
+        <button type="button" id="rtfExpandToggle" class="rtf-extra-toggle ${state.rtfExpanded ? "active" : ""}">${state.rtfExpanded ? "축소" : "확대"}</button>
+        <span class="rtf-toolbar-hint">${state.rtfExpanded ? "품목군까지 표시 · 품목군 행의 + 버튼으로 자재 상세 확인" : "계 행 + 판매계획/RTF/Shortage 표시"}</span>
       </div>
       ${renderMatrixSection("사업부별", "business", items, "rtfBusinessMatrix")}
       ${renderMatrixSection("플랜트별", "plant", items, "rtfPlantMatrix")}
-      <section id="rtfDetailPanel" class="rtf-card rtf-detail-panel"><div class="rtf-detail-hd"><span id="rtfDetailTitle" class="rtf-detail-hdtitle">자재 상세</span><button id="rtfDetailClose" class="rtf-detail-close" type="button">×</button></div><div id="rtfDetailBody" class="rtf-detail-body">${renderDetailEmpty()}</div></section>
+      ${renderMatrixSection("유형별", "type", items, "rtfTypeMatrix")}
     </div>`;
   }
 
@@ -840,62 +826,29 @@
     document.querySelector("#rawUpload")?.addEventListener("change", (event) => processFiles(Array.from(event.target.files ?? [])));
   }
 
-  function setChildrenVisible(nodeId, visible) {
-    document.querySelectorAll(`tr[data-parent-id="${CSS.escape(nodeId)}"]`).forEach((row) => {
-      row.hidden = !visible;
-      if (!visible) {
-        row.classList.remove("expanded");
-        const button = row.querySelector(".rtf-tree-toggle");
-        if (button) { button.textContent = "확대"; button.classList.remove("expanded"); }
-        setChildrenVisible(row.dataset.nodeId, false);
-      }
-    });
-  }
-
   function bindRtf() {
-    const items = computeRtfItems();
-    document.querySelectorAll(".rtf-tree-toggle").forEach((button) => button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      const row = button.closest("tr");
-      const expanded = !row.classList.contains("expanded");
-      row.classList.toggle("expanded", expanded);
-      button.textContent = expanded ? "축소" : "확대";
-      button.classList.toggle("expanded", expanded);
-      setChildrenVisible(button.dataset.nodeId, expanded);
-    }));
-    document.querySelectorAll(".rtf-h-row.is-group").forEach((row) => row.addEventListener("click", (event) => {
-      if (!event.target.closest(".rtf-tree-toggle")) row.querySelector(".rtf-tree-toggle")?.click();
-    }));
-    document.querySelectorAll(".rtf-h-row.is-item").forEach((row) => row.addEventListener("click", () => {
-      const code = row.dataset.nodeId.split("|").pop();
-      const item = items.find((entry) => entry.itemCode === code);
-      if (!item) return;
-      document.querySelectorAll(".rtf-h-row.selected").forEach((entry) => entry.classList.remove("selected"));
-      row.classList.add("selected");
-      const title = document.querySelector("#rtfDetailTitle");
-      const body = document.querySelector("#rtfDetailBody");
-      if (title) title.textContent = `${item.itemCode} ${item.itemName}`;
-      if (body) body.innerHTML = renderItemDetail(item);
-      document.querySelector("#rtfDetailPanel")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    }));
-    document.querySelector("#rtfDetailClose")?.addEventListener("click", () => {
-      document.querySelectorAll(".rtf-h-row.selected").forEach((row) => row.classList.remove("selected"));
-      const title = document.querySelector("#rtfDetailTitle");
-      const body = document.querySelector("#rtfDetailBody");
-      if (title) title.textContent = "자재 상세";
-      if (body) body.innerHTML = renderDetailEmpty();
-    });
-    document.querySelector("#rtfExtraToggle")?.addEventListener("click", () => {
-      state.rtfExtraOpen = !state.rtfExtraOpen;
+    document.querySelector("#rtfExpandToggle")?.addEventListener("click", () => {
+      state.rtfExpanded = !state.rtfExpanded;
+      state.expandedItemGroups.clear();
       render("rtf");
     });
-    document.querySelectorAll("[data-rtf-mode]").forEach((button) => button.addEventListener("click", () => {
-      if (state.rtfDisplayMode === button.dataset.rtfMode) return;
-      state.rtfDisplayMode = button.dataset.rtfMode;
+    document.querySelectorAll("[data-rtf-mode]").forEach((btn) => btn.addEventListener("click", () => {
+      if (state.rtfDisplayMode === btn.dataset.rtfMode) return;
+      state.rtfDisplayMode = btn.dataset.rtfMode;
       render("rtf");
     }));
-    document.querySelectorAll("[data-rtf-jump]").forEach((button) => button.addEventListener("click", () => {
-      document.querySelector(`#${CSS.escape(button.dataset.rtfJump)}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.querySelectorAll(".rtf-item-toggle").forEach((btn) => btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const nodeId = btn.dataset.nodeId;
+      const wasExpanded = state.expandedItemGroups.has(nodeId);
+      if (wasExpanded) {
+        state.expandedItemGroups.delete(nodeId);
+        btn.textContent = "+";
+      } else {
+        state.expandedItemGroups.add(nodeId);
+        btn.textContent = "-";
+      }
+      document.querySelectorAll(`tr[data-parent-id="${CSS.escape(nodeId)}"]`).forEach((row) => { row.hidden = wasExpanded; });
     }));
   }
 
