@@ -810,3 +810,59 @@
 .vld-sub-title { color: #374151; font-size: 12px; font-weight: 800; margin: 12px 0 6px; }
 .vld-sub-note  { color: #9ca3af; font-size: 11px; margin-top: 6px; }
 .vld-empty     { color: #9ca3af; font-size: 13px; padding: 24px; text-align: center; }
+
+/* ── 펼침 상세 v2 (의사결정 구조) ──────────────────────────────────────────── */
+.cst-detail-v2 { display: flex; flex-direction: column; gap: 14px; padding: 10px 0; }
+
+.cst-det-section { border: 1px solid #e3e7ef; border-radius: 6px; overflow: hidden; }
+
+.cst-det-section-title {
+  background: #f0f4fa; border-bottom: 1px solid #e3e7ef;
+  color: #374151; font-size: 12px; font-weight: 700; padding: 6px 12px;
+}
+
+.cst-det-scroll { max-width: 100%; overflow-x: auto; }
+
+/* 수급요약 표 */
+.cst-ss-table { border-collapse: collapse; font-size: 13px; min-width: 100%; table-layout: auto; }
+.cst-ss-table th {
+  background: #374151; color: #fff; font-size: 12px; font-weight: 700;
+  padding: 5px 10px; text-align: center; white-space: nowrap;
+}
+.cst-ss-table td { border-bottom: 1px solid #e5e7eb; padding: 5px 10px; vertical-align: middle; }
+.cst-ss-month { font-weight: 700; text-align: center; white-space: nowrap; }
+.cst-ss-num   { text-align: right; white-space: nowrap; }
+.cst-ss-status { text-align: center; }
+.cst-ss-row.cst-ss-shortage  { background: #fff5f5; }
+.cst-ss-row.cst-ss-ok        { background: #f0fdf4; }
+.cst-ss-row.cst-ss-uncertain { background: #fefce8; }
+.cst-ss-short-num { color: #b02a37; font-weight: 700; }
+
+/* 수급요약 판단상태 배지 */
+.cst-sum-s-badge {
+  border-radius: 4px; display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 7px;
+}
+.cst-sum-s-shortage { background: #fef2f2; border: 1px solid #fca5a5; color: #b91c1c; }
+.cst-sum-s-ok       { background: #f0fdf4; border: 1px solid #86efac; color: #15803d; }
+.cst-sum-s-link     { background: #eff6ff; border: 1px solid #93c5fd; color: #1d4ed8; }
+.cst-sum-s-check    { background: #fefce8; border: 1px solid #fde047; color: #92400e; }
+.cst-sum-s-unknown  { background: #f3f4f6; border: 1px solid #d1d5db; color: #6b7280; }
+
+/* 영향품목 및 조율 후보 표 */
+.cst-imp-table { border-collapse: collapse; font-size: 13px; min-width: 100%; table-layout: auto; }
+.cst-imp-table th {
+  background: #15803d; color: #fff; font-size: 12px; font-weight: 700;
+  padding: 5px 10px; text-align: center; vertical-align: middle; white-space: nowrap;
+}
+.cst-imp-month { border-left: 2px solid rgba(255,255,255,0.3) !important; }
+.cst-imp-sub   { background: #166534 !important; font-size: 11px !important; }
+.cst-imp-table td { border-bottom: 1px solid #e5e7eb; padding: 5px 8px; vertical-align: middle; }
+.cst-imp-row:hover td { background: #fffbeb !important; }
+.cst-imp-code   { font-size: 12px; text-align: center; white-space: nowrap; }
+.cst-imp-name   { max-width: 180px; overflow: hidden; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.cst-imp-center { text-align: center; white-space: nowrap; }
+.cst-imp-num    { text-align: right; white-space: nowrap; }
+.cst-imp-coeff  { color: #374151; font-size: 12px; }
+.cst-imp-adj    { text-align: center; white-space: nowrap; }
+.cst-adj-candidate { color: #b45309; font-weight: 700; }
+.cst-adj-unknown   { color: #9ca3af; font-size: 12px; }
