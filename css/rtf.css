@@ -463,8 +463,8 @@
   text-decoration-style: dotted;
 }
 .rtf-drillable:hover {
-  background: #7f1d1d !important;
-  color: #fef2f2 !important;
+  background: #450a0a !important;
+  color: #fca5a5 !important;
 }
 
 .rtf-item-toggle:hover {
