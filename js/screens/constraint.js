@@ -1665,7 +1665,7 @@ function renderConstraint() {
     (!hasData ? "<span class=\"cst-toolbar-warn\">데이터 연결 필요 — 데이터점검 화면에서 RAW 파일을 먼저 선택하십시오.</span>" : "") +
     "</div>" +
     "<section class=\"cst-card cst-top\">" +
-    "<h2 class=\"cst-title\">공급제한 원인 분석</h2>" +
+    "<h2 class=\"cst-title\">공급제한 원인 분석 <span style=\"font-size:11px;background:#1d4ed8;color:#fff;padding:2px 6px;border-radius:3px;font-weight:400;\">v0.9.3</span></h2>" +
     "<div class=\"cst-meta\">기준월: " + escapeHtml(months[0]) + " | 대상기간: " + escapeHtml(months.map(monthLabel).join(" ~ ")) + "</div>" +
     "<div class=\"cst-notice\">현재 계획 기준 BOM 전개 결과입니다. 공급계획 조정 및 조정 후 영향은 조정입력/조정영향 화면에서 검토합니다.</div>" +
     "</section>" +
