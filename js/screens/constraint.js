@@ -15,9 +15,10 @@ var CONSTR_LEFT_COLS = [
   { key:"note",         label:"확인 필요사항",     width:140, align:"left" },
   { key:"decision",     label:"의사결정 필요사항", width:160, align:"left",  isLast:true },
 ];
-var CONSTR_COMPACT_W = 120;  // 압축 모드 월별 컬럼 너비 (부족수량+단위 표시용)
+var CONSTR_COMPACT_W = 140;  // 압축 모드 월별 컬럼 너비 (자재 부족 표시용)
 var CONSTR_METRIC_W  = 72;  // 상세 모드 지표 컬럼 너비
-var CONSTR_METRICS   = ["필요","가용","부족"];
+var CONSTR_METRICS       = ["필요","가용","부족"];
+var CONSTR_METRICS_LABEL = { "필요":"총 자재 필요수량", "가용":"가용수량", "부족":"자재 부족수량" };
 
 // ── 제약대상 유형 표시 매핑 ──────────────────────────────────────────────────
 // 단글자 코드(L/N/D/R/U/T)는 임의 추정이므로 제외. SAP 표준코드·한글만 허용.
@@ -627,7 +628,7 @@ function compactCellValue(item, md) {
     var matUnit = (item.unit && item.unit !== "확인필요") ? item.unit : "";
     var qty = _cstFmtVal(md.shortageQty, _cstDecByUnit(matUnit), matUnit);
     if (item.isShared) return { text:"공통제약 " + qty, cls:"cst-compact-shared" };
-    return { text:"부족 " + qty, cls:"cst-shortage-cell" };
+    return { text:"자재 부족 " + qty, cls:"cst-shortage-cell" };
   }
   return { text:"-", cls:"cst-neutral-cell" };
 }
@@ -645,7 +646,7 @@ function vldRatio(v) {
 }
 var VLD_STATUS_CLS = {
   "정상":"vld-s-ok","연결필요":"vld-s-link","확인필요":"vld-s-check",
-  "단위 정합 확인":"vld-s-unit","판단불가":"vld-s-unknown","부족":"vld-s-short",
+  "단위 정합 확인":"vld-s-unit","판단불가":"vld-s-unknown","자재 부족":"vld-s-short",
 };
 function vldBadge(status) {
   var cls = VLD_STATUS_CLS[status] || "vld-s-check";
@@ -832,7 +833,7 @@ function computeValidation() {
         var judgment = item.unitMismatch ? "판단불가"
           : !item.hasInventory ? "연결필요"
           : md.shortageQty === null ? "판단불가"
-          : md.shortageQty > 0 ? "부족" : "정상";
+          : md.shortageQty > 0 ? "자재 부족" : "정상";
         return { month:md.month, required:md.requiredQty, supply:supplyQty,
                  available:md.availableQty, shortage:md.shortageQty, judgment:judgment };
       });
@@ -973,7 +974,7 @@ function renderVldSec3(rows) {
   return "<div class=\"vld-scroll\"><table class=\"vld-table\"><thead><tr>" +
     "<th>완제품코드</th><th>완제품명</th><th>하위품목코드</th><th>하위품목명</th>" +
     "<th class=\"vld-th-r\">BOM 기준수량</th><th class=\"vld-th-r\">구성요소수량</th>" +
-    "<th class=\"vld-th-r\">BOM 환산계수</th><th class=\"vld-th-r\">총생산계획</th><th class=\"vld-th-r\">총필요수량</th>" +
+    "<th class=\"vld-th-r\">BOM 환산계수</th><th class=\"vld-th-r\">총생산계획</th><th class=\"vld-th-r\">총 자재 필요수량</th>" +
     "</tr></thead><tbody>" + bodyHtml + "</tbody></table></div>" +
     (rows.length > 100 ? "<div class=\"vld-sub-note\">전체 " + rows.length + "건 중 100건 표시</div>" : "");
 }
@@ -1031,7 +1032,7 @@ function renderVldSec7(rows, months) {
   }).join("");
   var subHeads = months.map(function() {
     return "<th class=\"vld-th-r\">필요</th><th class=\"vld-th-r\">공급계획</th>" +
-           "<th class=\"vld-th-r\">가용</th><th class=\"vld-th-r\">부족</th><th>판정</th>";
+           "<th class=\"vld-th-r\">가용</th><th class=\"vld-th-r\">자재 부족수량</th><th>판정</th>";
   }).join("");
   var bodyHtml = rows.map(function(r) {
     var mCells = r.monthly.map(function(md) {
@@ -1060,11 +1061,11 @@ function renderVldSec7(rows, months) {
 function renderCalcCriteria() {
   if (!state.calcCriteriaOpen) return "";
   var formulas = [
-    ["BOM 필요수량",  "생산계획 × 구성요소수량 ÷ BOM 기준수량"],
-    ["BOM 환산계수",  "구성요소수량 ÷ BOM 기준수량"],
-    ["가용수량",      "월초재고 + 공급계획"],
-    ["부족수량",      "MAX(필요수량 − 가용수량, 0)"],
-    ["부족금액",      "부족수량 × 표준원가"],
+    ["총 자재 필요수량", "생산계획 × 구성요소수량 ÷ BOM 기준수량"],
+    ["BOM 환산계수",     "구성요소수량 ÷ BOM 기준수량"],
+    ["가용수량",         "월초재고 + 공급계획"],
+    ["자재 부족수량",    "MAX(총 자재 필요수량 − 가용수량, 0)"],
+    ["부족금액",         "자재 부족수량 × 표준원가"],
   ];
   var criteria = [
     "RTF 대상(완제품·상품)과 BOM 하위 공급제약 품목을 분리 처리",
@@ -1074,7 +1075,7 @@ function renderCalcCriteria() {
     "반제품 조달구분(자체생산/구매) 불명확 시 <b>반제품 조달구분 확인 필요</b>로 표시",
     "현재고 미연결 시 0 가정하지 않고 <b>현재고 연결 필요</b>로 표시",
     "입고계획 미연결 시 0 가정하지 않고 <b>입고계획 확인 필요</b>로 표시",
-    "현재고·입고계획 모두 연결되어야 부족수량 확정 가능",
+    "현재고·입고계획 모두 연결되어야 자재 부족수량 확정 가능",
     "대체BOM 적용 제외 — 기본BOM(1번)만 사용",
     "단위 불일치 시 임의 환산 없이 <b>단위 정합 확인</b>으로 표시",
   ];
@@ -1229,7 +1230,7 @@ function renderCstDetailExpanded(item, months, totalCols) {
     "<div class=\"cst-det-section\">" +
     "<div class=\"cst-det-section-title\">월별 자재 수급요약</div>" +
     "<div class=\"cst-det-scroll\"><table class=\"cst-ss-table\"><thead><tr>" +
-    "<th>월</th><th>총 자재 필요수량</th><th>월초재고</th><th>입고계획</th><th>가용수량</th><th>부족수량</th><th>판단상태</th>" +
+    "<th>월</th><th>총 자재 필요수량</th><th>월초재고</th><th>입고계획</th><th>가용수량</th><th>자재 부족수량</th><th>판단상태</th>" +
     "</tr></thead><tbody>" + summaryRows + "</tbody></table></div></div>";
 
   // ══ SECTION 2: 영향품목 및 조율 후보 ══
@@ -1246,7 +1247,7 @@ function renderCstDetailExpanded(item, months, totalCols) {
     return "<th class=\"cst-imp-month\" colspan=\"2\">" + escapeHtml(monthLabel(m)) + "</th>";
   }).join("");
   var impSubHeads = months.map(function() {
-    return "<th class=\"cst-imp-sub\">생산계획</th><th class=\"cst-imp-sub\">자재 필요수량</th>";
+    return "<th class=\"cst-imp-sub\">생산계획</th><th class=\"cst-imp-sub\">총 자재 필요수량</th>";
   }).join("");
 
   var impRows = shownParents.map(function(p) {
@@ -1337,7 +1338,7 @@ function renderConstraintTableBody(items, months, detailMode) {
     subHead = "<tr>" + months.map(function(_, mi) {
       return CONSTR_METRICS.map(function(metric, ci) {
         return "<th class=\"cst-sub-head" + (metric === "부족" ? " cst-key-sub" : "") +
-               (ci === 0 && mi > 0 ? " cst-month-start" : "") + "\">" + escapeHtml(metric) + "</th>";
+               (ci === 0 && mi > 0 ? " cst-month-start" : "") + "\">" + escapeHtml(CONSTR_METRICS_LABEL[metric] || metric) + "</th>";
       }).join("");
     }).join("") + "</tr>";
   } else {
@@ -1355,7 +1356,7 @@ function renderConstraintTableBody(items, months, detailMode) {
       var compKey    = item.componentCode + "|" + item.plant;
       var isExpanded = state.expandedConstraintRows && state.expandedConstraintRows.has(compKey);
       var unitTitle  = item.unitMismatch
-        ? "BOM 단위와 현재고/공급계획 단위가 일치하지 않아 부족수량 계산이 불가능합니다."
+        ? "BOM 단위와 현재고/공급계획 단위가 일치하지 않아 자재 부족수량 계산이 불가능합니다."
         : item.unitMissing ? "단위 기준정보가 없어 단위 정합성을 확인할 수 없습니다." : "";
       var parentTooltip = "영향 품목군: " + (item.parentItemGroup === NEED_MASTER ? "확인필요" : item.parentItemGroup) +
                           "\n대표 영향품목: " + (item.parentItems.length > 0 ? item.parentItems[0].name : "-");
