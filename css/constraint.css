@@ -523,6 +523,36 @@
   padding: 0 14px;
 }
 
+/* ── 의사결정 필요사항 컬럼 ── */
+.cst-dec-urgent  { color: #b02a37; font-weight: 700; }
+.cst-dec-warn    { color: #b45309; font-weight: 700; }
+.cst-dec-info    { color: #1d4ed8; font-weight: 600; }
+.cst-dec-link    { color: #6b7280; font-weight: 600; }
+.cst-dec-check   { color: #b45309; font-weight: 600; }
+.cst-dec-neutral { color: #9ca3af; }
+
+/* ── 대체BOM 검토 버튼 ── */
+.cst-altbom-btn {
+  background: #eff6ff;
+  border: 1px solid #93c5fd;
+  border-radius: 4px;
+  color: #1d4ed8;
+  cursor: default;
+  font-size: 11px;
+  font-weight: 700;
+  height: 20px;
+  margin-left: 4px;
+  padding: 0 6px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* ── BOM계수 셀 ── */
+.cst-dtl-coeff {
+  color: #6b7280;
+  font-size: 11px;
+}
+
 /* ── 계산기준 버튼 ── */
 .cst-criteria-btn {
   background: #f3f5f9;
