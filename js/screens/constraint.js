@@ -74,10 +74,17 @@ function computeBomExpansion() {
     if (alt !== "" && alt !== "1") rootsWithAltBom.add(r.rootItemCode + "|" + r.plant);
   });
 
-  // 반제품·재공품이 자체 BOM 루트로 등록된 코드 감지 (하위 자동 전개 방지·경고용)
-  var codesWithSubBom = new Set();
+  // 반제품 하위 BOM 맵 (비9코드 루트 — 추가전개 기준 데이터)
+  var semiBomRowsMap = new Map();  // semiCode → [baseBomRow, ...]
+  var codesWithSubBom = new Set(); // 정합성 검증용 유지
   bomRows.forEach(function(r) {
-    if (r.rootItemCode && !r.rootItemCode.startsWith("9")) codesWithSubBom.add(r.rootItemCode);
+    if (!r.rootItemCode || r.rootItemCode.startsWith("9")) return;
+    var alt = cleanOptional(r.alternativeBom);
+    if (alt !== "" && alt !== "1") return;
+    codesWithSubBom.add(r.rootItemCode);
+    if (!r.componentCode || !String(r.componentCode).trim()) return;
+    if (!semiBomRowsMap.has(r.rootItemCode)) semiBomRowsMap.set(r.rootItemCode, []);
+    semiBomRowsMap.get(r.rootItemCode).push(r);
   });
 
   // 기본 BOM 필터 (alternativeBom 공란 or "1")
@@ -138,53 +145,136 @@ function computeBomExpansion() {
   var masterMap = new Map();
   masterRows.forEach(function(r) { if (r.itemCode && !masterMap.has(r.itemCode)) masterMap.set(r.itemCode, r); });
 
-  // 구성품별 소요량 집계 — 완제품(9코드) BOM만 전개, 반제품·재공품 하위 BOM 자동전개 방지
+  // ── 루트별 구성품 코드 집합 (다단계 BOM 감지용)
+  var rootCompSet = new Map();
+  baseBomRows.forEach(function(r) {
+    if (!r.rootItemCode || !r.rootItemCode.startsWith("9")) return;
+    if (!r.componentCode || !String(r.componentCode).trim()) return;
+    var rk = r.rootItemCode + "|" + r.plant;
+    if (!rootCompSet.has(rk)) rootCompSet.set(rk, new Set());
+    rootCompSet.get(rk).add(r.componentCode);
+  });
+
+  // ── 반제품/재공품 판별 헬퍼
+  var _SEMI_DISP = new Set(["반제품", "재공품"]);
+  var _isSemi = function(code, catFromBom) {
+    if (catFromBom && _SEMI_DISP.has(displayItemCategory(catFromBom))) return true;
+    var m = masterMap.get(code);
+    if (m) {
+      var mc = cleanOptional(m.itemCategory || m.category || "");
+      if (mc && _SEMI_DISP.has(displayItemCategory(mc))) return true;
+    }
+    return false;
+  };
+
+  // ── BOM 구조 통계 (정합성 검증용)
+  var bomStat = {
+    multiLevelRoots:  new Set(),  // 다단계 BOM 감지된 루트
+    singleLevelRoots: new Set(),  // 반제품 추가전개 필요 루트
+    semiExpanded:     new Set(),  // 추가전개 완료된 반제품
+    semiNoSubBom:     new Set(),  // 하위 BOM 없는 반제품
+    dupExactCount:    0,
+    dupInRootCount:   0,
+    _dupInRoot:       new Map(),
+  };
+  var _seenExact = new Set();
+
+  // ── 구성품별 소요량 집계 (혼합형 다단계 BOM)
   var compReqs = new Map();
   var missingCompCodeCount = 0;
-  baseBomRows.forEach(function(bom) {
-    // 9코드 완제품 루트만 소요량/부모 집계에 사용 → 반제품 하위 BOM 중복 전개 방지
-    if (!bom.rootItemCode || !bom.rootItemCode.startsWith("9")) return;
-    // 구성요소코드 누락 행 → 집계 제외, 별도 카운트
-    if (!bom.componentCode || !String(bom.componentCode).trim()) { missingCompCodeCount++; return; }
 
-    var rootKey    = bom.rootItemCode + "|" + bom.plant;
-    var compKey    = bom.componentCode + "|" + bom.plant;
-    var parent     = finishedItemMap.get(rootKey);
-    var rootMaster = masterMap.get(bom.rootItemCode);
-
-    if (!compReqs.has(compKey)) {
-      compReqs.set(compKey, {
-        componentCode:   bom.componentCode,
-        componentName:   bom.componentName,
-        plant:           bom.plant,
-        itemCategory:    cleanOptional(bom.itemCategory),
-        bomUnit:         cleanOptional(bom.componentUnit) || "",
+  // 소요량 등록 내부 헬퍼
+  var _addComp = function(code, name, unit, cat, plant, rootKey, rootCode, rootName, rootGroup, effRatio) {
+    var ck = code + "|" + plant;
+    if (!compReqs.has(ck)) {
+      compReqs.set(ck, {
+        componentCode:   code,
+        componentName:   name || code,
+        plant:           plant,
+        itemCategory:    cleanOptional(cat),
+        bomUnit:         cleanOptional(unit) || "",
         parentItems:     new Map(),
         requiredByMonth: new Map(),
       });
     }
-    var comp = compReqs.get(compKey);
-    if (!comp.bomUnit && bom.componentUnit) comp.bomUnit = cleanOptional(bom.componentUnit) || "";
-
+    var comp = compReqs.get(ck);
+    if (!comp.bomUnit && unit) comp.bomUnit = cleanOptional(unit) || "";
     if (!comp.parentItems.has(rootKey)) {
       comp.parentItems.set(rootKey, {
-        code:      bom.rootItemCode,
-        name:      parent ? parent.name : bom.rootItemCode,
-        plant:     bom.plant,
-        itemGroup: cleanText(rootMaster ? rootMaster.itemGroup : null, NEED_MASTER),
-        monthly:   new Map(),
+        code: rootCode, name: rootName, plant: plant, itemGroup: rootGroup, monthly: new Map(),
       });
     }
     var pi = comp.parentItems.get(rootKey);
-
     months.forEach(function(month) {
-      var prodQty = prodPlanMap.get(bom.rootItemCode + "|" + bom.plant + "|" + month) || 0;
-      var ratio   = bom.baseQty > 0 ? bom.componentQty / bom.baseQty : bom.componentQty;
-      var addReq  = prodQty * ratio;
+      var prodQty = prodPlanMap.get(rootCode + "|" + plant + "|" + month) || 0;
+      var addReq  = prodQty * effRatio;
       comp.requiredByMonth.set(month, (comp.requiredByMonth.get(month) || 0) + addReq);
       if (!pi.monthly.has(month)) pi.monthly.set(month, { prodQty:prodQty, reqQty:0 });
       pi.monthly.get(month).reqQty += addReq;
     });
+  };
+
+  baseBomRows.forEach(function(bom) {
+    if (!bom.rootItemCode || !bom.rootItemCode.startsWith("9")) return;
+    if (!bom.componentCode || !String(bom.componentCode).trim()) { missingCompCodeCount++; return; }
+
+    // 완전 중복 행 제거
+    var exactKey = bom.rootItemCode + "|" + bom.componentCode + "|" + bom.componentQty + "|" + bom.baseQty + "|" + bom.plant;
+    if (_seenExact.has(exactKey)) { bomStat.dupExactCount++; return; }
+    _seenExact.add(exactKey);
+
+    var rootKey    = bom.rootItemCode + "|" + bom.plant;
+    var parent     = finishedItemMap.get(rootKey);
+    var rootMaster = masterMap.get(bom.rootItemCode);
+    var rootName   = parent ? parent.name : bom.rootItemCode;
+    var rootGroup  = cleanText(rootMaster ? rootMaster.itemGroup : null, NEED_MASTER);
+    var ratio      = bom.baseQty > 0 ? bom.componentQty / bom.baseQty : (bom.componentQty || 0);
+
+    // 동일 Root 내 반복 자재 집계 (필요수량은 합산, 카운트만)
+    if (!bomStat._dupInRoot.has(rootKey)) bomStat._dupInRoot.set(rootKey, new Set());
+    var rootSeen = bomStat._dupInRoot.get(rootKey);
+    if (rootSeen.has(bom.componentCode)) bomStat.dupInRootCount++;
+    else rootSeen.add(bom.componentCode);
+
+    // ── 반제품/재공품 혼합형 다단계 BOM 처리
+    if (_isSemi(bom.componentCode, bom.itemCategory)) {
+      var semiSubs  = semiBomRowsMap.get(bom.componentCode);
+      var rootComps = rootCompSet.get(rootKey);
+
+      // 다단계 감지: 이 반제품의 하위 원료가 이미 같은 Root 안에 포함되어 있는가
+      var isTransit = !!(semiSubs && semiSubs.some(function(sr) {
+        return sr.componentCode && rootComps && rootComps.has(sr.componentCode);
+      }));
+
+      if (isTransit) {
+        // 경유 단계 — 반제품 행 건너뜀 (하위 원료는 별도 BOM 행으로 이미 집계됨)
+        bomStat.multiLevelRoots.add(rootKey);
+        return;
+      }
+
+      // 단일 단계 — 추가 전개 필요
+      bomStat.singleLevelRoots.add(rootKey);
+
+      if (semiSubs && semiSubs.length) {
+        // 반제품 하위 BOM 발견 → 연쇄 계수로 원료/자재 전개
+        bomStat.semiExpanded.add(bom.componentCode + "|" + bom.plant);
+        semiSubs.forEach(function(sub) {
+          if (!sub.componentCode || !String(sub.componentCode).trim()) return;
+          var subR = sub.baseQty > 0 ? sub.componentQty / sub.baseQty : (sub.componentQty || 0);
+          _addComp(sub.componentCode, sub.componentName, sub.componentUnit, sub.itemCategory,
+                   bom.plant, rootKey, bom.rootItemCode, rootName, rootGroup, ratio * subR);
+        });
+        return; // 반제품 자체는 집계 제외
+      }
+
+      // 하위 BOM 없음 → 반제품을 부족 판정 대상으로 유지하며 경고 부착
+      bomStat.semiNoSubBom.add(bom.componentCode + "|" + bom.plant);
+      // fall through — 반제품을 일반 자재처럼 집계
+    }
+
+    // 일반 집계 (원료·자재 또는 하위 BOM 없는 반제품)
+    _addComp(bom.componentCode, bom.componentName, bom.componentUnit, bom.itemCategory,
+             bom.plant, rootKey, bom.rootItemCode, rootName, rootGroup, ratio);
   });
 
   // 결과 아이템 생성
@@ -216,8 +306,8 @@ function computeBomExpansion() {
     comp.parentItems.forEach(function(pi) { parentArr.push(pi); });
     var hasAltBom = parentArr.some(function(p) { return rootsWithAltBom.has(p.code + "|" + comp.plant); });
 
-    // 반제품·재공품 하위 BOM 보유 여부
-    var hasSemiSubBom = codesWithSubBom.has(comp.componentCode);
+    // 반제품 하위 BOM 연결 필요 (추가전개 시도 후 BOM 없음)
+    var needsSemiBom = bomStat.semiNoSubBom.has(comp.componentCode + "|" + comp.plant);
 
     // 영향 품목군 (부모 완제품 기준 DISTINCT)
     var parentGroups = [], groupSeen = new Set();
@@ -263,17 +353,20 @@ function computeBomExpansion() {
     if (!hasInv)                           notes.push("현재고 데이터 연결 필요");
     if (isShared && hasAnyShortage)        notes.push("공통자재 부족 발생. 완제품별 배분기준 확인 필요");
     if (hasAltBom)                         notes.push("대체 BOM 존재. 적용 기준 확인 필요");
-    if (hasSemiSubBom)                     notes.push("반제품 하위 BOM 추가전개 기준 확인 필요");
+    if (needsSemiBom)                      notes.push("반제품 하위 BOM 연결 필요");
     if (unitMismatch)                      notes.push("단위 정합 확인 필요");
     else if (unitMissing && !unitMismatch) notes.push("단위 기준정보 확인 필요");
 
     var needsMaster = !comp.itemCategory || comp.itemCategory === NEED_MASTER || displayItemCategory(comp.itemCategory) === "확인필요";
     var parentArrResult = parentArr.map(function(p) {
+      var pMaster = masterMap.get(p.code);
+      var pUnit   = cleanOptional(pMaster ? (pMaster.unit || pMaster.unitOfMeasure || pMaster.baseUnit || "") : "") || "EA";
       return {
         code:      p.code,
         name:      p.name,
         plant:     p.plant,
         itemGroup: p.itemGroup,
+        unit:      pUnit,
         monthly:   months.map(function(m) { return Object.assign({ month:m }, p.monthly.get(m) || { prodQty:0, reqQty:0 }); }),
       };
     });
@@ -321,6 +414,13 @@ function computeBomExpansion() {
     needMaster:        sorted.filter(function(i) { return i.needsMaster; }).length,
     needData:          sorted.filter(function(i) { return !i.hasInventory; }).length,
     missingCompCode:   missingCompCodeCount,
+    // BOM 구조 통계
+    multiLevelRoots:   bomStat.multiLevelRoots.size,
+    singleLevelRoots:  bomStat.singleLevelRoots.size,
+    semiExpanded:      bomStat.semiExpanded.size,
+    semiNoSubBom:      bomStat.semiNoSubBom.size,
+    dupExactCount:     bomStat.dupExactCount,
+    dupInRootCount:    bomStat.dupInRootCount,
   };
   return result;
 }
@@ -533,13 +633,21 @@ function computeValidation() {
   });
   var semiInBomRoot = new Set();
   bomRows.forEach(function(r) { if (r.rootItemCode && r.rootItemCode.startsWith("8")) semiInBomRoot.add(r.rootItemCode); });
+  var _bs = (state.bomResult && state.bomResult.stats) || {};
   var sec1 = {
-    totalRtf:   planKeys9.size + planKeys7.size,
-    codes9:     planKeys9.size,
-    codes7:     planKeys7.size,
-    semiInRoot: semiInBomRoot.size,
-    missingKey: missingKeyRows,
-    semiList:   Array.from(semiInBomRoot),
+    totalRtf:         planKeys9.size + planKeys7.size,
+    codes9:           planKeys9.size,
+    codes7:           planKeys7.size,
+    semiInRoot:       semiInBomRoot.size,
+    missingKey:       missingKeyRows,
+    semiList:         Array.from(semiInBomRoot),
+    // BOM 구조 통계 (BOM 전개 결과)
+    multiLevelRoots:  _bs.multiLevelRoots  || 0,
+    singleLevelRoots: _bs.singleLevelRoots || 0,
+    semiExpanded:     _bs.semiExpanded     || 0,
+    semiNoSubBom:     _bs.semiNoSubBom     || 0,
+    dupExactCount:    _bs.dupExactCount    || 0,
+    dupInRootCount:   _bs.dupInRootCount   || 0,
   };
 
   // ② BOM 매칭 검증
@@ -716,7 +824,7 @@ function _vldKVTable(rows) {
 }
 
 function renderVldSec1(s) {
-  return _vldKVTable([
+  var base = _vldKVTable([
     { label:"RTF 대상 품목 수 (코드+플랜트 기준)", value: s.totalRtf + "건" },
     { label:"완제품 9코드 수", value: s.codes9 + "건" },
     { label:"상품 7코드 수",   value: s.codes7 + "건" },
@@ -725,8 +833,26 @@ function renderVldSec1(s) {
       note:  s.semiInRoot > 0 ? "공급원인 분석은 9코드 완제품 기준으로만 전개함." : "" },
     { label:"품목코드+플랜트 누락 행",
       value: s.missingKey > 0 ? s.missingKey + "행" : "없음", warn: s.missingKey > 0 },
-  ]) + (s.semiList && s.semiList.length ?
-    "<div class=\"vld-sub-note\">반제품 루트: " + s.semiList.slice(0,10).map(escapeHtml).join(", ") + "</div>" : "");
+  ]);
+  var bomStructRows = [
+    { label:"다단계 BOM 루트 (반제품 경유 감지)", value: s.multiLevelRoots > 0 ? s.multiLevelRoots + "건" : "없음",
+      note: s.multiLevelRoots > 0 ? "반제품 하위 원료가 이미 Root BOM에 포함 — 경유단계 처리됨." : "" },
+    { label:"단일 단계 루트 (반제품 추가전개 필요)", value: s.singleLevelRoots > 0 ? s.singleLevelRoots + "건" : "없음",
+      warn: s.singleLevelRoots > 0 },
+    { label:"반제품 추가전개 완료", value: s.semiExpanded > 0 ? s.semiExpanded + "건" : "없음",
+      note: s.semiExpanded > 0 ? "반제품 하위 BOM 발견 → 원료/자재 기준으로 연쇄 전개됨." : "" },
+    { label:"반제품 하위 BOM 연결 필요", value: s.semiNoSubBom > 0 ? s.semiNoSubBom + "건" : "없음",
+      warn: s.semiNoSubBom > 0, note: s.semiNoSubBom > 0 ? "반제품 자체가 부족 판정 대상으로 유지됨 — BOM 연결 권장." : "" },
+    { label:"완전 중복 행 (제거됨)", value: s.dupExactCount > 0 ? s.dupExactCount + "행" : "없음",
+      note: s.dupExactCount > 0 ? "Root+구성품+수량+플랜트 모두 동일한 행은 1회만 반영." : "" },
+    { label:"동일 Root 내 반복 자재 (합산 처리)", value: s.dupInRootCount > 0 ? s.dupInRootCount + "건" : "없음",
+      note: s.dupInRootCount > 0 ? "같은 자재가 동일 Root에 복수 등장 — 필요수량 합산 처리됨." : "" },
+  ];
+  var bomStruct = "<div class=\"vld-sub-title\">BOM 구조 분석</div>" + _vldKVTable(bomStructRows);
+  return base +
+    (s.semiList && s.semiList.length ?
+      "<div class=\"vld-sub-note\">반제품 루트: " + s.semiList.slice(0,10).map(escapeHtml).join(", ") + "</div>" : "") +
+    bomStruct;
 }
 
 function renderVldSec2(s) {
@@ -1091,19 +1217,23 @@ function renderConstraintTableBody(items, months, detailMode) {
           return "<th class=\"cst-dtl-month\" colspan=\"3\">" + escapeHtml(monthLabel(m)) + "</th>";
         }).join("");
         var detailSubHeads = months.map(function() {
-          return "<th class=\"cst-dtl-sub\">생산계획</th><th class=\"cst-dtl-sub\">BOM계수</th><th class=\"cst-dtl-sub\">자재 필요수량</th>";
+          return "<th class=\"cst-dtl-sub\">생산계획</th><th class=\"cst-dtl-sub\">단위소요량</th><th class=\"cst-dtl-sub\">자재 필요수량</th>";
         }).join("");
 
         var detailBodyRows = shownParents.map(function(p, pi) {
-          // BOM계수 = reqQty ÷ prodQty (BOM 기준수량 대비 구성요소수량 비율, 월별 고정값)
-          var bomCoeff = "-";
+          // 단위소요량: reqQty ÷ prodQty = 완제품 1단위당 자재 소요량 (BOM 계수)
+          var unitReqNum = null;
           p.monthly.some(function(m) {
-            if (m.prodQty > 0) { bomCoeff = (m.reqQty / m.prodQty).toFixed(4); return true; }
+            if (m.prodQty > 0) { unitReqNum = m.reqQty / m.prodQty; return true; }
             return false;
           });
+          var unitReqVal  = unitReqNum !== null ? parseFloat(unitReqNum.toFixed(4)).toString() : "-";
+          var unitReqDisp = unitReqNum !== null
+            ? unitReqVal + (item.unit && item.unit !== "확인필요" ? " " + item.unit : "") + "/" + (p.unit || "EA")
+            : "-";
           var monthlyCells = p.monthly.map(function(md) {
             return "<td class=\"cst-dtl-num\">" + (md.prodQty > 0 ? formatNumber(Math.round(md.prodQty)) : "-") + "</td>" +
-                   "<td class=\"cst-dtl-num cst-dtl-coeff\">" + bomCoeff + "</td>" +
+                   "<td class=\"cst-dtl-num cst-dtl-coeff\">" + escapeHtml(unitReqDisp) + "</td>" +
                    "<td class=\"cst-dtl-num\">" + (md.reqQty  > 0 ? formatNumber(Math.round(md.reqQty))  : "-") + "</td>";
           }).join("");
 
