@@ -309,8 +309,9 @@
 
 /* ── 펼침 상세 영역 개선 ── */
 
-/* 완제품 정보 컬럼 — 수량 영역과 동일 흰색 */
-.cst-detail-table .cst-detail-data-row td.cst-dtl-info {
+/* 펼침 상세 바디 셀 — 모두 흰색 (cst-detail-row td의 !important 덮어쓰기) */
+.cst-detail-table .cst-detail-data-row td.cst-dtl-info,
+.cst-detail-table .cst-detail-data-row td.cst-dtl-num {
   background: #fff !important;
 }
 
