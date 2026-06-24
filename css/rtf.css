@@ -456,6 +456,17 @@
   width: 18px;
 }
 
+/* ── RTF → 공급원인 드릴다운 ─────────────────────────────────────────────── */
+.rtf-drillable {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+}
+.rtf-drillable:hover {
+  background: #7f1d1d !important;
+  color: #fef2f2 !important;
+}
+
 .rtf-item-toggle:hover {
   background: #f3f5f9;
   border-color: #b8c1cc;

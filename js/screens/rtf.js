@@ -395,8 +395,35 @@ function formatBaseForNode(node, compressed) {
   return Number.isFinite(amount) ? formatMoney(amount) : (compressed ? SHORT_TEXT[NEED_DATA] : NEED_DATA);
 }
 
+// ── 드릴다운 컨텍스트 빌더 ───────────────────────────────────────────────────
+function buildCellDrillCtx(node, item, month, monthRow) {
+  const isAmt = state.rtfDisplayMode === "amount";
+  const hasS  = isAmt ? (Number.isFinite(monthRow.shortageAmount) && monthRow.shortageAmount > 0)
+                      : (Number.isFinite(monthRow.shortageQty)    && monthRow.shortageQty    > 0);
+  if (!hasS) return null;
+
+  if (node.kind === "item" && item) {
+    return {
+      month, isAggregate: false,
+      itemCode: item.itemCode, itemName: item.itemName,
+      itemGroup: item.itemGroup, typeGroup: item.typeGroup,
+      businessUnit: item.businessUnit,
+      plant: item.plantCode, plantDisplay: item.plant,
+      shortageQty: monthRow.shortageQty, shortageAmount: monthRow.shortageAmount,
+    };
+  }
+  return {
+    month, isAggregate: true,
+    label: node.label,
+    businessUnit: node.cols.bu || null, typeGroup: node.cols.type || null,
+    itemGroup: node.cols.group || null, plantDisplay: node.cols.plant || null,
+    itemCodes: node.items.map(function(i) { return i.itemCode; }),
+    shortageQty: monthRow.shortageQty, shortageAmount: monthRow.shortageAmount,
+  };
+}
+
 // ── 셀 렌더 ──────────────────────────────────────────────────────────────────
-function renderMetricCell(row, metric, metricIndex, compressed) {
+function renderMetricCell(row, metric, metricIndex, compressed, drillCtx) {
   const mb     = metricIndex === 0 ? " rtf-month-start" : "";
 
   if (metric === "판매계획") {
@@ -414,6 +441,10 @@ function renderMetricCell(row, metric, metricIndex, compressed) {
     const hasS  = isAmt ? (Number.isFinite(row.shortageAmount) && row.shortageAmount > 0)
                         : (Number.isFinite(row.shortageQty)    && row.shortageQty    > 0);
     const raw = hasS ? (isAmt ? formatMoney(row.shortageAmount) : formatNumber(row.shortageQty)) : "-";
+    if (hasS && drillCtx) {
+      const drill = escapeHtml(JSON.stringify(drillCtx));
+      return `<td class="rtf-metric-cell rtf-shortage-cell rtf-status-text shortage rtf-cell-right${mb} rtf-drillable" data-cst-drill="${drill}" title="공급원인 보기 →">${escapeHtml(raw)}</td>`;
+    }
     return `<td class="rtf-metric-cell rtf-shortage-cell ${hasS ? "rtf-status-text shortage" : "rtf-neutral-text"} rtf-cell-right${mb}">${escapeHtml(raw)}</td>`;
   }
   if (metric === "매출") {
@@ -522,9 +553,10 @@ function renderHierarchyRow(node, leftColDefs, compressed, mode, rowspanMap) {
   const item        = isItem ? node.items[0] : null;
   const isHidden    = isTotal ? false : (compressed ? node.level > 0 : (isItem && !state.expandedItemGroups.has(node.parentId)));
   const monthCols   = getVisibleMonthColumns();
-  const cells = getRtfMonths().map((_, mIdx) => {
-    const monthRow = isItem ? item.monthlyStatus[mIdx] : aggregateMonth(node.items, mIdx);
-    return monthCols.map((metric, colIdx) => renderMetricCell(monthRow, metric, colIdx, compressed)).join("");
+  const cells = getRtfMonths().map((month, mIdx) => {
+    const monthRow  = isItem ? item.monthlyStatus[mIdx] : aggregateMonth(node.items, mIdx);
+    const drillCtx  = buildCellDrillCtx(node, isItem ? item : null, month, monthRow);
+    return monthCols.map((metric, colIdx) => renderMetricCell(monthRow, metric, colIdx, compressed, drillCtx)).join("");
   }).join("");
 
   const leftCells = [];
@@ -733,6 +765,18 @@ function bindRtf() {
       s.dir    = s.colKey === colKey ? (s.dir === "asc" ? "desc" : "asc") : "asc";
       s.colKey = colKey;
       render("rtf");
+    });
+  });
+
+  document.querySelectorAll("[data-cst-drill]").forEach((td) => {
+    td.addEventListener("click", (e) => {
+      e.stopPropagation();
+      let ctx;
+      try { ctx = JSON.parse(td.getAttribute("data-cst-drill")); } catch(err) { return; }
+      state.cstDrilldown = ctx;
+      state.constraintFilter = "all";
+      state.constraintSearch = "";
+      render("constraint");
     });
   });
 }

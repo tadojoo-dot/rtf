@@ -61,6 +61,7 @@ const state = {
   validationPanelOpen: false,
   validationTab: 0,
   calcCriteriaOpen: false,
+  cstDrilldown: null,   // RTF 화면에서 넘어온 드릴다운 컨텍스트
 };
 
 // DOM 참조
