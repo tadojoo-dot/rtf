@@ -826,7 +826,7 @@
 /* 수급요약 표 */
 .cst-ss-table { border-collapse: collapse; font-size: 13px; min-width: 100%; table-layout: auto; }
 .cst-ss-table th {
-  background: #374151; color: #fff; font-size: 12px; font-weight: 700;
+  background: #15803d; color: #fff; font-size: 12px; font-weight: 700;
   padding: 5px 10px; text-align: center; white-space: nowrap;
 }
 .cst-ss-table td { border-bottom: 1px solid #e5e7eb; padding: 5px 10px; vertical-align: middle; }
@@ -866,7 +866,7 @@
 .cst-imp-adj    { text-align: center; white-space: nowrap; }
 .cst-adj-candidate { color: #b45309; font-weight: 700; }
 .cst-adj-unknown   { color: #9ca3af; font-size: 12px; }
-.cst-imp-sub-short { background: #854d0e !important; }
+.cst-imp-sub-short { background: #14532d !important; }
 .cst-imp-short     { color: #b45309; font-weight: 700; }
 .cst-imp-matshort  { color: #b02a37; font-weight: 700; }
 
@@ -890,7 +890,7 @@ td.cst-imp-col-shade               { background: rgba(20, 83, 45, 0.07); }
 .cst-sim-input-table th,
 .cst-sim-input-table td { border: 1px solid #e5e7eb; padding: 4px 6px; vertical-align: middle; }
 .cst-sim-ilabel-h     { background: #f9fafb; font-size: 12px; font-weight: 700; text-align: left; white-space: nowrap; }
-.cst-sim-mh           { background: #374151; color: #fff; font-size: 12px; text-align: center; white-space: nowrap; }
+.cst-sim-mh           { background: #15803d; color: #fff; font-size: 12px; text-align: center; white-space: nowrap; }
 .cst-sim-ilabel       { background: #f9fafb; color: #374151; font-size: 12px; white-space: nowrap; }
 .cst-sim-input        { border: 1px solid #d1d5db; border-radius: 3px; font-size: 12px; padding: 3px 4px; text-align: right; width: 72px; }
 .cst-sim-input:focus  { border-color: #3b82f6; outline: none; }
