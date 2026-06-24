@@ -29,6 +29,34 @@ var METRIC_DISPLAY = { "Shortage":"부족" };
 // 축소 모드 약칭
 var METRIC_DISPLAY_SHORT = { "판매계획":"판매", "Shortage":"부족" };
 
+// ── BOM 전개 기준 생산 가능수량 맵 ──────────────────────────────────────────────
+// BOM 완료 시: 자재별(material) 가용수량 ÷ 소요계수 → 완제품 max 생산 가능수량
+// 복수 자재 중 가장 제약이 심한 병목 자재 기준(min)
+function buildBomMaxProducibleMap() {
+  if (state.bomStatus !== "done" || !state.bomResult || !state.bomResult.items) return null;
+  const map = new Map(); // key: "itemCode|plant|month" → 생산 가능수량 (병목 기준)
+  state.bomResult.items.forEach((bi) => {
+    if (!bi.monthlyData || !bi.parentItems) return;
+    bi.parentItems.forEach((pi) => {
+      if (!pi.monthly) return;
+      pi.monthly.forEach((mData, j) => {
+        const md = bi.monthlyData[j];
+        if (!md || md.availableQty === null) return; // 판단불가 자재 → skip
+        const prodQty = mData.prodQty || 0;
+        const reqQty  = mData.reqQty  || 0;
+        if (prodQty === 0 || reqQty === 0) return;  // 소요 없으면 무제약
+        const coeff   = reqQty / prodQty;            // 완제품 1개당 자재 소요량
+        const maxProd = coeff > 0 ? md.availableQty / coeff : Infinity;
+        const key     = `${pi.code}|${pi.plant}|${mData.month}`;
+        const cur     = map.get(key);
+        // 복수 자재 중 가장 낮은 값(병목)을 유지
+        if (cur === undefined || maxProd < cur) map.set(key, Math.max(0, maxProd));
+      });
+    });
+  });
+  return map;
+}
+
 // ── RTF 계산 ─────────────────────────────────────────────────────────────────
 function itemTypeGroup(item) {
   const type = cleanOptional(item.itemType);
@@ -67,6 +95,7 @@ function displayPlantName(plantCode) {
 }
 
 function computeRtfItems() {
+  const _bomMap   = buildBomMaxProducibleMap(); // BOM 완료 시 자재 제약 맵, 미완료 시 null
   const planRows      = state.mappedData.plan_monthly;
   const inventoryRows = state.mappedData.inventory_base;
   const masterRows    = state.mappedData.item_master;
@@ -115,6 +144,7 @@ function computeRtfItems() {
     item.typeGroup = itemTypeGroup(item);
     let openingQty = item.baseQty;
     const masterGap = hasMasterGap(item);
+    const isFinished = item.typeGroup === "완제품";
 
     item.monthlyStatus = getRtfMonths().map((month) => {
       const plan = planLookup.get(`${key}|${month}`);
@@ -126,12 +156,23 @@ function computeRtfItems() {
       let endingQty = null, endingAmount = null, rtfQty = null, rtfAmount = null;
       let shortageQty = null, shortageAmount = null, lostSalesAmount = null, inventoryDays = null;
       let salesAmount = null, status = STATUS.UNKNOWN, reason = "";
+      let bomConstrained = false, planShortageQty = null;
 
       if (!item.hasInventory || openingQty === null) { reason = NEED_DATA; }
       else if (!hasPlanRow)                          { reason = NEED_DATA; openingQty = null; }
       else if (masterGap)                            { reason = NEED_MASTER; }
       else {
-        const availableQty = openingQty + supplyQty;
+        // BOM 전개 완료 시 완제품은 자재 제약 생산 가능수량으로 공급 조정
+        let effectiveSupply = supplyQty;
+        if (isFinished && _bomMap) {
+          const maxProd = _bomMap.get(`${meta.itemCode}|${meta.plant}|${month}`);
+          if (maxProd !== undefined) {
+            effectiveSupply = Math.min(supplyQty, maxProd);
+            bomConstrained = effectiveSupply < supplyQty;
+          }
+        }
+        planShortageQty = Math.max(salesQty - (openingQty + supplyQty), 0); // 계획 기준 원래값
+        const availableQty = openingQty + effectiveSupply;
         rtfQty = Math.min(salesQty, availableQty);
         shortageQty = Math.max(salesQty - availableQty, 0);
         endingQty = Math.max(availableQty - salesQty, 0);
@@ -143,7 +184,7 @@ function computeRtfItems() {
         openingQty = endingQty;
         reason = noSalesPlan ? NO_PLAN : "";
       }
-      return { month, salesQty, supplyQty, rtfQty, rtfAmount, endingQty, endingAmount, shortageQty, shortageAmount, lostSalesAmount, inventoryDays, salesAmount, salesPlanAmount, status, reason, noSalesPlan };
+      return { month, salesQty, supplyQty, rtfQty, rtfAmount, endingQty, endingAmount, shortageQty, shortageAmount, lostSalesAmount, inventoryDays, salesAmount, salesPlanAmount, status, reason, noSalesPlan, bomConstrained, planShortageQty };
     });
     return item;
   }).filter((item) => item.typeGroup === "상품" || item.typeGroup === "완제품");
@@ -441,11 +482,17 @@ function renderMetricCell(row, metric, metricIndex, compressed, drillCtx) {
     const hasS  = isAmt ? (Number.isFinite(row.shortageAmount) && row.shortageAmount > 0)
                         : (Number.isFinite(row.shortageQty)    && row.shortageQty    > 0);
     const raw = hasS ? (isAmt ? formatMoney(row.shortageAmount) : formatNumber(row.shortageQty)) : "-";
+    // BOM 제약 셀: 계획 기준보다 부족이 증가한 경우 별도 표시
+    const bomBadge = hasS && row.bomConstrained ? `<span class="rtf-bom-constrained-dot" title="BOM 자재 제약으로 부족 증가">▲</span>` : "";
+    // tooltip: BOM 제약 시 계획 기준 원래 부족도 표시
+    const tooltip = hasS && row.bomConstrained
+      ? `BOM 제약 부족: ${raw} (계획 기준: ${Number.isFinite(row.planShortageQty) ? formatNumber(row.planShortageQty) : "-"}) | 공급원인 보기 →`
+      : hasS && drillCtx ? "공급원인 보기 →" : "";
     if (hasS && drillCtx) {
       const drill = escapeHtml(JSON.stringify(drillCtx));
-      return `<td class="rtf-metric-cell rtf-shortage-cell rtf-status-text shortage rtf-cell-right${mb} rtf-drillable" data-cst-drill="${drill}" title="공급원인 보기 →">${escapeHtml(raw)}</td>`;
+      return `<td class="rtf-metric-cell rtf-shortage-cell rtf-status-text shortage rtf-cell-right${mb} rtf-drillable${row.bomConstrained ? " rtf-bom-constrained" : ""}" data-cst-drill="${drill}" title="${escapeHtml(tooltip)}">${escapeHtml(raw)}${bomBadge}</td>`;
     }
-    return `<td class="rtf-metric-cell rtf-shortage-cell ${hasS ? "rtf-status-text shortage" : "rtf-neutral-text"} rtf-cell-right${mb}">${escapeHtml(raw)}</td>`;
+    return `<td class="rtf-metric-cell rtf-shortage-cell ${hasS ? "rtf-status-text shortage" : "rtf-neutral-text"} rtf-cell-right${mb}">${hasS ? escapeHtml(raw) + bomBadge : escapeHtml(raw)}</td>`;
   }
   if (metric === "매출") {
     const raw = Number.isFinite(row.salesAmount) ? formatMoney(row.salesAmount) : NEED_DATA;
@@ -711,6 +758,7 @@ function renderRtf() {
         <span>RTF = 판매계획 대비 공급가능수량</span>
         <span>부족수량 = MAX(판매계획 − RTF, 0)</span>
         <span>부족금액 = 부족수량 × 표준원가</span>
+        ${state.bomStatus === "done" ? `<span class="rtf-bom-badge">BOM 전개 반영 중</span>` : `<span class="rtf-bom-badge rtf-bom-badge-off">BOM 미반영 (공급원인 화면에서 BOM 전개 필요)</span>`}
       </div>
     </section>
     <div class="rtf-toolbar">
