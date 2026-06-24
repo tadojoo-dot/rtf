@@ -20,19 +20,27 @@ var CONSTR_METRIC_W  = 72;  // 상세 모드 지표 컬럼 너비
 var CONSTR_METRICS   = ["필요","가용","부족"];
 
 // ── 제약대상 유형 표시 매핑 ──────────────────────────────────────────────────
+// 단글자 코드(L/N/D/R/U/T)는 임의 추정이므로 제외. SAP 표준코드·한글만 허용.
 var ITEM_CATEGORY_DISPLAY = {
-  "L":"자재","N":"자재","D":"자재","R":"원료","U":"반제품","T":"자재",
-  "ROH":"원료","HALB":"반제품","FERT":"완제품","HIBE":"자재","VERP":"자재","NLAG":"자재","UNBW":"자재",
-  "원료":"원료","자재":"자재","반제품":"반제품","재공품":"재공품","완제품":"완제품",
-  "상품":"상품공급","소모품":"자재","포장재":"자재","세미":"반제품",
+  "ROH":"원료","HALB":"반제품","FERT":"완제품","HIBE":"자재","VERP":"포장재",
+  "NLAG":"자재","UNBW":"자재",
+  "원료":"원료","주원료":"원료","부원료":"원료",
+  "자재":"자재","소모품":"자재","판촉물":"자재",
+  "포장재":"포장재",
+  "반제품":"반제품","반제품(구매)":"반제품(구매)","세미":"반제품",
+  "재공품":"재공품",
+  "완제품":"완제품","완제품(수탁)":"완제품(수탁)",
+  "상품":"상품","상품공급":"상품",
 };
-var _DISPLAY_VALID = new Set(["원료","자재","반제품","재공품","상품공급","완제품","기준정보"]);
+var _DISPLAY_VALID = new Set(["원료","자재","포장재","반제품","반제품(구매)","재공품","완제품","완제품(수탁)","상품","기준정보"]);
 
 function displayItemCategory(raw) {
-  if (!raw || raw === NEED_MASTER) return "확인필요";
+  if (!raw || raw === NEED_MASTER) return "품목유형 확인 필요";
   var t = String(raw).trim();
-  if (!t) return "확인필요";
-  return ITEM_CATEGORY_DISPLAY[t] || ITEM_CATEGORY_DISPLAY[t.toUpperCase()] || (_DISPLAY_VALID.has(t) ? t : "확인필요");
+  if (!t) return "품목유형 확인 필요";
+  var mapped = ITEM_CATEGORY_DISPLAY[t] || ITEM_CATEGORY_DISPLAY[t.toUpperCase()];
+  if (mapped) return mapped;
+  return _DISPLAY_VALID.has(t) ? t : "품목유형 확인 필요";
 }
 
 // ── 확인 필요사항 짧은 라벨 ──────────────────────────────────────────────────
@@ -126,6 +134,14 @@ function computeBomExpansion() {
     var ex   = compSupplyMap.get(key);
     if (ex) { ex.qty += qty; if (!ex.unit && unit) ex.unit = unit; }
     else compSupplyMap.set(key, { qty:qty, unit:unit });
+  });
+
+  // 하위 자재 공급계획 연결 여부 추적 (자재+플랜트 단위, 완제품 9코드 제외)
+  var compSupplyKeys = new Set();
+  planRows.forEach(function(row) {
+    var code = cleanOptional(row.itemCode), plant = cleanOptional(row.plant);
+    if (!code || !plant || code.startsWith("9")) return;
+    compSupplyKeys.add(code + "|" + plant);
   });
 
   // 기초재고: code|plant → { qty, unit }
@@ -321,6 +337,8 @@ function computeBomExpansion() {
       : parentGroups[0] + " 외 " + (parentGroups.length - 1) + "개";
 
     // 월별 순차 계산
+    // 현재고·입고계획 모두 연결되어야 부족 확정 가능 — 하나라도 없으면 판단불가
+    var hasSupplyPlan = compSupplyKeys.has(comp.componentCode + "|" + comp.plant);
     var monthlyData = [], hasAnyShortage = false, totalShortage = 0;
     if (unitMismatch) {
       months.forEach(function(month) {
@@ -329,14 +347,16 @@ function computeBomExpansion() {
       });
     } else {
       var openingQty = baseQty;
+      // canCompute: 현재고·입고계획 둘 다 연결된 경우만 계산
+      var canCompute = (openingQty !== null) && hasSupplyPlan;
       months.forEach(function(month) {
         var requiredQty = comp.requiredByMonth.get(month) || 0;
-        var sd          = compSupplyMap.get(comp.componentCode + "|" + comp.plant + "|" + month);
-        var supplyQty   = sd ? sd.qty : 0;
         var availableQty = null, shortageQty = null;
-        if (openingQty !== null) {
-          availableQty = openingQty + supplyQty;
-          shortageQty  = Math.max(requiredQty - availableQty, 0);
+        if (canCompute) {
+          var sd        = compSupplyMap.get(comp.componentCode + "|" + comp.plant + "|" + month);
+          var supplyQty = sd ? sd.qty : 0;
+          availableQty  = openingQty + supplyQty;
+          shortageQty   = Math.max(requiredQty - availableQty, 0);
           var endingQty = Math.max(availableQty - requiredQty, 0);
           if (shortageQty > 0) { hasAnyShortage = true; totalShortage += shortageQty; }
           openingQty = endingQty;
@@ -348,16 +368,24 @@ function computeBomExpansion() {
     var hasReq = monthlyData.some(function(md) { return md.requiredQty > 0; });
     if (!hasReq) return;
 
+    // 품목유형 판별 (임의 추정 금지)
+    var categoryDisplay = displayItemCategory(comp.itemCategory);
+    var categoryUnknown = categoryDisplay === "품목유형 확인 필요";
+    // 반제품 조달구분 확인 필요: 하위 BOM 없는 반제품 (구매/자체 구분 불가)
+    var needsProvenanceCheck = needsSemiBom;
+
     // 확인 필요사항
     var notes = [];
-    if (!hasInv)                           notes.push("현재고 데이터 연결 필요");
-    if (isShared && hasAnyShortage)        notes.push("공통자재 부족 발생. 완제품별 배분기준 확인 필요");
-    if (hasAltBom)                         notes.push("대체 BOM 존재. 적용 기준 확인 필요");
-    if (needsSemiBom)                      notes.push("반제품 하위 BOM 연결 필요");
-    if (unitMismatch)                      notes.push("단위 정합 확인 필요");
-    else if (unitMissing && !unitMismatch) notes.push("단위 기준정보 확인 필요");
+    if (!hasInv)                                  notes.push("현재고 연결 필요");
+    if (!hasSupplyPlan)                           notes.push("입고계획 확인 필요");
+    if (needsProvenanceCheck)                     notes.push("반제품 조달구분 확인 필요");
+    if (categoryUnknown)                          notes.push("품목유형 확인 필요");
+    if (isShared && hasAnyShortage)               notes.push("공통자재 부족 발생. 완제품별 배분기준 확인 필요");
+    if (hasAltBom)                                notes.push("대체 BOM 존재. 적용 기준 확인 필요");
+    if (unitMismatch)                             notes.push("단위 정합 확인 필요");
+    else if (unitMissing && !unitMismatch)        notes.push("단위 기준정보 확인 필요");
 
-    var needsMaster = !comp.itemCategory || comp.itemCategory === NEED_MASTER || displayItemCategory(comp.itemCategory) === "확인필요";
+    var needsMaster = !comp.itemCategory || comp.itemCategory === NEED_MASTER || categoryUnknown;
     var parentArrResult = parentArr.map(function(p) {
       var pMaster = masterMap.get(p.code);
       var pUnit   = cleanOptional(pMaster ? (pMaster.unit || pMaster.unitOfMeasure || pMaster.baseUnit || "") : "") || "EA";
@@ -375,32 +403,35 @@ function computeBomExpansion() {
     if (!resolvedCompName) resolvedCompName = "자재명 확인필요";
 
     resultItems.push({
-      plant:           comp.plant,
-      componentCode:   comp.componentCode,
-      componentName:   resolvedCompName,
-      itemCategory:    comp.itemCategory,
-      displayCategory: displayItemCategory(comp.itemCategory),
-      parentItemGroup: parentItemGroup,
-      unit:            resolvedUnit,
-      unitMismatch:    unitMismatch,
-      unitMissing:     unitMissing,
-      isShared:        isShared,
-      parentItems:     parentArrResult,
-      hasInventory:    hasInv,
-      monthlyData:     monthlyData,
-      hasAnyShortage:  hasAnyShortage,
-      totalShortage:   totalShortage,
-      hasAltBom:       hasAltBom,
-      hasSemiSubBom:   needsSemiBom,
-      needsMaster:     needsMaster,
-      notes:           notes,
-      note:            notes.join(" | "),
+      plant:                comp.plant,
+      componentCode:        comp.componentCode,
+      componentName:        resolvedCompName,
+      itemCategory:         comp.itemCategory,
+      displayCategory:      categoryDisplay,
+      categoryUnknown:      categoryUnknown,
+      parentItemGroup:      parentItemGroup,
+      unit:                 resolvedUnit,
+      unitMismatch:         unitMismatch,
+      unitMissing:          unitMissing,
+      isShared:             isShared,
+      parentItems:          parentArrResult,
+      hasInventory:         hasInv,
+      hasSupplyPlan:        hasSupplyPlan,
+      monthlyData:          monthlyData,
+      hasAnyShortage:       hasAnyShortage,
+      totalShortage:        totalShortage,
+      hasAltBom:            hasAltBom,
+      hasSemiSubBom:        needsSemiBom,
+      needsProvenanceCheck: needsProvenanceCheck,
+      needsMaster:          needsMaster,
+      notes:                notes,
+      note:                 notes.join(" | "),
     });
   });
 
-  // 제약 대상만 (부족 발생·재고 미연결·단위 불일치)
+  // 제약 대상: 부족 확정·현재고/입고계획 미연결·단위 불일치·반제품 조달구분 확인 필요
   var constraintItems = resultItems.filter(function(i) {
-    return i.hasAnyShortage || !i.hasInventory || i.unitMismatch;
+    return i.hasAnyShortage || !i.hasInventory || !i.hasSupplyPlan || i.unitMismatch || i.needsProvenanceCheck;
   });
   var sorted = sortConstraintItems(constraintItems);
 
@@ -411,8 +442,12 @@ function computeBomExpansion() {
     totalConstraints:  sorted.filter(function(i) { return i.hasAnyShortage; }).length,
     sharedConstraints: sorted.filter(function(i) { return i.isShared && i.hasAnyShortage; }).length,
     dedicatedShortage: sorted.filter(function(i) { return !i.isShared && i.hasAnyShortage; }).length,
+    provenanceCheck:   sorted.filter(function(i) { return i.needsProvenanceCheck; }).length,
+    categoryUnknown:   sorted.filter(function(i) { return i.categoryUnknown; }).length,
+    noInventory:       sorted.filter(function(i) { return !i.hasInventory; }).length,
+    noSupplyPlan:      sorted.filter(function(i) { return !i.hasSupplyPlan; }).length,
+    indeterminate:     sorted.filter(function(i) { return !i.hasInventory || !i.hasSupplyPlan || i.unitMismatch; }).length,
     needMaster:        sorted.filter(function(i) { return i.needsMaster; }).length,
-    needData:          sorted.filter(function(i) { return !i.hasInventory; }).length,
     missingCompCode:   missingCompCodeCount,
     // BOM 구조 통계
     multiLevelRoots:   bomStat.multiLevelRoots.size,
@@ -435,10 +470,13 @@ function sortConstraintItems(items) {
   function priority(item) {
     if (item.hasAnyShortage && item.isShared)  return 0;
     if (item.hasAnyShortage && !item.isShared) return 1;
-    if (item.unitMismatch)                     return 2; // 판단불가
-    if (item.needsMaster)                      return 3;
-    if (!item.hasInventory)                    return 4;
-    return 5;
+    if (item.unitMismatch)                     return 2;
+    if (item.needsProvenanceCheck)             return 3;
+    if (!item.hasInventory && !item.hasSupplyPlan) return 4;
+    if (!item.hasInventory)                    return 5;
+    if (!item.hasSupplyPlan)                   return 6;
+    if (item.needsMaster || item.categoryUnknown) return 7;
+    return 8;
   }
   return items.slice().sort(function(a, b) {
     var pd = priority(a) - priority(b);
@@ -455,11 +493,13 @@ function filterConstraintItems(items) {
   var filter = state.constraintFilter || "all";
   var search = ((state.constraintSearch || "")).toLowerCase().trim();
   var filtered = items;
-  if      (filter === "shortage")    filtered = items.filter(function(i) { return i.hasAnyShortage; });
-  else if (filter === "shared")      filtered = items.filter(function(i) { return i.isShared && i.hasAnyShortage; });
-  else if (filter === "dedicated")   filtered = items.filter(function(i) { return !i.isShared && i.hasAnyShortage; });
-  else if (filter === "need-master") filtered = items.filter(function(i) { return i.needsMaster; });
-  else if (filter === "need-data")   filtered = items.filter(function(i) { return !i.hasInventory; });
+  if      (filter === "shortage")      filtered = items.filter(function(i) { return i.hasAnyShortage; });
+  else if (filter === "shared")        filtered = items.filter(function(i) { return i.isShared && i.hasAnyShortage; });
+  else if (filter === "dedicated")     filtered = items.filter(function(i) { return !i.isShared && i.hasAnyShortage; });
+  else if (filter === "indeterminate") filtered = items.filter(function(i) { return !i.hasInventory || !i.hasSupplyPlan || i.unitMismatch; });
+  else if (filter === "need-data")     filtered = items.filter(function(i) { return !i.hasInventory || !i.hasSupplyPlan; });
+  else if (filter === "provenance")    filtered = items.filter(function(i) { return i.needsProvenanceCheck; });
+  else if (filter === "need-master")   filtered = items.filter(function(i) { return i.needsMaster || i.categoryUnknown; });
   if (search) {
     filtered = filtered.filter(function(i) {
       return i.componentCode.toLowerCase().includes(search) ||
@@ -479,14 +519,17 @@ function renderConstraintSummaryCard(result) {
     ? result.completedAt.toLocaleTimeString("ko-KR", { hour:"2-digit", minute:"2-digit", second:"2-digit" })
     : "-";
   var items = [
-    { label:"전개상태",          value:"완료",                                                           cls:"ok"       },
-    { label:"전개완료시각",      value:fmtTime,                                                         cls:""         },
-    { label:"확정부족 제약대상", value:s.totalConstraints  > 0 ? s.totalConstraints  + "건" : "-",  cls:s.totalConstraints  > 0 ? "shortage" : "" },
-    { label:"공용자재 제약",     value:s.sharedConstraints > 0 ? s.sharedConstraints + "건" : "-",  cls:s.sharedConstraints > 0 ? "warn"     : "" },
-    { label:"전용자재 부족",     value:s.dedicatedShortage > 0 ? s.dedicatedShortage + "건" : "-",  cls:s.dedicatedShortage > 0 ? "shortage" : "" },
-    { label:"기준정보 확인 필요",value:s.needMaster        > 0 ? s.needMaster        + "건" : "-",  cls:s.needMaster        > 0 ? "warn"     : "" },
-    { label:"데이터 연결 필요",  value:s.needData          > 0 ? s.needData          + "건" : "-",  cls:s.needData          > 0 ? "warn"     : "" },
-    { label:"BOM 코드 누락",     value:s.missingCompCode   > 0 ? s.missingCompCode   + "행" : "-",  cls:s.missingCompCode   > 0 ? "warn"     : "" },
+    { label:"전개상태",              value:"완료",                                                                      cls:"ok"       },
+    { label:"전개완료시각",          value:fmtTime,                                                                     cls:""         },
+    { label:"확정 부족 제약대상",    value:s.totalConstraints  > 0 ? s.totalConstraints  + "건" : "-",   cls:s.totalConstraints  > 0 ? "shortage" : "" },
+    { label:"공용자재 제약",         value:s.sharedConstraints > 0 ? s.sharedConstraints + "건" : "-",   cls:s.sharedConstraints > 0 ? "warn"     : "" },
+    { label:"전용자재 부족",         value:s.dedicatedShortage > 0 ? s.dedicatedShortage + "건" : "-",   cls:s.dedicatedShortage > 0 ? "shortage" : "" },
+    { label:"반제품 조달구분 확인",  value:s.provenanceCheck   > 0 ? s.provenanceCheck   + "건" : "-",   cls:s.provenanceCheck   > 0 ? "warn"     : "" },
+    { label:"품목유형 확인 필요",    value:s.categoryUnknown   > 0 ? s.categoryUnknown   + "건" : "-",   cls:s.categoryUnknown   > 0 ? "warn"     : "" },
+    { label:"현재고 미연결",         value:s.noInventory       > 0 ? s.noInventory       + "건" : "-",   cls:s.noInventory       > 0 ? "warn"     : "" },
+    { label:"입고계획 미연결",       value:s.noSupplyPlan      > 0 ? s.noSupplyPlan      + "건" : "-",   cls:s.noSupplyPlan      > 0 ? "warn"     : "" },
+    { label:"부족 확정 불가",        value:s.indeterminate     > 0 ? s.indeterminate     + "건" : "-",   cls:s.indeterminate     > 0 ? "warn"     : "" },
+    { label:"BOM 코드 누락",         value:s.missingCompCode   > 0 ? s.missingCompCode   + "행" : "-",   cls:s.missingCompCode   > 0 ? "warn"     : "" },
   ];
   return "<section class=\"cst-card cst-summary-card\"><div class=\"cst-summary-grid\">" +
     items.map(function(i) {
@@ -500,12 +543,13 @@ function renderConstraintFilterBar(allItems) {
   var f          = state.constraintFilter || "all";
   var detailMode = state.constraintDetailMode;
   var filters = [
-    { key:"all",         label:"전체",         count:allItems.length },
-    { key:"shortage",    label:"부족만",        count:allItems.filter(function(i) { return i.hasAnyShortage; }).length },
-    { key:"shared",      label:"공용자재",      count:allItems.filter(function(i) { return i.isShared && i.hasAnyShortage; }).length },
-    { key:"dedicated",   label:"전용자재",      count:allItems.filter(function(i) { return !i.isShared && i.hasAnyShortage; }).length },
-    { key:"need-master", label:"기준정보 확인", count:allItems.filter(function(i) { return i.needsMaster; }).length },
-    { key:"need-data",   label:"데이터 연결",   count:allItems.filter(function(i) { return !i.hasInventory; }).length },
+    { key:"all",           label:"전체",           count:allItems.length },
+    { key:"shortage",      label:"확정 부족",       count:allItems.filter(function(i) { return i.hasAnyShortage; }).length },
+    { key:"shared",        label:"공용자재",        count:allItems.filter(function(i) { return i.isShared && i.hasAnyShortage; }).length },
+    { key:"dedicated",     label:"전용자재",        count:allItems.filter(function(i) { return !i.isShared && i.hasAnyShortage; }).length },
+    { key:"indeterminate", label:"확정 불가",       count:allItems.filter(function(i) { return !i.hasInventory || !i.hasSupplyPlan || i.unitMismatch; }).length },
+    { key:"need-data",     label:"데이터 미연결",   count:allItems.filter(function(i) { return !i.hasInventory || !i.hasSupplyPlan; }).length },
+    { key:"provenance",    label:"반제품 조달구분", count:allItems.filter(function(i) { return i.needsProvenanceCheck; }).length },
   ];
   var btns = filters.map(function(ft) {
     return "<button type=\"button\" class=\"cst-filter-btn" + (f === ft.key ? " active" : "") +
@@ -523,30 +567,40 @@ function renderConstraintFilterBar(allItems) {
 
 // ── 의사결정 필요사항 ────────────────────────────────────────────────────────
 function decisionLabel(item) {
-  if (item.needsMaster)                         return "기준정보 확인 필요";
-  if (item.unitMismatch)                        return "단위 정합 확인 필요";
-  if (!item.hasInventory)                       return "현재고 연결 필요";
-  if (item.isShared && item.hasAnyShortage)     return "공용자재 배분기준 필요";
-  if (item.hasAltBom && item.hasAnyShortage)    return "대체BOM 검토 필요";
-  if (item.hasAnyShortage)                      return "긴급입고 검토 필요";
+  if (item.needsProvenanceCheck)                 return "반제품 조달구분 확인 필요";
+  if (item.categoryUnknown)                      return "품목유형 확인 필요";
+  if (item.needsMaster)                          return "기준정보 확인 필요";
+  if (item.unitMismatch)                         return "단위 정합 확인 필요";
+  if (!item.hasInventory && !item.hasSupplyPlan) return "현재고·입고계획 연결 필요";
+  if (!item.hasInventory)                        return "현재고 연결 필요";
+  if (!item.hasSupplyPlan)                       return "입고계획 확인 필요";
+  if (item.isShared && item.hasAnyShortage)      return "공용자재 배분기준 필요";
+  if (item.hasAltBom && item.hasAnyShortage)     return "대체BOM 검토 필요";
+  if (item.hasAnyShortage)                       return "긴급입고 검토 필요";
   return "-";
 }
 var DECISION_CLS = {
-  "긴급입고 검토 필요":    "cst-dec-urgent",
-  "공용자재 배분기준 필요":"cst-dec-warn",
-  "대체BOM 검토 필요":     "cst-dec-info",
-  "현재고 연결 필요":      "cst-dec-link",
-  "공급계획 연결 필요":    "cst-dec-link",
-  "단위 정합 확인 필요":   "cst-dec-check",
-  "기준정보 확인 필요":    "cst-dec-check",
+  "긴급입고 검토 필요":         "cst-dec-urgent",
+  "공용자재 배분기준 필요":     "cst-dec-warn",
+  "대체BOM 검토 필요":          "cst-dec-info",
+  "반제품 조달구분 확인 필요":  "cst-dec-check",
+  "품목유형 확인 필요":         "cst-dec-check",
+  "현재고 연결 필요":           "cst-dec-link",
+  "현재고·입고계획 연결 필요":  "cst-dec-link",
+  "입고계획 확인 필요":         "cst-dec-link",
+  "공급계획 연결 필요":         "cst-dec-link",
+  "단위 정합 확인 필요":        "cst-dec-check",
+  "기준정보 확인 필요":         "cst-dec-check",
 };
 function decisionCls(label) { return DECISION_CLS[label] || "cst-dec-neutral"; }
 
 // ── 압축 셀 계산 ─────────────────────────────────────────────────────────────
 function compactCellValue(item, md) {
-  if (item.unitMismatch)       return { text:"판단불가", cls:"cst-neutral-cell" };
-  if (!item.hasInventory)      return { text:"연결필요",  cls:"cst-neutral-cell" };
-  if (md.shortageQty === null) return { text:"판단불가", cls:"cst-neutral-cell" };
+  if (item.needsProvenanceCheck) return { text:"조달구분 확인", cls:"cst-neutral-cell" };
+  if (item.unitMismatch)         return { text:"단위 판단불가", cls:"cst-neutral-cell" };
+  if (!item.hasInventory)        return { text:"현재고 연결필요", cls:"cst-neutral-cell" };
+  if (!item.hasSupplyPlan)       return { text:"입고계획 확인", cls:"cst-neutral-cell" };
+  if (md.shortageQty === null)   return { text:"판단불가",      cls:"cst-neutral-cell" };
   if (md.shortageQty > 0) {
     var qty  = formatNumber(Math.round(md.shortageQty));
     var unit = (item.unit && item.unit !== "확인필요") ? " " + item.unit : "";
@@ -766,13 +820,15 @@ function computeValidation() {
     });
 
   var summary = {
-    targetCount:   items.length,
-    bomUnmatched:  sec2.unmatched,
-    needInventory: sec4.filter(function(r) { return !r.hasInv; }).length,
-    needSupply:    sec5.filter(function(r) { return !r.hasSupply; }).length,
-    unitMismatch:  sec6.filter(function(r) { return r.mismatch; }).length,
-    uncertain:     items.filter(function(i) { return i.unitMismatch || !i.hasInventory; }).length,
-    shortage:      items.filter(function(i) { return i.hasAnyShortage; }).length,
+    targetCount:     items.length,
+    bomUnmatched:    sec2.unmatched,
+    categoryUnknown: items.filter(function(i) { return i.categoryUnknown; }).length,
+    needInventory:   items.filter(function(i) { return !i.hasInventory; }).length,
+    needSupply:      items.filter(function(i) { return !i.hasSupplyPlan; }).length,
+    provenanceCheck: items.filter(function(i) { return i.needsProvenanceCheck; }).length,
+    unitMismatch:    sec6.filter(function(r) { return r.mismatch; }).length,
+    indeterminate:   items.filter(function(i) { return !i.hasInventory || !i.hasSupplyPlan || i.unitMismatch; }).length,
+    shortage:        items.filter(function(i) { return i.hasAnyShortage; }).length,
   };
   return { summary:summary, sec1:sec1, sec2:sec2, sec3:sec3, sec4:sec4, sec5:sec5, sec6:sec6, sec7:sec7, months:months };
 }
@@ -782,13 +838,15 @@ function renderValidationPanel() {
   if (!state.validationPanelOpen || !state.bomResult || state.bomResult.status !== BOM_STATUS.DONE) return "";
   var vd = computeValidation(), tab = state.validationTab || 0, s = vd.summary;
   var kpiItems = [
-    { label:"제약 대상",         v:s.targetCount,   warn:false },
-    { label:"BOM 미매칭",        v:s.bomUnmatched,  warn:s.bomUnmatched  > 0 },
-    { label:"현재고 연결 필요",  v:s.needInventory, warn:s.needInventory > 0 },
-    { label:"공급계획 연결 필요",v:s.needSupply,    warn:s.needSupply    > 0 },
-    { label:"단위 정합 확인",    v:s.unitMismatch,  warn:s.unitMismatch  > 0 },
-    { label:"판단불가",          v:s.uncertain,     warn:s.uncertain     > 0 },
-    { label:"확정 부족",         v:s.shortage,      warn:false, shortage:s.shortage > 0 },
+    { label:"제약 대상",           v:s.targetCount,     warn:false },
+    { label:"BOM 미매칭",          v:s.bomUnmatched,    warn:s.bomUnmatched    > 0 },
+    { label:"품목유형 확인 필요",   v:s.categoryUnknown, warn:s.categoryUnknown > 0 },
+    { label:"현재고 미연결",        v:s.needInventory,   warn:s.needInventory   > 0 },
+    { label:"입고계획 미연결",      v:s.needSupply,      warn:s.needSupply      > 0 },
+    { label:"반제품 조달구분",      v:s.provenanceCheck, warn:s.provenanceCheck > 0 },
+    { label:"단위 정합 확인",       v:s.unitMismatch,    warn:s.unitMismatch    > 0 },
+    { label:"부족 확정 불가",       v:s.indeterminate,   warn:s.indeterminate   > 0 },
+    { label:"확정 부족",            v:s.shortage,        warn:false, shortage:s.shortage > 0 },
   ];
   var kpiHtml = kpiItems.map(function(k) {
     var cls = k.shortage ? " vld-kpi-shortage" : k.warn ? " vld-kpi-warn" : "";
@@ -987,13 +1045,16 @@ function renderCalcCriteria() {
     ["부족금액",      "부족수량 × 표준원가"],
   ];
   var criteria = [
+    "RTF 대상(완제품·상품)과 BOM 하위 공급제약 품목을 분리 처리",
     "공용자재는 완제품별 임의 배분 없이 <b>공통제약</b>으로 표시",
-    "반제품·재공품은 부족 대상이 아닌 중간단계로 처리",
-    "부족 대상은 최하위 원료·자재 중심으로 판단",
-    "반제품과 하위 원료·자재의 중복 부족 계산 방지",
+    "반제품·재공품은 중간단계 처리 — 하위 원료·자재 기준으로 전개",
+    "품목유형이 없거나 불명확 시 <b>품목유형 확인 필요</b>로 표시 — 임의 추정 금지",
+    "반제품 조달구분(자체생산/구매) 불명확 시 <b>반제품 조달구분 확인 필요</b>로 표시",
+    "현재고 미연결 시 0 가정하지 않고 <b>현재고 연결 필요</b>로 표시",
+    "입고계획 미연결 시 0 가정하지 않고 <b>입고계획 확인 필요</b>로 표시",
+    "현재고·입고계획 모두 연결되어야 부족수량 확정 가능",
     "대체BOM 적용 제외 — 기본BOM(1번)만 사용",
     "단위 불일치 시 임의 환산 없이 <b>단위 정합 확인</b>으로 표시",
-    "현재고·공급계획 미연결 시 부족 미확정 — <b>연결필요</b> · <b>판단불가</b>로 표시",
   ];
   var formulaRows = formulas.map(function(f) {
     return "<li><span class=\"cst-crit-formula\">" + escapeHtml(f[0]) + "</span> = " + escapeHtml(f[1]) + "</li>";
@@ -1227,7 +1288,13 @@ function renderConstraintTableBody(items, months, detailMode) {
             if (m.prodQty > 0) { unitReqNum = m.reqQty / m.prodQty; return true; }
             return false;
           });
-          var unitReqVal  = unitReqNum !== null ? parseFloat(unitReqNum.toFixed(4)).toString() : "-";
+          // 1 이상이면 정수 반올림, 1 미만이면 소수 첫째자리 반올림
+          var unitReqVal = "-";
+          if (unitReqNum !== null) {
+            unitReqVal = unitReqNum >= 1
+              ? String(Math.round(unitReqNum))
+              : String(Math.round(unitReqNum * 10) / 10);
+          }
           var unitReqDisp = unitReqNum !== null
             ? unitReqVal + (item.unit && item.unit !== "확인필요" ? " " + item.unit : "") + "/" + (p.unit || "EA")
             : "-";
