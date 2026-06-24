@@ -1278,7 +1278,9 @@ function renderConstraintTableBody(items, months, detailMode) {
           return "<th class=\"cst-dtl-month\" colspan=\"3\">" + escapeHtml(monthLabel(m)) + "</th>";
         }).join("");
         var detailSubHeads = months.map(function() {
-          return "<th class=\"cst-dtl-sub\">생산계획</th><th class=\"cst-dtl-sub\">단위소요량</th><th class=\"cst-dtl-sub\">자재 필요수량</th>";
+          return "<th class=\"cst-dtl-sub\">생산계획</th>" +
+                 "<th class=\"cst-dtl-sub\" title=\"완제품 1개 생산 시 필요한 자재 수량\">1개당 소요량</th>" +
+                 "<th class=\"cst-dtl-sub\">자재 필요수량</th>";
         }).join("");
 
         var detailBodyRows = shownParents.map(function(p, pi) {
@@ -1305,24 +1307,25 @@ function renderConstraintTableBody(items, months, detailMode) {
           function fmtUnitReq(v) { return fmtQty(v, _maxDec); }
           function fmtReqQty(v)  { return fmtQty(v, _isHighPrec ? 4 : 2); }
 
+          // 1개당 소요량: 자재 단위만 표시 (완제품 단위 제외)
           var unitReqVal  = unitReqNum !== null ? fmtUnitReq(unitReqNum) : "-";
           var unitReqDisp = unitReqNum !== null
-            ? unitReqVal + (_matUnit ? " " + item.unit : "") + "/" + (p.unit || "EA")
+            ? unitReqVal + (_matUnit ? " " + item.unit : "")
             : "-";
+          var _unitSuffix = _matUnit ? " " + item.unit : "";
 
           var monthlyCells = p.monthly.map(function(md) {
             var prodDisp = md.prodQty > 0 ? formatNumber(Math.round(md.prodQty)) : "-";
             var reqDisp;
             if (md.prodQty > 0 && md.reqQty === 0 && unitReqNum === 0) {
-              // 생산계획 있는데 소요량도 0 → BOM 계수 문제
               reqDisp = "BOM 소요량 확인 필요";
             } else {
-              reqDisp = md.reqQty > 0 ? fmtReqQty(md.reqQty) : "-";
+              reqDisp = md.reqQty > 0 ? fmtReqQty(md.reqQty) + _unitSuffix : "-";
             }
-            // 단위소요량 셀: 생산계획 있을 때만 표시
+            // 1개당 소요량: 생산계획 있을 때만 표시
             var coeffDisp = md.prodQty > 0 ? escapeHtml(unitReqDisp) : "-";
             return "<td class=\"cst-dtl-num\">" + prodDisp + "</td>" +
-                   "<td class=\"cst-dtl-num cst-dtl-coeff\">" + coeffDisp + "</td>" +
+                   "<td class=\"cst-dtl-num cst-dtl-coeff\" title=\"완제품 1개 생산 시 필요한 자재 수량\">" + coeffDisp + "</td>" +
                    "<td class=\"cst-dtl-num\">" + reqDisp + "</td>";
           }).join("");
 
