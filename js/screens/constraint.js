@@ -391,7 +391,7 @@ function computeBomExpansion() {
       hasAnyShortage:  hasAnyShortage,
       totalShortage:   totalShortage,
       hasAltBom:       hasAltBom,
-      hasSemiSubBom:   hasSemiSubBom,
+      hasSemiSubBom:   needsSemiBom,
       needsMaster:     needsMaster,
       notes:           notes,
       note:            notes.join(" | "),
@@ -1319,15 +1319,19 @@ function bindConstraint() {
         render("constraint");
         setTimeout(advance, 160);
       } else {
-        var res = computeBomExpansion();
-        state.bomResult       = res;
-        state.bomStatus       = res.status;
+        try {
+          var res = computeBomExpansion();
+          state.bomResult       = res;
+          state.bomStatus       = res.status;
+        } catch(e) {
+          state.bomResult  = { status:BOM_STATUS.FAILED, failReasons:["BOM 전개 오류: " + (e.message || e)], items:[], stats:{} };
+          state.bomStatus  = BOM_STATUS.FAILED;
+        }
         state.bomProgressStep = "";
         state.constraintSearch = "";
         state.constraintDetailMode = false;
         state.constraintImpactSort = 0;
-        // 부족 건 있으면 "부족만" 필터 자동 선택
-        state.constraintFilter = (res.items && res.items.some(function(i) { return i.hasAnyShortage; })) ? "shortage" : "all";
+        state.constraintFilter = (state.bomResult && state.bomResult.items && state.bomResult.items.some(function(i) { return i.hasAnyShortage; })) ? "shortage" : "all";
         render("constraint");
       }
     };
