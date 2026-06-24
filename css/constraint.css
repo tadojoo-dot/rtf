@@ -293,7 +293,7 @@
 }
 
 .cst-detail-head th {
-  background: #424854;
+  background: #15803d;
   color: #fff;
   font-size: 11px;
   font-weight: 700;
@@ -309,19 +309,19 @@
 
 /* ── 펼침 상세 영역 개선 ── */
 
-/* 완제품 정보 컬럼 — 녹색 배경으로 수량 영역과 구분 */
+/* 완제품 정보 컬럼 — 수량 영역과 동일 흰색 */
 .cst-detail-table .cst-detail-data-row td.cst-dtl-info {
-  background: #bbf7d0 !important;
+  background: #fff !important;
 }
 
 /* 정보 영역 헤더 — 전체 헤더와 동일 색상으로 통일 */
 .cst-detail-head th.cst-dtl-info-h {
-  background: #424854;
+  background: #15803d;
 }
 
 /* 중첩 테이블 특이성 보정 — .cst-table thead th(뒤에 선언) 에 덮이는 월별·서브헤더 복원 */
 .cst-detail-table .cst-detail-head th {
-  background: #424854;
+  background: #15803d;
   color: #fff;
 }
 
@@ -348,7 +348,7 @@
 
 /* 월별 헤더 */
 .cst-dtl-month {
-  background: #424854;
+  background: #15803d;
   border-left: 2px solid #6b7280 !important;
   color: #fff;
   font-size: 12px;
@@ -356,7 +356,7 @@
 }
 
 .cst-dtl-sub {
-  background: #424854;
+  background: #15803d;
   color: #fff;
   font-size: 11px;
   font-weight: 700;
