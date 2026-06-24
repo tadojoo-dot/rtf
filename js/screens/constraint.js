@@ -1414,13 +1414,15 @@ function renderCstDetailExpanded(item, months, totalCols) {
   var shownParents = sortedParents.slice(0, EXPAND_LIMIT);
 
   var impColPer = shortageConfirmed ? 3 : 2;
-  var impMonthHeads = months.map(function(m) {
-    return "<th class=\"cst-imp-month\" colspan=\"" + impColPer + "\">" + escapeHtml(monthLabel(m)) + "</th>";
+  var impMonthHeads = months.map(function(m, mi) {
+    var sc = mi % 2 === 1 ? " cst-imp-col-shade" : "";
+    return "<th class=\"cst-imp-month" + sc + "\" colspan=\"" + impColPer + "\">" + escapeHtml(monthLabel(m)) + "</th>";
   }).join("");
-  var impSubHeads = months.map(function() {
+  var impSubHeads = months.map(function(m, mi) {
+    var sc = mi % 2 === 1 ? " cst-imp-col-shade" : "";
     return shortageConfirmed
-      ? "<th class=\"cst-imp-sub\">생산계획</th><th class=\"cst-imp-sub cst-imp-sub-short\">부족</th><th class=\"cst-imp-sub\">자재 부족수량</th>"
-      : "<th class=\"cst-imp-sub\">생산계획</th><th class=\"cst-imp-sub\">총 자재 필요수량</th>";
+      ? "<th class=\"cst-imp-sub" + sc + "\">생산계획</th><th class=\"cst-imp-sub cst-imp-sub-short" + sc + "\">부족</th><th class=\"cst-imp-sub" + sc + "\">자재 부족수량</th>"
+      : "<th class=\"cst-imp-sub" + sc + "\">생산계획</th><th class=\"cst-imp-sub" + sc + "\">총 자재 필요수량</th>";
   }).join("");
 
   var impRows = shownParents.map(function(p) {
@@ -1436,6 +1438,7 @@ function renderCstDetailExpanded(item, months, totalCols) {
 
     var monthlyCells = p.monthly.map(function(md, mi) {
       var month    = months[mi];
+      var sc       = mi % 2 === 1 ? " cst-imp-col-shade" : "";
       var prodDisp = md.prodQty > 0 ? formatNumber(Math.round(md.prodQty)) : "-";
 
       if (shortageConfirmed) {
@@ -1446,12 +1449,12 @@ function renderCstDetailExpanded(item, months, totalCols) {
         var matShort    = monthlyShortage.get(month);
         var matDisp     = (matShort !== null && matShort > 0)
           ? escapeHtml(_cstFmtVal(matShort, dec, matUnit)) : "-";
-        return "<td class=\"cst-imp-num\">" + prodDisp + "</td>" +
-               "<td class=\"cst-imp-num cst-imp-short\">" + rtfDisp + "</td>" +
-               "<td class=\"cst-imp-num cst-imp-matshort\">" + matDisp + "</td>";
+        return "<td class=\"cst-imp-num" + sc + "\">" + prodDisp + "</td>" +
+               "<td class=\"cst-imp-num cst-imp-short" + sc + "\">" + rtfDisp + "</td>" +
+               "<td class=\"cst-imp-num cst-imp-matshort" + sc + "\">" + matDisp + "</td>";
       }
-      return "<td class=\"cst-imp-num\">" + prodDisp + "</td>" +
-             "<td class=\"cst-imp-num\">" +
+      return "<td class=\"cst-imp-num" + sc + "\">" + prodDisp + "</td>" +
+             "<td class=\"cst-imp-num" + sc + "\">" +
                escapeHtml(md.reqQty > 0 ? _cstFmtVal(md.reqQty, dec, matUnit) : "-") + "</td>";
     }).join("");
 

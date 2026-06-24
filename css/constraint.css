@@ -870,6 +870,16 @@
 .cst-imp-short     { color: #b45309; font-weight: 700; }
 .cst-imp-matshort  { color: #b02a37; font-weight: 700; }
 
+/* ── 영향품목 월별 컬럼 교번 음영 (홀수 월 그룹) ─────────────────────────── */
+th.cst-imp-month.cst-imp-col-shade { background: #14532d !important; }
+th.cst-imp-sub.cst-imp-col-shade   { background: #14532d !important; }
+td.cst-imp-col-shade               { background: rgba(20, 83, 45, 0.07); }
+
+/* ── 수급요약 컬럼 교번 음영 ─────────────────────────────────────────────── */
+.cst-ss-table thead th:nth-child(2n)                    { background: #14532d; }
+.cst-ss-table tbody td:nth-child(2n)                    { background: rgba(20, 83, 45, 0.06); }
+.cst-ss-shortage td:nth-child(2n), .cst-ss-ok td:nth-child(2n) { background: rgba(20, 83, 45, 0.08); }
+
 /* ── 빠른 시뮬레이션 ──────────────────────────────────────────────────────── */
 .cst-sim-section .cst-det-section-title { background: #1e3a5f; }
 .cst-sim-tag          { background: #374151; border-radius: 3px; color: #d1d5db; font-size: 10px; font-weight: 600; margin-left: 6px; padding: 2px 5px; }
