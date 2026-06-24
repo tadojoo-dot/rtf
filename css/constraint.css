@@ -342,7 +342,7 @@
 }
 
 .cst-dtl-num {
-  background: #fff;
+  background: #fff !important;
   text-align: right !important;
 }
 
