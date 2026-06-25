@@ -729,8 +729,9 @@ function renderCstShortMaterialsPanel(d) {
   var codes = d.isAggregate ? new Set(d.itemCodes || []) : new Set(d.itemCode ? [d.itemCode] : []);
   var plantFilter = (!d.isAggregate && d.plant) ? d.plant : null;
 
+  // state.bomResult.items는 이미 제약 대상으로 필터된 목록 — hasAnyShortage만 보면 데이터 미연결 자재를 놓침
   var relatedItems = (state.bomResult.items || []).filter(function(item) {
-    return item.hasAnyShortage && item.parentItems.some(function(p) {
+    return item.parentItems.some(function(p) {
       return codes.has(p.code) && (!plantFilter || p.plant === plantFilter);
     });
   }).sort(function(a, b) {
@@ -739,24 +740,32 @@ function renderCstShortMaterialsPanel(d) {
     return bS - aS;
   });
 
+  // 9코드 완제품이 없으면 BOM 전개 자체가 없는 것
+  var codesArr = Array.from(codes);
+  var has9Code = codesArr.some(function(c) { return c && c.toString().startsWith("9"); });
   if (relatedItems.length === 0) {
+    var note = has9Code
+      ? "연결된 BOM 제약자재 없음"
+      : "9코드(완제품) 외 품목은 BOM 전개 대상이 아닙니다. 공급원인 화면 자재 테이블을 확인하세요.";
     return "<div class=\"cst-det-section\" style=\"margin:12px 0;\">" +
       "<div class=\"cst-det-section-title\">부족 자재 리스트 · " + escapeHtml(monthLabel(targetMonth)) + "</div>" +
-      "<div class=\"cst-drill-mat-note\">연결된 BOM 부족자재 없음</div></div>";
+      "<div class=\"cst-drill-mat-note\">" + note + "</div></div>";
   }
 
   var rows = relatedItems.map(function(item) {
     var md = item.monthlyData[monthIdx] || {};
     var isShort = md.shortageQty !== null && md.shortageQty > 0;
+    var canComp = item.hasInventory && item.hasSupplyPlan;
     var dec = _cstDecByUnit(item.unit);
     var sharedBadge = item.isShared ? " <span class=\"cst-shared-badge\">공용</span>" : "";
+    var shortDisp = !canComp ? "확정 불가" : isShort ? escapeHtml(_cstFmtVal(md.shortageQty, dec, item.unit)) : "-";
+    var shortCls  = !canComp ? "cst-imp-adj" : isShort ? "cst-ss-short-num" : "";
     return "<tr>" +
       "<td>" + escapeHtml(item.componentCode) + "</td>" +
       "<td>" + escapeHtml(item.componentName) + sharedBadge + "</td>" +
       "<td>" + escapeHtml(displayPlantName(item.plant)) + "</td>" +
       "<td>" + escapeHtml(item.unit || "-") + "</td>" +
-      "<td class=\"" + (isShort ? "cst-ss-short-num" : "") + "\">" +
-        (isShort ? escapeHtml(_cstFmtVal(md.shortageQty, dec, item.unit)) : "-") + "</td>" +
+      "<td class=\"" + shortCls + "\">" + shortDisp + "</td>" +
       "</tr>";
   }).join("");
 
