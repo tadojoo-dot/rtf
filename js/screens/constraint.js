@@ -993,7 +993,43 @@ function computeValidation() {
     indeterminate:   items.filter(function(i) { return !i.hasInventory || !i.hasSupplyPlan || i.unitMismatch; }).length,
     shortage:        items.filter(function(i) { return i.hasAnyShortage; }).length,
   };
-  return { summary:summary, sec1:sec1, sec2:sec2, sec3:sec3, sec4:sec4, sec5:sec5, sec6:sec6, sec7:sec7, months:months };
+  // ⑧ BOM 계산 정합 + 플랜트별 자재 분리 검증
+  var sec8 = { calcChecks:[], plantSplit:[] };
+
+  items.forEach(function(item) {
+    var anyMismatch = false;
+    var monthlyCheck = months.map(function(m, mi) {
+      var md = item.monthlyData[mi] || {};
+      var engineReq = md.requiredQty || 0;
+      var parentSum = item.parentItems.reduce(function(s, p) {
+        return s + ((p.monthly[mi] && p.monthly[mi].reqQty) || 0);
+      }, 0);
+      var ok = Math.abs(engineReq - parentSum) < 0.001;
+      if (!ok) anyMismatch = true;
+      return { month:m, engineReq:engineReq, parentSum:parentSum, ok:ok };
+    });
+    sec8.calcChecks.push({
+      code:item.componentCode, name:item.componentName, plant:item.plant,
+      isShared:item.isShared, parentCount:item.parentItems.length,
+      monthlyCheck:monthlyCheck, anyMismatch:anyMismatch,
+    });
+  });
+
+  var codeToItems = new Map();
+  items.forEach(function(item) {
+    if (!codeToItems.has(item.componentCode)) codeToItems.set(item.componentCode, []);
+    codeToItems.get(item.componentCode).push(item);
+  });
+  codeToItems.forEach(function(itemList, code) {
+    if (itemList.length > 1) {
+      sec8.plantSplit.push({
+        code:code, name:itemList[0].componentName,
+        items:itemList.map(function(i) { return { plant:i.plant, isShared:i.isShared, parentCount:i.parentItems.length }; }),
+      });
+    }
+  });
+
+  return { summary:summary, sec1:sec1, sec2:sec2, sec3:sec3, sec4:sec4, sec5:sec5, sec6:sec6, sec7:sec7, sec8:sec8, months:months };
 }
 
 // ── 정합성 검증 패널 렌더 ─────────────────────────────────────────────────────
@@ -1016,13 +1052,13 @@ function renderValidationPanel() {
     return "<div class=\"vld-kpi" + cls + "\"><div class=\"vld-kpi-label\">" + escapeHtml(k.label) +
            "</div><div class=\"vld-kpi-value\">" + k.v + "</div></div>";
   }).join("");
-  var tabLabels = ["①대상품목","②BOM매칭","③BOM수량","④현재고","⑤공급계획","⑥단위정합","⑦부족판정"];
+  var tabLabels = ["①대상품목","②BOM매칭","③BOM수량","④현재고","⑤공급계획","⑥단위정합","⑦부족판정","⑧계산·플랜트"];
   var tabBar = tabLabels.map(function(lbl, i) {
     return "<button type=\"button\" class=\"vld-tab-btn" + (i === tab ? " active" : "") +
            "\" data-vld-tab=\"" + i + "\">" + escapeHtml(lbl) + "</button>";
   }).join("");
-  var secData = [vd.sec1, vd.sec2, vd.sec3, vd.sec4, vd.sec5, vd.sec6, vd.sec7];
-  var secFns  = [renderVldSec1, renderVldSec2, renderVldSec3, renderVldSec4, renderVldSec5, renderVldSec6, renderVldSec7];
+  var secData = [vd.sec1, vd.sec2, vd.sec3, vd.sec4, vd.sec5, vd.sec6, vd.sec7, vd.sec8];
+  var secFns  = [renderVldSec1, renderVldSec2, renderVldSec3, renderVldSec4, renderVldSec5, renderVldSec6, renderVldSec7, renderVldSec8];
   var content = secFns[tab](secData[tab], vd.months);
 
   return "<div class=\"vld-overlay\" id=\"validationOverlay\">" +
@@ -1195,6 +1231,75 @@ function renderVldSec7(rows, months) {
     "<tr><th>하위품목코드</th><th>하위품목명</th><th>플랜트</th><th class=\"vld-th-r\">기초재고</th>" + mHeads + "</tr>" +
     "<tr><th></th><th></th><th></th><th></th>" + subHeads + "</tr>" +
     "</thead><tbody>" + bodyHtml + "</tbody></table></div>";
+}
+
+function renderVldSec8(s, months) {
+  var mismatchCount = s.calcChecks.filter(function(r) { return r.anyMismatch; }).length;
+  var summaryHtml = _vldKVTable([
+    { label:"BOM 계산 검증 대상 자재", value:s.calcChecks.length + "건" },
+    { label:"계산 불일치",
+      value:mismatchCount === 0 ? "없음" : mismatchCount + "건",
+      warn:mismatchCount > 0,
+      note:mismatchCount === 0 ? "엔진 집계 = Σ 완제품별 기여 합계 — 정상" : "불일치 항목 확인 필요" },
+    { label:"동일 자재코드 복수 플랜트",
+      value:s.plantSplit.length === 0 ? "없음" : s.plantSplit.length + "건",
+      note:s.plantSplit.length > 0 ? "각 플랜트별 별도 행으로 분리 관리 중 (정상)" : "" },
+  ]);
+
+  // 계산 정합
+  var calcHtml;
+  var mismatches = s.calcChecks.filter(function(r) { return r.anyMismatch; });
+  if (mismatches.length > 0) {
+    var mHeads = months.map(function(m) {
+      return "<th class=\"vld-month-head\" colspan=\"3\">" + escapeHtml(monthLabel(m)) + "</th>";
+    }).join("");
+    var subHeads = months.map(function() {
+      return "<th class=\"vld-th-r\">엔진</th><th class=\"vld-th-r\">부모합</th><th>정합</th>";
+    }).join("");
+    var rows = mismatches.map(function(r) {
+      var mCells = r.monthlyCheck.map(function(mc) {
+        return "<td class=\"vld-td-r\">" + vldNum(mc.engineReq) + "</td>" +
+               "<td class=\"vld-td-r\">" + vldNum(mc.parentSum) + "</td>" +
+               "<td>" + vldBadge(mc.ok ? "정상" : "불일치") + "</td>";
+      }).join("");
+      return "<tr><td>" + escapeHtml(r.code) + "</td>" +
+             "<td class=\"vld-td-left\">" + escapeHtml(r.name) + "</td>" +
+             "<td>" + escapeHtml(displayPlantName(r.plant)) + "</td>" + mCells + "</tr>";
+    }).join("");
+    calcHtml = "<div class=\"vld-sub-title\">계산 불일치 자재 목록</div>" +
+      "<div class=\"vld-scroll\"><table class=\"vld-table\"><thead>" +
+      "<tr><th>자재코드</th><th>자재명</th><th>플랜트</th>" + mHeads + "</tr>" +
+      "<tr><th></th><th></th><th></th>" + subHeads + "</tr>" +
+      "</thead><tbody>" + rows + "</tbody></table></div>";
+  } else {
+    calcHtml = "<div class=\"vld-sub-title\">BOM 계산 정합</div>" +
+      "<div class=\"vld-empty\">모든 자재의 엔진 집계 = 완제품별 기여 합산 — 정상</div>";
+  }
+
+  // 플랜트별 자재 분리 현황
+  var plantHtml = "";
+  if (s.plantSplit.length > 0) {
+    var plantRows = s.plantSplit.map(function(r) {
+      var plantCells = r.items.map(function(i) {
+        return "<td>" + escapeHtml(displayPlantName(i.plant)) + "</td>" +
+               "<td>" + vldBadge(i.isShared ? "공용(" + i.parentCount + "품목)" : "전용") + "</td>";
+      }).join("");
+      return "<tr><td>" + escapeHtml(r.code) + "</td>" +
+             "<td class=\"vld-td-left\">" + escapeHtml(r.name) + "</td>" +
+             plantCells + "</tr>";
+    }).join("");
+    // 최대 플랜트 수 계산 (가변 컬럼)
+    var maxPlants = s.plantSplit.reduce(function(mx, r) { return Math.max(mx, r.items.length); }, 0);
+    var phCols = Array.from({ length: maxPlants }, function(_, i) {
+      return "<th>플랜트 " + (i + 1) + "</th><th>공용여부</th>";
+    }).join("");
+    plantHtml = "<div class=\"vld-sub-title\">복수 플랜트 자재 분리 현황 (플랜트별 별도 관리 확인)</div>" +
+      "<div class=\"vld-scroll\"><table class=\"vld-table\"><thead><tr>" +
+      "<th>자재코드</th><th>자재명</th>" + phCols + "</tr></thead><tbody>" +
+      plantRows + "</tbody></table></div>";
+  }
+
+  return summaryHtml + calcHtml + plantHtml;
 }
 
 // ── 계산기준 패널 ─────────────────────────────────────────────────────────────
