@@ -1556,15 +1556,13 @@ function renderCstDetailExpanded(item, months, totalCols) {
   var shownParents = sortedParents.slice(0, EXPAND_LIMIT);
 
   var impColPer = shortageConfirmed ? 3 : 2;
-  var impMonthHeads = months.map(function(m, mi) {
-    var sc = mi % 2 === 1 ? " cst-imp-col-shade" : "";
-    return "<th class=\"cst-imp-month month-group-header" + sc + "\" colspan=\"" + impColPer + "\">" + escapeHtml(monthLabel(m)) + "</th>";
+  var impMonthHeads = months.map(function(m) {
+    return "<th class=\"cst-imp-month impact-month-header\" colspan=\"" + impColPer + "\">" + escapeHtml(monthLabel(m)) + "</th>";
   }).join("");
-  var impSubHeads = months.map(function(m, mi) {
-    var sc = mi % 2 === 1 ? " cst-imp-col-shade" : "";
+  var impSubHeads = months.map(function() {
     return shortageConfirmed
-      ? "<th class=\"cst-imp-sub month-metric-header" + sc + "\">생산계획</th><th class=\"cst-imp-sub cst-imp-sub-short month-metric-header" + sc + "\">부족</th><th class=\"cst-imp-sub month-metric-header" + sc + "\">자재 부족수량</th>"
-      : "<th class=\"cst-imp-sub month-metric-header" + sc + "\">생산계획</th><th class=\"cst-imp-sub month-metric-header" + sc + "\">총 자재 필요수량</th>";
+      ? "<th class=\"cst-imp-sub impact-month-metric-header\">생산계획</th><th class=\"cst-imp-sub impact-month-metric-header\">부족</th><th class=\"cst-imp-sub impact-month-metric-header\">자재 부족수량</th>"
+      : "<th class=\"cst-imp-sub impact-month-metric-header\">생산계획</th><th class=\"cst-imp-sub impact-month-metric-header\">총 자재 필요수량</th>";
   }).join("");
 
   var impRows = shownParents.map(function(p) {
