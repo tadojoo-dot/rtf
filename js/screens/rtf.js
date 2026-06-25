@@ -1,4 +1,5 @@
 // ── 정렬 상태 (렌더 간 유지) ──────────────────────────────────────────────────
+var _rtfBaseItemMap = new Map(); // "itemCode|plantCode" → item (현재 계획 기준, 비교용)
 var rtfSortState = {
   "rtfBusinessMatrix": { colKey: null, dir: "asc" },
   "rtfPlantMatrix":    { colKey: null, dir: "asc" },
@@ -32,8 +33,21 @@ var METRIC_DISPLAY_SHORT = { "판매계획":"판매", "Shortage":"부족" };
 // ── BOM 전개 기준 생산 가능수량 맵 ──────────────────────────────────────────────
 // BOM 완료 시: 자재별(material) 가용수량 ÷ 소요계수 → 완제품 max 생산 가능수량
 // 복수 자재 중 가장 제약이 심한 병목 자재 기준(min)
-function buildBomMaxProducibleMap() {
+function buildBomMaxProducibleMap(adjOverrides) {
   if (state.bomStatus !== "done" || !state.bomResult || !state.bomResult.items) return null;
+
+  // 조정값 있을 때 원래 입고수량 맵 구축 (delta 계산용)
+  var origSupplyMap = null;
+  if (adjOverrides && Object.keys(adjOverrides).length > 0) {
+    origSupplyMap = new Map();
+    state.mappedData.plan_monthly.forEach(function(r) {
+      var code = cleanOptional(r.itemCode), plant = cleanOptional(r.plant) || "", month = cleanOptional(r.month);
+      if (!code || !month) return;
+      var k = code + "|" + plant + "|" + month;
+      origSupplyMap.set(k, (origSupplyMap.get(k) || 0) + (cleanNumber(r.supplyQty) || 0));
+    });
+  }
+
   const map = new Map(); // key: "itemCode|plant|month" → 생산 가능수량 (병목 기준)
   state.bomResult.items.forEach((bi) => {
     if (!bi.monthlyData || !bi.parentItems) return;
@@ -46,7 +60,17 @@ function buildBomMaxProducibleMap() {
         const reqQty  = mData.reqQty  || 0;
         if (prodQty === 0 || reqQty === 0) return;  // 소요 없으면 무제약
         const coeff   = reqQty / prodQty;            // 완제품 1개당 자재 소요량
-        const maxProd = coeff > 0 ? md.availableQty / coeff : Infinity;
+
+        let availableQty = md.availableQty;
+        if (origSupplyMap && adjOverrides) {
+          const adjKey = bi.componentCode + "|" + (bi.plant || "") + "|" + mData.month;
+          if (adjKey in adjOverrides) {
+            const orig = origSupplyMap.get(adjKey) || 0;
+            availableQty = availableQty + (adjOverrides[adjKey] - orig);
+          }
+        }
+
+        const maxProd = coeff > 0 ? availableQty / coeff : Infinity;
         const key     = `${pi.code}|${pi.plant}|${mData.month}`;
         const cur     = map.get(key);
         // 복수 자재 중 가장 낮은 값(병목)을 유지
@@ -94,8 +118,8 @@ function displayPlantName(plantCode) {
   return PLANT_NAME_MAP[code] || code || NEED_MASTER;
 }
 
-function computeRtfItems() {
-  const _bomMap   = buildBomMaxProducibleMap(); // BOM 완료 시 자재 제약 맵, 미완료 시 null
+function computeRtfItems(bomMapArg) {
+  const _bomMap = (bomMapArg !== undefined) ? bomMapArg : buildBomMaxProducibleMap(); // BOM 완료 시 자재 제약 맵, 미완료 시 null
   const planRows      = state.mappedData.plan_monthly;
   const inventoryRows = state.mappedData.inventory_base;
   const masterRows    = state.mappedData.item_master;
@@ -464,7 +488,7 @@ function buildCellDrillCtx(node, item, month, monthRow) {
 }
 
 // ── 셀 렌더 ──────────────────────────────────────────────────────────────────
-function renderMetricCell(row, metric, metricIndex, compressed, drillCtx) {
+function renderMetricCell(row, metric, metricIndex, compressed, drillCtx, adjInfo) {
   const mb     = metricIndex === 0 ? " rtf-month-start" : "";
 
   if (metric === "판매계획") {
@@ -488,11 +512,21 @@ function renderMetricCell(row, metric, metricIndex, compressed, drillCtx) {
     const tooltip = hasS && row.bomConstrained
       ? `BOM 제약 부족: ${raw} (계획 기준: ${Number.isFinite(row.planShortageQty) ? formatNumber(row.planShortageQty) : "-"}) | 공급원인 보기 →`
       : hasS && drillCtx ? "공급원인 보기 →" : "";
+    // 조정후 개선 배지
+    var adjBadge = "";
+    var adjCellCls = "";
+    if (adjInfo && Number.isFinite(adjInfo.baseSh) && Number.isFinite(adjInfo.adjSh)) {
+      const delta = adjInfo.adjSh - adjInfo.baseSh; // 음수 = 개선
+      if (delta < -0.5) {
+        adjBadge = `<span class="rtf-adj-badge rtf-adj-improved" title="조정 전 ${escapeHtml(formatNumber(Math.round(adjInfo.baseSh)))} → 조정 후 ${escapeHtml(formatNumber(Math.round(adjInfo.adjSh)))}">▼${escapeHtml(formatNumber(Math.round(-delta)))}</span>`;
+        adjCellCls = " rtf-adj-cell-improved";
+      }
+    }
     if (hasS && drillCtx) {
       const drill = escapeHtml(JSON.stringify(drillCtx));
-      return `<td class="rtf-metric-cell rtf-shortage-cell rtf-status-text shortage rtf-cell-right${mb} rtf-drillable${row.bomConstrained ? " rtf-bom-constrained" : ""}" data-cst-drill="${drill}" title="${escapeHtml(tooltip)}">${escapeHtml(raw)}${bomBadge}</td>`;
+      return `<td class="rtf-metric-cell rtf-shortage-cell rtf-status-text shortage rtf-cell-right${mb}${adjCellCls} rtf-drillable${row.bomConstrained ? " rtf-bom-constrained" : ""}" data-cst-drill="${drill}" title="${escapeHtml(tooltip)}">${escapeHtml(raw)}${bomBadge}${adjBadge}</td>`;
     }
-    return `<td class="rtf-metric-cell rtf-shortage-cell ${hasS ? "rtf-status-text shortage" : "rtf-neutral-text"} rtf-cell-right${mb}">${hasS ? escapeHtml(raw) + bomBadge : escapeHtml(raw)}</td>`;
+    return `<td class="rtf-metric-cell rtf-shortage-cell ${hasS ? "rtf-status-text shortage" : "rtf-neutral-text"} rtf-cell-right${mb}${adjCellCls}">${hasS ? escapeHtml(raw) + bomBadge + adjBadge : escapeHtml(raw)}</td>`;
   }
   if (metric === "매출") {
     const raw = Number.isFinite(row.salesAmount) ? formatMoney(row.salesAmount) : NEED_DATA;
@@ -603,7 +637,18 @@ function renderHierarchyRow(node, leftColDefs, compressed, mode, rowspanMap) {
   const cells = getRtfMonths().map((month, mIdx) => {
     const monthRow  = isItem ? item.monthlyStatus[mIdx] : aggregateMonth(node.items, mIdx);
     const drillCtx  = buildCellDrillCtx(node, isItem ? item : null, month, monthRow);
-    return monthCols.map((metric, colIdx) => renderMetricCell(monthRow, metric, colIdx, compressed, drillCtx)).join("");
+    // 조정후 모드: 현재 계획 대비 비교 데이터
+    var adjInfo = null;
+    if (state.rtfViewMode === "adjusted" && _rtfBaseItemMap.size > 0) {
+      var baseItems = node.items.map(function(ni) {
+        return _rtfBaseItemMap.get(ni.itemCode + "|" + ni.plantCode);
+      }).filter(Boolean);
+      if (baseItems.length > 0) {
+        var baseAgg = aggregateMonth(baseItems, mIdx);
+        adjInfo = { baseSh: baseAgg.shortageQty, adjSh: monthRow.shortageQty };
+      }
+    }
+    return monthCols.map((metric, colIdx) => renderMetricCell(monthRow, metric, colIdx, compressed, drillCtx, adjInfo)).join("");
   }).join("");
 
   const leftCells = [];
@@ -723,13 +768,138 @@ function renderMatrixSection(title, mode, items, sectionId) {
   </section>`;
 }
 
+// ── 조정내역 패널 ─────────────────────────────────────────────────────────────
+function renderRtfAdjPanel() {
+  var simAdj = state.matSimAdj || {};
+  var keys = Object.keys(simAdj);
+  if (keys.length === 0) return "";
+
+  // 자재명 조회용 맵
+  var nameMap = new Map();
+  if (state.bomResult && state.bomResult.items) {
+    state.bomResult.items.forEach(function(bi) {
+      if (bi.componentCode && bi.componentName) nameMap.set(bi.componentCode, bi.componentName);
+    });
+  }
+
+  // 원래 입고수량 맵
+  var origSupplyMap = new Map();
+  state.mappedData.plan_monthly.forEach(function(r) {
+    var code = cleanOptional(r.itemCode), plant = cleanOptional(r.plant) || "", month = cleanOptional(r.month);
+    if (!code || !month) return;
+    var k = code + "|" + plant + "|" + month;
+    origSupplyMap.set(k, (origSupplyMap.get(k) || 0) + (cleanNumber(r.supplyQty) || 0));
+  });
+
+  var rows = keys.map(function(k) {
+    var parts = k.split("|");
+    var compCode = parts[0], plant = parts[1] || "", month = parts[2] || "";
+    var adjQty = simAdj[k];
+    var origQty = origSupplyMap.get(k) || 0;
+    var delta = adjQty - origQty;
+    var deltaDisp = (delta >= 0 ? "+" : "") + formatNumber(Math.round(delta));
+    var deltaCls = delta >= 0 ? "rtf-adj-pos" : "rtf-adj-neg";
+    var name = nameMap.get(compCode) || "";
+    return "<tr>" +
+      "<td>" + escapeHtml(compCode) + "</td>" +
+      "<td>" + escapeHtml(name) + "</td>" +
+      "<td style=\"text-align:center\">" + escapeHtml(monthLabel(month) || month) + "</td>" +
+      "<td style=\"text-align:right\">" + escapeHtml(formatNumber(Math.round(origQty))) + "</td>" +
+      "<td style=\"text-align:right\">" + escapeHtml(formatNumber(Math.round(adjQty))) + "</td>" +
+      "<td style=\"text-align:right\" class=\"" + deltaCls + "\">" + escapeHtml(deltaDisp) + "</td>" +
+      "</tr>";
+  }).join("");
+
+  return "<div class=\"rtf-adj-panel\">" +
+    "<div class=\"rtf-adj-panel-title\" id=\"rtfAdjPanelToggle\">" +
+    "<span>조정내역 (" + keys.length + "건)</span><span id=\"rtfAdjPanelArrow\">▼</span></div>" +
+    "<div class=\"rtf-adj-panel-body\" id=\"rtfAdjPanelBody\">" +
+    "<table class=\"rtf-adj-table\"><thead><tr>" +
+    "<th>자재코드</th><th>자재명</th><th>월</th><th>원래입고</th><th>조정후</th><th>변동</th>" +
+    "</tr></thead><tbody>" + rows + "</tbody></table>" +
+    "</div></div>";
+}
+
+// ── 하단 재고금액·재고일수 요약 바 ───────────────────────────────────────────
+function renderRtfInventoryBar(items, baseItemsForDelta) {
+  var months = getRtfMonths();
+  if (!items || items.length === 0) return "";
+
+  var hasDelta = !!baseItemsForDelta;
+  var baseItems = hasDelta ? baseItemsForDelta : null;
+
+  var amtRow = "", daysRow = "", amtDeltaRow = "", daysDeltaRow = "";
+
+  months.forEach(function(month, mi) {
+    var agg = aggregateMonth(items, mi);
+    var amtVal = Number.isFinite(agg.endingAmount) ? formatMoney(agg.endingAmount) : "-";
+    var daysVal = Number.isFinite(agg.inventoryDays) ? Math.round(agg.inventoryDays) + "일" : "-";
+    amtRow  += "<td>" + escapeHtml(amtVal)  + "</td>";
+    daysRow += "<td>" + escapeHtml(daysVal) + "</td>";
+
+    if (hasDelta && baseItems) {
+      var baseAgg = aggregateMonth(baseItems, mi);
+      // 재고금액 delta
+      if (Number.isFinite(agg.endingAmount) && Number.isFinite(baseAgg.endingAmount)) {
+        var amtDelta = agg.endingAmount - baseAgg.endingAmount;
+        var amtSign = amtDelta >= 0 ? "+" : "";
+        var amtCls = amtDelta >= 0 ? "rtf-inv-delta-pos" : "rtf-inv-delta-neg";
+        amtDeltaRow += "<td class=\"" + amtCls + "\">" + escapeHtml(amtSign + formatMoney(amtDelta)) + "</td>";
+      } else {
+        amtDeltaRow += "<td>-</td>";
+      }
+      // 재고일수 delta
+      if (Number.isFinite(agg.inventoryDays) && Number.isFinite(baseAgg.inventoryDays)) {
+        var daysDelta = agg.inventoryDays - baseAgg.inventoryDays;
+        var daysSign = daysDelta >= 0 ? "+" : "";
+        var daysCls = daysDelta >= 0 ? "rtf-inv-delta-pos" : "rtf-inv-delta-neg";
+        daysDeltaRow += "<td class=\"" + daysCls + "\">" + escapeHtml(daysSign + Math.round(daysDelta) + "일") + "</td>";
+      } else {
+        daysDeltaRow += "<td>-</td>";
+      }
+    }
+  });
+
+  var monthHeaders = months.map(function(m) {
+    return "<th>" + escapeHtml(monthLabel(m)) + "</th>";
+  }).join("");
+
+  var deltaRows = hasDelta ? (
+    "<tr class=\"rtf-inv-delta-row\"><td class=\"rtf-inv-label\">재고금액 변동</td>" + amtDeltaRow + "</tr>" +
+    "<tr class=\"rtf-inv-delta-row\"><td class=\"rtf-inv-label\">재고일수 변동</td>" + daysDeltaRow + "</tr>"
+  ) : "";
+
+  return "<div class=\"rtf-inv-bar rtf-card\" style=\"padding:14px 18px;margin-top:10px;\">" +
+    "<div class=\"rtf-inv-bar-title\">월별 재고금액 · 재고일수</div>" +
+    "<div class=\"rtf-h-scroll\"><table class=\"rtf-inv-table\">" +
+    "<thead><tr><th class=\"rtf-inv-row-label\"></th>" + monthHeaders + "</tr></thead>" +
+    "<tbody>" +
+    "<tr><td class=\"rtf-inv-label\">재고금액</td>" + amtRow  + "</tr>" +
+    "<tr><td class=\"rtf-inv-label\">재고일수</td>" + daysRow + "</tr>" +
+    deltaRows +
+    "</tbody></table></div></div>";
+}
+
 // ── RTF 화면 ─────────────────────────────────────────────────────────────────
 function renderRtf() {
-  _rtfItems = computeRtfItems();
-  const items  = _rtfItems;
+  // 1. 현재 계획 기준 items (항상 계산)
+  const baseItems = computeRtfItems();
+  _rtfBaseItemMap.clear();
+  baseItems.forEach(function(item) { _rtfBaseItemMap.set(item.itemCode + "|" + item.plantCode, item); });
+
+  // 2. 조정후 items (matSimAdj 있을 때만)
+  const hasAdj = Object.keys(state.matSimAdj || {}).length > 0;
+  const adjItems = hasAdj ? computeRtfItems(buildBomMaxProducibleMap(state.matSimAdj)) : null;
+  if (!hasAdj && state.rtfViewMode === "adjusted") state.rtfViewMode = "current";
+
+  // 3. 화면에 표시할 items
+  const items = (state.rtfViewMode === "adjusted" && adjItems) ? adjItems : baseItems;
+  _rtfItems = items;
+
   if (!state.mappedData.plan_monthly.length) {
     return `<div class="rtf-screen"><section class="rtf-card rtf-top"><h2 class="rtf-title">RTF(공급가능성 판정)</h2><div class="rtf-nodata">데이터 연결 필요<br>데이터점검 화면에서 RAW 파일을 선택해 주세요.</div></section></div>`;
   }
+
   const months = getRtfMonths();
   const match  = checkTotalsMatch(items);
   const verifyHtml = match === null ? "" :
@@ -738,6 +908,20 @@ function renderRtf() {
   const firstShortage = state.rtfDisplayMode === "amount" ? firstMonth.shortageAmount : firstMonth.shortageQty;
   const summaryUnit = state.rtfDisplayMode === "amount" ? "" : "개";
   const summaryLine = `${monthLabel(months[0])} 총 판매계획 <b>${escapeHtml(formatDisplayQtyMoney(firstMonth.salesQty, firstMonth.salesPlanAmount))}${summaryUnit}</b>, RTF <b>${escapeHtml(formatDisplayQtyMoney(firstMonth.rtfQty, firstMonth.rtfAmount))}${summaryUnit}</b>. ${Number.isFinite(firstShortage) && firstShortage > 0 ? `<span class="rtf-alert-text">Shortage ${escapeHtml(state.rtfDisplayMode === "amount" ? formatMoney(firstShortage) : formatNumber(firstShortage) + summaryUnit)}</span>` : `<span class="rtf-ok-text">Shortage 없음</span>`}`;
+
+  // 4. 전후 토글 UI
+  const adjCount = Object.keys(state.matSimAdj || {}).length;
+  const toggleHtml = hasAdj ? `<div class="rtf-view-toggle" aria-label="RTF 보기 기준">
+    <button type="button" class="rtf-view-btn ${state.rtfViewMode === "current" ? "active" : ""}" data-rtf-view="current">현재 계획</button>
+    <button type="button" class="rtf-view-btn ${state.rtfViewMode === "adjusted" ? "active" : ""}" data-rtf-view="adjusted">조정 후 ●${adjCount}건</button>
+  </div>` : "";
+
+  // 5. 조정내역 패널
+  const adjPanelHtml = hasAdj ? renderRtfAdjPanel() : "";
+
+  // 6. 하단 재고 바
+  const invBarHtml = renderRtfInventoryBar(items, state.rtfViewMode === "adjusted" ? baseItems : null);
+
   const activeSection = activeRtfSection();
   const sectionTabs = state.rtfExpanded ? RTF_SECTION_OPTIONS.map((option) =>
     `<button type="button" class="rtf-section-tab ${activeSection.mode === option.mode ? "active" : ""}" data-rtf-section="${escapeHtml(option.mode)}">${escapeHtml(option.label)}</button>`
@@ -762,6 +946,8 @@ function renderRtf() {
           ? `<span class="rtf-bom-badge">BOM 전개 반영 중 (완제품만)${(state.bomResult && state.bomResult.stats && state.bomResult.stats.indeterminate > 0) ? ` · 판단불가 ${state.bomResult.stats.indeterminate}건` : ""}</span>`
           : `<span class="rtf-bom-badge rtf-bom-badge-off">BOM 미반영 — 공급원인 화면에서 BOM 전개 필요 (완제품만 적용)</span>`}
       </div>
+      ${toggleHtml}
+      ${adjPanelHtml}
     </section>
     <div class="rtf-toolbar">
       ${state.rtfExpanded ? `<div class="rtf-section-tabs" aria-label="RTF 보기 기준">
@@ -776,6 +962,7 @@ function renderRtf() {
       <span class="rtf-toolbar-hint">${state.rtfExpanded ? "분석용 상세 · 보기 기준 탭 선택" : "발표용 기본 · 사업부/플랜트/유형 전체 표시"}</span>
     </div>
     ${sectionHtml}
+    ${invBarHtml}
   </div>`;
 }
 
@@ -816,6 +1003,24 @@ function bindRtf() {
       s.colKey = colKey;
       render("rtf");
     });
+  });
+
+  // 전후 토글
+  document.querySelectorAll("[data-rtf-view]").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      if (state.rtfViewMode === btn.dataset.rtfView) return;
+      state.rtfViewMode = btn.dataset.rtfView;
+      render("rtf");
+    });
+  });
+
+  // 조정내역 접이식
+  document.querySelector("#rtfAdjPanelToggle")?.addEventListener("click", function() {
+    var body = document.querySelector("#rtfAdjPanelBody");
+    var arrow = document.querySelector("#rtfAdjPanelArrow");
+    if (!body) return;
+    body.hidden = !body.hidden;
+    if (arrow) arrow.textContent = body.hidden ? "▶" : "▼";
   });
 
   document.querySelectorAll("[data-cst-drill]").forEach((td) => {

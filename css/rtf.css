@@ -502,6 +502,112 @@
   white-space: nowrap;
 }
 
+/* ── 전후 토글 ── */
+.rtf-view-toggle {
+  display: flex;
+  gap: 4px;
+  margin: 10px 0 4px;
+}
+.rtf-view-btn {
+  background: #f9fafb;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 4px 14px;
+}
+.rtf-view-btn.active {
+  background: #15803d;
+  border-color: #15803d;
+  color: #fff;
+}
+.rtf-view-btn:not(.active):hover { background: #f3f4f6; }
+
+/* ── 조정후 셀 하이라이트 ── */
+.rtf-adj-cell-improved { background: #f0fdf4 !important; }
+.rtf-adj-badge {
+  border-radius: 3px;
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  margin-left: 4px;
+  padding: 0 3px;
+}
+.rtf-adj-badge.rtf-adj-improved { background: #dcfce7; color: #15803d; }
+
+/* ── 조정내역 패널 ── */
+.rtf-adj-panel {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 6px;
+  margin: 8px 0 0;
+  overflow: hidden;
+}
+.rtf-adj-panel-title {
+  align-items: center;
+  color: #15803d;
+  cursor: pointer;
+  display: flex;
+  font-size: 13px;
+  font-weight: 600;
+  justify-content: space-between;
+  padding: 7px 14px;
+  user-select: none;
+}
+.rtf-adj-panel-title:hover { background: #dcfce7; }
+.rtf-adj-panel-body { padding: 0 14px 10px; }
+.rtf-adj-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 6px;
+  width: 100%;
+}
+.rtf-adj-table th {
+  background: #15803d;
+  color: #fff;
+  padding: 5px 8px;
+  text-align: center;
+}
+.rtf-adj-table td { border-bottom: 1px solid #d1fae5; padding: 4px 8px; }
+.rtf-adj-pos { color: #15803d; font-weight: 600; }
+.rtf-adj-neg { color: #b02a37; font-weight: 600; }
+
+/* ── 하단 재고 요약 바 ── */
+.rtf-inv-bar { margin-top: 10px; padding: 14px 18px; }
+.rtf-inv-bar-title {
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+  padding-bottom: 6px;
+}
+.rtf-inv-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  width: 100%;
+}
+.rtf-inv-table th {
+  background: #1e293b;
+  color: #fff;
+  min-width: 90px;
+  padding: 6px 10px;
+  text-align: center;
+}
+.rtf-inv-table th.rtf-inv-row-label { min-width: 110px; text-align: left; }
+.rtf-inv-table td {
+  border-bottom: 1px solid #e5e7eb;
+  padding: 5px 10px;
+  text-align: right;
+}
+.rtf-inv-table td.rtf-inv-label {
+  color: #374151;
+  font-weight: 500;
+  text-align: left;
+}
+.rtf-inv-delta-row td { background: #f0fdf4; font-size: 11px; }
+.rtf-inv-delta-pos { color: #15803d; font-weight: 600; }
+.rtf-inv-delta-neg { color: #b02a37; font-weight: 600; }
+
 .rtf-muted-metric  { color: #6b7280; font-weight: 400; }
 .rtf-rtf-cell      { color: #000000; font-weight: 600; }
 .rtf-shortage-cell { font-weight: 700; }

@@ -655,64 +655,109 @@ function _renderCstGoodsAggPanel(d) {
 
 // ── 완제품 드릴다운 공급현황 패널 ─────────────────────────────────────────────
 function renderCstFinishedGoodsPanel(d) {
-  var months = getRtfMonths();
+  var months      = getRtfMonths();
   var targetMonth = d.month;
+
+  // 기초재고 맵: itemCode|plant → baseQty
+  var baseInvMap = new Map();
+  state.mappedData.inventory_base.forEach(function(r) {
+    var code = cleanOptional(r.itemCode), plant = cleanOptional(r.plant) || "";
+    if (!code) return;
+    var k = code + "|" + plant;
+    baseInvMap.set(k, (baseInvMap.get(k) || 0) + (cleanNumber(r.baseQty) || 0));
+  });
+
+  // plan_monthly 전체 맵: itemCode|plant|month → {salesQty, supplyQty}
+  var planMap = new Map();
+  state.mappedData.plan_monthly.forEach(function(r) {
+    var code = cleanOptional(r.itemCode), plant = cleanOptional(r.plant) || "", month = cleanOptional(r.month);
+    if (!code || !month) return;
+    var k = code + "|" + plant + "|" + month;
+    if (!planMap.has(k)) planMap.set(k, { salesQty:0, supplyQty:0 });
+    var e = planMap.get(k);
+    e.salesQty  += (cleanNumber(r.salesQty)  || 0);
+    e.supplyQty += (cleanNumber(r.supplyQty) || 0);
+  });
+
+  // 롤링 기초재고 계산: months[0]부터 targetMonth까지 순차 차감
+  function rollingOpeningQty(itemCode, plant) {
+    var opening = baseInvMap.get(itemCode + "|" + (plant || "")) || 0;
+    for (var mi = 0; mi < months.length; mi++) {
+      if (months[mi] === targetMonth) return opening;
+      var pm = planMap.get(itemCode + "|" + (plant || "") + "|" + months[mi]);
+      if (pm) opening = Math.max(0, opening + pm.supplyQty - pm.salesQty);
+    }
+    return opening;
+  }
 
   if (d.isAggregate) {
     var codeSet = new Set(d.itemCodes || []);
+    // 해당 품목코드 + 기준월 데이터 집계 (플랜트별 분리)
     var itemMap = new Map();
     state.mappedData.plan_monthly.forEach(function(r) {
-      var code = cleanOptional(r.itemCode), month = cleanOptional(r.month);
+      var code = cleanOptional(r.itemCode), month = cleanOptional(r.month), plant = cleanOptional(r.plant) || "";
       if (!code || !codeSet.has(code) || month !== targetMonth) return;
-      if (!itemMap.has(code)) itemMap.set(code, { itemCode:code, itemName:cleanOptional(r.itemName)||code, salesQty:0, supplyQty:0 });
-      var e = itemMap.get(code);
+      var k = code + "|" + plant;
+      if (!itemMap.has(k)) itemMap.set(k, { itemCode:code, itemName:cleanOptional(r.itemName)||code, plant:plant, salesQty:0, supplyQty:0 });
+      var e = itemMap.get(k);
       e.salesQty  += (cleanNumber(r.salesQty)  || 0);
       e.supplyQty += (cleanNumber(r.supplyQty) || 0);
     });
-    var entries = Array.from(itemMap.values()).sort(function(a, b) {
-      return Math.max(0, b.salesQty - b.supplyQty) - Math.max(0, a.salesQty - a.supplyQty);
-    });
+
+    var entries = Array.from(itemMap.values()).map(function(e) {
+      var openingQty = rollingOpeningQty(e.itemCode, e.plant);
+      var available  = openingQty + e.supplyQty;
+      var shortage   = Math.max(0, e.salesQty - available);
+      return Object.assign(e, { openingQty:openingQty, available:available, shortage:shortage });
+    }).sort(function(a, b) { return b.shortage - a.shortage; });
+
     if (entries.length === 0) return "";
     var titleLabel = d.itemGroup || (d.label ? d.label.replace(/ 계$/, "") : "완제품");
     var rows = entries.map(function(e) {
-      var shortage = Math.max(0, e.salesQty - e.supplyQty);
-      var isShort = shortage > 0;
-      return "<tr><td>" + escapeHtml(e.itemCode) + "</td><td>" + escapeHtml(e.itemName) + "</td>" +
-        "<td>" + formatNumber(e.salesQty) + "</td><td>" + formatNumber(e.supplyQty) + "</td>" +
-        "<td class=\"" + (isShort ? "cst-ss-short-num" : "") + "\">" + formatNumber(shortage) + "</td></tr>";
+      var isShort = e.shortage > 0;
+      return "<tr>" +
+        "<td>" + escapeHtml(e.itemCode) + "</td>" +
+        "<td>" + escapeHtml(e.itemName) + "</td>" +
+        "<td>" + formatNumber(Math.round(e.salesQty)) + "</td>" +
+        "<td>" + formatNumber(Math.round(e.openingQty)) + "</td>" +
+        "<td>" + formatNumber(Math.round(e.supplyQty)) + "</td>" +
+        "<td class=\"" + (isShort ? "cst-ss-short-num" : "") + "\">" + formatNumber(Math.round(e.shortage)) + "</td>" +
+        "</tr>";
     }).join("");
     return "<div class=\"cst-det-section\" style=\"margin:12px 0;\">" +
       "<div class=\"cst-det-section-title\">" + escapeHtml(titleLabel) + " · " + escapeHtml(monthLabel(targetMonth)) + " 완제품 공급현황</div>" +
       "<div class=\"cst-det-scroll\"><table class=\"cst-ss-table cst-drill-goods-table\"><thead><tr>" +
-      "<th>품목코드</th><th>품목명</th><th>판매계획</th><th>공급계획</th><th>부족수량</th>" +
+      "<th>품목코드</th><th>품목명</th><th>판매계획</th><th>기초재고</th><th>공급계획</th><th>부족수량</th>" +
       "</tr></thead><tbody>" + rows + "</tbody></table></div></div>";
   }
 
-  // 개별 품목: 월별 현황
+  // 개별 품목: 월별 롤링 계산
+  var plant0 = d.plant || "";
+  var opening = baseInvMap.get(d.itemCode + "|" + plant0) || 0;
   var rows2 = months.map(function(month) {
-    var salesQty = 0, supplyQty = 0, found = false;
-    state.mappedData.plan_monthly.forEach(function(r) {
-      if (cleanOptional(r.itemCode) === d.itemCode && cleanOptional(r.month) === month &&
-          (!d.plant || cleanOptional(r.plant) === d.plant)) {
-        salesQty  += (cleanNumber(r.salesQty)  || 0);
-        supplyQty += (cleanNumber(r.supplyQty) || 0);
-        found = true;
-      }
-    });
-    var shortage = found ? Math.max(0, salesQty - supplyQty) : null;
-    var isShort  = shortage !== null && shortage > 0;
-    var hlCls    = month === targetMonth ? " cst-drill-month-hi" : "";
-    return "<tr class=\"" + hlCls + "\">" +
+    var pm = planMap.get(d.itemCode + "|" + plant0 + "|" + month);
+    var salesQty  = pm ? pm.salesQty  : null;
+    var supplyQty = pm ? pm.supplyQty : null;
+    var available = (salesQty !== null) ? opening + (supplyQty || 0) : null;
+    var shortage  = available !== null ? Math.max(0, salesQty - available) : null;
+    var isShort   = shortage !== null && shortage > 0;
+    var hlCls     = month === targetMonth ? " cst-drill-month-hi" : "";
+    var row = "<tr class=\"" + hlCls + "\">" +
       "<td>" + escapeHtml(monthLabel(month)) + "</td>" +
-      "<td>" + (found ? formatNumber(salesQty)  : "-") + "</td>" +
-      "<td>" + (found ? formatNumber(supplyQty) : "-") + "</td>" +
-      "<td class=\"" + (isShort ? "cst-ss-short-num" : "") + "\">" + (shortage !== null ? formatNumber(shortage) : "-") + "</td>" +
+      "<td>" + (salesQty  !== null ? formatNumber(Math.round(salesQty))  : "-") + "</td>" +
+      "<td>" + (available !== null ? formatNumber(Math.round(opening))   : "-") + "</td>" +
+      "<td>" + (supplyQty !== null ? formatNumber(Math.round(supplyQty)) : "-") + "</td>" +
+      "<td class=\"" + (isShort ? "cst-ss-short-num" : "") + "\">" + (shortage !== null ? formatNumber(Math.round(shortage)) : "-") + "</td>" +
       "</tr>";
+    // 다음 달 기초재고 롤링
+    if (salesQty !== null && supplyQty !== null) opening = Math.max(0, opening + supplyQty - salesQty);
+    return row;
   }).join("");
+
   return "<div class=\"cst-det-section\" style=\"margin:12px 0;\">" +
     "<div class=\"cst-det-section-title\">" + escapeHtml(d.itemName || d.itemCode || "") + " · 월별 공급현황</div>" +
     "<div class=\"cst-det-scroll\"><table class=\"cst-ss-table cst-drill-goods-table\"><thead><tr>" +
-    "<th>월</th><th>판매계획</th><th>공급계획</th><th>부족수량</th>" +
+    "<th>월</th><th>판매계획</th><th>기초재고</th><th>공급계획</th><th>부족수량</th>" +
     "</tr></thead><tbody>" + rows2 + "</tbody></table></div></div>";
 }
 
@@ -1947,14 +1992,38 @@ function renderCstDetailExpanded(item, months, totalCols) {
 
   // ══ SECTION 2: 영향품목 및 조율 후보 ══
 
-  // 판매계획 lookup (부족 컬럼 — shortageConfirmed 여부 무관)
+  // 판매계획 / 공급계획 lookup (부족 컬럼 — shortageConfirmed 여부 무관)
   var salesByParentMonth = new Map();
+  var supplyByParentMonth = new Map();
   state.mappedData.plan_monthly.forEach(function(r) {
-    var code = cleanOptional(r.itemCode), plant = cleanOptional(r.plant), month = cleanOptional(r.month);
-    if (!code || !plant || !month) return;
+    var code = cleanOptional(r.itemCode), plant = cleanOptional(r.plant) || "", month = cleanOptional(r.month);
+    if (!code || !month) return;
     var key = code + "|" + plant + "|" + month;
-    salesByParentMonth.set(key, (salesByParentMonth.get(key) || 0) + (cleanNumber(r.salesQty) || 0));
+    salesByParentMonth.set(key,  (salesByParentMonth.get(key)  || 0) + (cleanNumber(r.salesQty)  || 0));
+    supplyByParentMonth.set(key, (supplyByParentMonth.get(key) || 0) + (cleanNumber(r.supplyQty) || 0));
   });
+
+  // 부모 완제품 기초재고 lookup (롤링 기초재고 계산용)
+  var parentBaseInvMap = new Map();
+  state.mappedData.inventory_base.forEach(function(r) {
+    var code = cleanOptional(r.itemCode), plant = cleanOptional(r.plant) || "";
+    if (!code) return;
+    var k = code + "|" + plant;
+    parentBaseInvMap.set(k, (parentBaseInvMap.get(k) || 0) + (cleanNumber(r.baseQty) || 0));
+  });
+
+  // 롤링 기초재고: months[0]부터 monthIdx 직전까지 재고 차감 후 opening qty 반환
+  function getParentOpeningQty(pCode, pPlant, monthIdx) {
+    var plant = pPlant || "";
+    var opening = parentBaseInvMap.get(pCode + "|" + plant) || 0;
+    for (var mi = 0; mi < monthIdx; mi++) {
+      var k = pCode + "|" + plant + "|" + months[mi];
+      var s = salesByParentMonth.get(k)  || 0;
+      var q = supplyByParentMonth.get(k) || 0;
+      opening = Math.max(0, opening + q - s);
+    }
+    return opening;
+  }
 
   // 월별 자재 부족수량 index
   var monthlyShortage = new Map();
@@ -2005,9 +2074,10 @@ function renderCstDetailExpanded(item, months, totalCols) {
       // 생산계획
       var prodDisp = md.prodQty > 0 ? formatNumber(Math.round(md.prodQty)) : "-";
 
-      // 부족: 판매계획 - 생산계획
-      var salesQty = salesByParentMonth.get(p.code + "|" + p.plant + "|" + month) || 0;
-      var rtfShortage = Math.max(0, salesQty - md.prodQty);
+      // 부족: 판매계획 - (기초재고 + 생산계획)
+      var salesQty    = salesByParentMonth.get(p.code + "|" + (p.plant || "") + "|" + month) || 0;
+      var openingQty  = getParentOpeningQty(p.code, p.plant, mi);
+      var rtfShortage = Math.max(0, salesQty - (openingQty + md.prodQty));
       var rtfDisp = rtfShortage > 0 ? formatNumber(Math.round(rtfShortage)) : "-";
 
       // 자재 부족수량: 전체 자재 부족수량을 reqQty 비율로 안분
