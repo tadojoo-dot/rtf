@@ -62,6 +62,8 @@ const state = {
   validationTab: 0,
   calcCriteriaOpen: false,
   cstDrilldown: null,   // RTF 화면에서 넘어온 드릴다운 컨텍스트
+  matSimAdj: {},        // "compCode|plant|month" → 조정된 입고수량(number)
+  minutesLog: [],       // 회의록 결정사항 배열
 };
 
 // DOM 참조

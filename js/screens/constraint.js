@@ -717,36 +717,83 @@ function renderCstFinishedGoodsPanel(d) {
 }
 
 // ── 드릴다운 부족자재 패널 ────────────────────────────────────────────────────
+function _buildMatSupplyMap() {
+  var m = new Map();
+  state.mappedData.plan_monthly.forEach(function(r) {
+    var code = cleanOptional(r.itemCode), plant = cleanOptional(r.plant), month = cleanOptional(r.month);
+    if (!code || !month) return;
+    var k = code + "|" + plant + "|" + month;
+    m.set(k, (m.get(k) || 0) + (cleanNumber(r.supplyQty) || 0));
+  });
+  return m;
+}
+
+function recordMinutesEntry(d, targetMonth) {
+  if (!state.minutesLog) state.minutesLog = [];
+  var simAdj = state.matSimAdj || {};
+  var months  = getRtfMonths();
+  var monthIdx = months.indexOf(targetMonth);
+  var codes   = d.isAggregate ? new Set(d.itemCodes || []) : new Set(d.itemCode ? [d.itemCode] : []);
+  var plantFilter = (!d.isAggregate && d.plant) ? d.plant : null;
+  var matSupplyMap = _buildMatSupplyMap();
+
+  var entries = [];
+  (state.bomResult && state.bomResult.items || []).forEach(function(item) {
+    if (!item.parentItems.some(function(p) { return codes.has(p.code) && (!plantFilter || p.plant === plantFilter); })) return;
+    var simKey = item.componentCode + "|" + item.plant + "|" + targetMonth;
+    if (!(simKey in simAdj)) return;
+    var orig = matSupplyMap.get(simKey) || 0;
+    var adj  = simAdj[simKey];
+    if (Math.abs(adj - orig) < 0.001) return;
+
+    var matchParents = item.parentItems.filter(function(p) { return codes.has(p.code) && (!plantFilter || p.plant === plantFilter); });
+    var matchReq  = matchParents.reduce(function(s, p) { return s + ((p.monthly[monthIdx] && p.monthly[monthIdx].reqQty) || 0); }, 0);
+    var matchProd = matchParents.reduce(function(s, p) { return s + ((p.monthly[monthIdx] && p.monthly[monthIdx].prodQty) || 0); }, 0);
+    var usageRate = matchProd > 0 ? matchReq / matchProd : null;
+    var addlEA    = (usageRate && usageRate > 0 && adj > orig) ? Math.round((adj - orig) / usageRate) : 0;
+
+    entries.push({
+      matCode: item.componentCode, matName: item.componentName,
+      plant: item.plant, month: targetMonth,
+      orig: orig, adj: adj, delta: adj - orig, addlEA: addlEA,
+    });
+  });
+
+  if (entries.length === 0) {
+    alert("기록할 조정사항이 없습니다."); return;
+  }
+  var titleLabel = d.isAggregate
+    ? (d.itemGroup || (d.label ? d.label.replace(/ 계$/, "") : "품목군"))
+    : (d.itemName || d.itemCode || "품목");
+
+  state.minutesLog.push({
+    id: Date.now(), timestamp: new Date(),
+    title: escapeHtml(titleLabel) + " · " + escapeHtml(monthLabel(targetMonth)) + " 자재 수급 조정",
+    entries: entries,
+  });
+  render("minutes");
+  alert("회의록에 기록되었습니다. 회의록 탭에서 확인하세요.");
+}
+
 function renderCstShortMaterialsPanel(d) {
   if (state.bomStatus !== BOM_STATUS.DONE || !state.bomResult) {
     return "<div class=\"cst-det-section\" style=\"margin:12px 0;\">" +
       "<div class=\"cst-det-section-title\">부족 자재 리스트</div>" +
       "<div class=\"cst-drill-mat-note\">공급원인 화면에서 BOM 전개 후 확인 가능합니다.</div></div>";
   }
-  var months     = getRtfMonths();
+  var months      = getRtfMonths();
   var targetMonth = d.month;
-  var monthIdx   = months.indexOf(targetMonth);
-  var codes      = d.isAggregate ? new Set(d.itemCodes || []) : new Set(d.itemCode ? [d.itemCode] : []);
+  var monthIdx    = months.indexOf(targetMonth);
+  var codes       = d.isAggregate ? new Set(d.itemCodes || []) : new Set(d.itemCode ? [d.itemCode] : []);
   var plantFilter = (!d.isAggregate && d.plant) ? d.plant : null;
+  var has9Code    = Array.from(codes).some(function(c) { return c && c.toString().startsWith("9"); });
+  var simAdj      = state.matSimAdj || {};
 
-  // 9코드가 없으면 BOM 전개 대상 없음
-  var has9Code = Array.from(codes).some(function(c) { return c && c.toString().startsWith("9"); });
-
-  // 자재 입고계획 맵 (plan_monthly에서 자재 공급수량 추출)
-  var matSupplyMap = new Map();
-  state.mappedData.plan_monthly.forEach(function(r) {
-    var code = cleanOptional(r.itemCode), plant = cleanOptional(r.plant), month = cleanOptional(r.month);
-    if (!code || !month) return;
-    var k = code + "|" + plant + "|" + month;
-    matSupplyMap.set(k, (matSupplyMap.get(k) || 0) + (cleanNumber(r.supplyQty) || 0));
-  });
+  var matSupplyMap = _buildMatSupplyMap();
 
   var relatedItems = (state.bomResult.items || []).filter(function(item) {
-    return item.parentItems.some(function(p) {
-      return codes.has(p.code) && (!plantFilter || p.plant === plantFilter);
-    });
+    return item.parentItems.some(function(p) { return codes.has(p.code) && (!plantFilter || p.plant === plantFilter); });
   }).sort(function(a, b) {
-    // 부족 확정 → 확정불가 → 정상 순; 같은 그룹 내에서는 부족수량 내림차순
     var aS = (a.monthlyData[monthIdx] || {}).shortageQty || 0;
     var bS = (b.monthlyData[monthIdx] || {}).shortageQty || 0;
     var aCan = a.hasInventory && a.hasSupplyPlan ? 1 : 0;
@@ -759,7 +806,7 @@ function renderCstShortMaterialsPanel(d) {
 
   if (relatedItems.length === 0) {
     var note = has9Code ? "연결된 BOM 제약자재 없음"
-      : "9코드(완제품) 외 품목은 BOM 전개 대상이 아닙니다. 공급원인 화면 자재 테이블을 확인하세요.";
+      : "9코드(완제품) 외 품목은 BOM 전개 대상이 아닙니다.";
     return "<div class=\"cst-det-section\" style=\"margin:12px 0;\">" +
       "<div class=\"cst-det-section-title\">부족 자재 리스트 · " + escapeHtml(monthLabel(targetMonth)) + "</div>" +
       "<div class=\"cst-drill-mat-note\">" + note + "</div></div>";
@@ -767,54 +814,78 @@ function renderCstShortMaterialsPanel(d) {
 
   var hasShared = relatedItems.some(function(i) { return i.isShared; });
 
-  // 합계 누계
-  var tot = { req: 0, opening: 0, incoming: 0, shortage: 0, shortageCount: 0, unknownCount: 0 };
+  var hasAnyAdj = relatedItems.some(function(item) {
+    var k = item.componentCode + "|" + item.plant + "|" + targetMonth;
+    return (k in simAdj) && Math.abs(simAdj[k] - (matSupplyMap.get(k) || 0)) > 0.001;
+  });
+
+  var tot = { req:0, opening:0, incoming:0, adjIncoming:0, shortage:0, adjShortage:0,
+              shortageCount:0, adjShortageCount:0, unknownCount:0 };
+  var simResults = [];
 
   var rows = relatedItems.map(function(item) {
-    var md       = item.monthlyData[monthIdx] || {};
-    var canComp  = item.hasInventory && item.hasSupplyPlan;
-    var dec      = _cstDecByUnit(item.unit);
+    var md      = item.monthlyData[monthIdx] || {};
+    var canComp = item.hasInventory && item.hasSupplyPlan;
+    var dec     = _cstDecByUnit(item.unit);
+    var simKey  = item.componentCode + "|" + item.plant + "|" + targetMonth;
 
-    // 매칭 완제품 기준 생산계획 + 필요수량
     var matchParents = item.parentItems.filter(function(p) {
       return codes.has(p.code) && (!plantFilter || p.plant === plantFilter);
     });
-    var matchProd = matchParents.reduce(function(s, p) {
-      return s + ((p.monthly[monthIdx] && p.monthly[monthIdx].prodQty) || 0);
-    }, 0);
-    var matchReq = matchParents.reduce(function(s, p) {
-      return s + ((p.monthly[monthIdx] && p.monthly[monthIdx].reqQty) || 0);
-    }, 0);
-    var usageRate = (matchProd > 0) ? matchReq / matchProd : null;
+    var matchProd = matchParents.reduce(function(s, p) { return s + ((p.monthly[monthIdx] && p.monthly[monthIdx].prodQty) || 0); }, 0);
+    var matchReq  = matchParents.reduce(function(s, p) { return s + ((p.monthly[monthIdx] && p.monthly[monthIdx].reqQty) || 0); }, 0);
+    var usageRate = matchProd > 0 ? matchReq / matchProd : null;
 
-    // 기초재고·입고계획 (availableQty = opening + incoming)
-    var incomingQty = matSupplyMap.get(item.componentCode + "|" + item.plant + "|" + targetMonth) || 0;
-    var openingQty  = (canComp && md.availableQty !== null)
-      ? Math.max(md.availableQty - incomingQty, 0) : null;
+    var incomingQty = matSupplyMap.get(simKey) || 0;
+    var openingQty  = (canComp && md.availableQty !== null) ? Math.max(md.availableQty - incomingQty, 0) : null;
 
-    // 부족수량: 매칭 완제품 기준 재산출 (가용수량은 전체 공유이므로 안분 미적용)
-    var shortage = null;
-    if (canComp && md.availableQty !== null) {
-      shortage = Math.max(matchReq - md.availableQty, 0);
+    var adjIncoming = (simKey in simAdj) ? simAdj[simKey] : incomingQty;
+    var isAdjusted  = Math.abs(adjIncoming - incomingQty) > 0.001;
+
+    var shortage    = (canComp && md.availableQty !== null) ? Math.max(matchReq - md.availableQty, 0) : null;
+    var adjAvail    = (canComp && openingQty !== null) ? openingQty + adjIncoming : null;
+    var adjShortage = (canComp && adjAvail !== null) ? Math.max(matchReq - adjAvail, 0) : null;
+
+    if (isAdjusted && adjIncoming > incomingQty && usageRate && usageRate > 0) {
+      var addlEA = Math.round((adjIncoming - incomingQty) / usageRate);
+      if (addlEA > 0) simResults.push({ matName: item.componentName, delta: adjIncoming - incomingQty, addlEA: addlEA, unit: item.unit });
     }
 
-    // 합계 누적
-    tot.req      += matchReq;
-    tot.opening  += (openingQty !== null ? openingQty : 0);
-    tot.incoming += incomingQty;
-    if (shortage === null) { tot.unknownCount++; }
+    tot.req         += matchReq;
+    tot.opening     += (openingQty !== null ? openingQty : 0);
+    tot.incoming    += incomingQty;
+    tot.adjIncoming += adjIncoming;
+    if (shortage === null) tot.unknownCount++;
     else if (shortage > 0) { tot.shortage += shortage; tot.shortageCount++; }
+    if (adjShortage !== null && adjShortage > 0) { tot.adjShortage += adjShortage; tot.adjShortageCount++; }
 
-    // 셀 표시값
     function fmtV(v) { return v !== null && isFinite(v) ? escapeHtml(_cstFmtVal(v, dec, item.unit)) : "-"; }
-    var usageDisp   = usageRate !== null ? escapeHtml(_cstFmtVal(usageRate, 4, "")) : "-";
-    var prodDisp    = matchProd > 0 ? formatNumber(Math.round(matchProd)) : "-";
-    var reqDisp     = matchReq  > 0 ? fmtV(matchReq)  : "-";
-    var openDisp    = openingQty  !== null ? fmtV(openingQty)  : (item.hasInventory ? "-" : "미연결");
-    var incomDisp   = item.hasSupplyPlan ? fmtV(incomingQty) : "미연결";
-    var shortDisp   = shortage === null ? "확정불가" : shortage > 0 ? fmtV(shortage) : "-";
-    var shortCls    = shortage === null ? "cst-imp-adj" : shortage > 0 ? "cst-ss-short-num" : "";
-    var rowCls      = shortage > 0 ? " cst-mat-shortage-row" : shortage === null ? " cst-mat-unknown-row" : "";
+
+    var usageDisp  = usageRate !== null ? escapeHtml(_cstFmtVal(usageRate, 4, "")) : "-";
+    var prodDisp   = matchProd > 0 ? formatNumber(Math.round(matchProd)) : "-";
+    var reqDisp    = matchReq  > 0 ? fmtV(matchReq) : "-";
+    var openDisp   = openingQty !== null ? fmtV(openingQty) : (item.hasInventory ? "-" : "미연결");
+
+    var incomDelta = adjIncoming - incomingQty;
+    var incomCell  = "<input type=\"number\" class=\"mat-sim-input\" " +
+      "data-key=\"" + escapeHtml(simKey) + "\" data-orig=\"" + incomingQty + "\" " +
+      "value=\"" + adjIncoming + "\" min=\"0\" step=\"1\"" +
+      (item.hasSupplyPlan ? "" : " disabled") + " />" +
+      (isAdjusted ? "<span class=\"mat-sim-delta " + (incomDelta > 0 ? "mat-sim-pos" : "mat-sim-neg") + "\">" +
+        (incomDelta > 0 ? "+" : "") + formatNumber(Math.round(incomDelta)) + "</span>" : "");
+
+    var showShortage = hasAnyAdj ? adjShortage : shortage;
+    var shortCls  = showShortage === null ? "cst-imp-adj" : showShortage > 0 ? "cst-ss-short-num" : "";
+    var shortDisp = showShortage === null ? "확정불가" : showShortage > 0 ? fmtV(showShortage) : "-";
+    if (isAdjusted && shortage !== null && adjShortage !== null) {
+      var sDelta = adjShortage - shortage;
+      if (Math.abs(sDelta) > 0.01) {
+        shortDisp += "<span class=\"mat-sim-delta " + (sDelta < 0 ? "mat-sim-pos" : "mat-sim-neg") + "\">" +
+          (sDelta < 0 ? "" : "+") + formatNumber(Math.round(sDelta)) + "</span>";
+      }
+    }
+
+    var rowCls      = showShortage > 0 ? " cst-mat-shortage-row" : showShortage === null ? " cst-mat-unknown-row" : "";
     var sharedBadge = item.isShared ? " <span class=\"cst-shared-badge\">공용</span>" : "";
 
     return "<tr class=\"" + rowCls + "\">" +
@@ -826,33 +897,72 @@ function renderCstShortMaterialsPanel(d) {
       "<td>" + prodDisp + "</td>" +
       "<td>" + reqDisp + "</td>" +
       "<td>" + openDisp + "</td>" +
-      "<td>" + incomDisp + "</td>" +
+      "<td class=\"mat-sim-incoming-cell" + (isAdjusted ? " mat-sim-adjusted" : "") + "\">" + incomCell + "</td>" +
       "<td class=\"" + shortCls + "\">" + shortDisp + "</td>" +
       "</tr>";
   }).join("");
+
+  var totIncomDisp = hasAnyAdj && Math.abs(tot.adjIncoming - tot.incoming) > 0.01
+    ? formatNumber(Math.round(tot.adjIncoming)) +
+      "<span class=\"mat-sim-delta " + (tot.adjIncoming > tot.incoming ? "mat-sim-pos" : "mat-sim-neg") + "\">(" +
+      (tot.adjIncoming > tot.incoming ? "+" : "") + formatNumber(Math.round(tot.adjIncoming - tot.incoming)) + ")</span>"
+    : formatNumber(Math.round(tot.incoming));
+
+  var totShortVal   = hasAnyAdj ? tot.adjShortage : tot.shortage;
+  var totShortCount = hasAnyAdj ? tot.adjShortageCount : tot.shortageCount;
+  var totShortDisp  = totShortCount > 0
+    ? formatNumber(Math.round(totShortVal)) + " (" + totShortCount + "종)"
+    : tot.unknownCount > 0 ? "확정불가 " + tot.unknownCount + "종" : "-";
+  if (hasAnyAdj && Math.abs(tot.adjShortage - tot.shortage) > 0.01) {
+    var sTotDelta = tot.adjShortage - tot.shortage;
+    totShortDisp += "<span class=\"mat-sim-delta " + (sTotDelta < 0 ? "mat-sim-pos" : "mat-sim-neg") + "\">" +
+      (sTotDelta < 0 ? "" : "+") + formatNumber(Math.round(sTotDelta)) + "</span>";
+  }
 
   var totalRow = "<tr class=\"cst-imp-total\">" +
     "<td colspan=\"5\" class=\"cst-imp-total-label\">합계 · " + escapeHtml(monthLabel(targetMonth)) + " 기준</td>" +
     "<td>-</td>" +
     "<td class=\"cst-imp-total-num\">" + formatNumber(Math.round(tot.req)) + "</td>" +
     "<td class=\"cst-imp-total-num\">" + formatNumber(Math.round(tot.opening)) + "</td>" +
-    "<td class=\"cst-imp-total-num\">" + formatNumber(Math.round(tot.incoming)) + "</td>" +
-    "<td class=\"cst-imp-total-num" + (tot.shortageCount > 0 ? " cst-ss-short-num" : "") + "\">" +
-      (tot.shortageCount > 0 ? formatNumber(Math.round(tot.shortage)) + " (" + tot.shortageCount + "종)" :
-       tot.unknownCount > 0  ? "확정불가 " + tot.unknownCount + "종" : "-") +
-    "</td></tr>";
+    "<td class=\"cst-imp-total-num mat-sim-incoming-cell" + (hasAnyAdj ? " mat-sim-adjusted" : "") + "\">" + totIncomDisp + "</td>" +
+    "<td class=\"cst-imp-total-num" + (totShortCount > 0 ? " cst-ss-short-num" : "") + "\">" + totShortDisp + "</td>" +
+    "</tr>";
+
+  var simPanel = "";
+  if (hasAnyAdj) {
+    var resultLines = simResults.length > 0
+      ? simResults.map(function(r) {
+          return "<div class=\"mat-sim-result-row\">" +
+            "<span class=\"mat-sim-mat-name\">" + escapeHtml(r.matName) + "</span>" +
+            " 입고 +" + formatNumber(Math.round(r.delta)) + " " + escapeHtml(r.unit || "") +
+            " → 최대 <strong>+" + formatNumber(r.addlEA) + " EA</strong> 추가 생산 가능</div>";
+        }).join("")
+      : "<div class=\"mat-sim-result-row\">입고계획 감소 또는 영향 없음</div>";
+
+    simPanel = "<div class=\"mat-sim-result-panel\">" +
+      "<div class=\"mat-sim-result-title\">시뮬레이션 결과 · " + escapeHtml(monthLabel(targetMonth)) + "</div>" +
+      resultLines + "</div>" +
+      "<div class=\"mat-sim-actions\">" +
+      "<button class=\"mat-sim-record-btn\" data-month=\"" + escapeHtml(targetMonth) + "\">결정사항 회의록에 기록</button>" +
+      "<button class=\"mat-sim-reset-btn\">조정 초기화</button>" +
+      "</div>";
+  } else {
+    simPanel = "<div class=\"mat-sim-hint\">입고계획 수치를 수정하면 부족수량이 실시간으로 재계산됩니다.</div>";
+  }
 
   var sharedNote = hasShared
     ? "<div class=\"cst-imp-note\">공용자재 포함 — 기초재고·입고계획은 전체 완제품 공용이므로 실제 가용수량은 배분 기준 별도 확인 필요</div>"
     : "";
 
   return "<div class=\"cst-det-section\" style=\"margin:12px 0;\">" +
-    "<div class=\"cst-det-section-title\">부족 자재 리스트 · " + escapeHtml(monthLabel(targetMonth)) + " (" + relatedItems.length + "건)</div>" +
+    "<div class=\"cst-det-section-title\">부족 자재 리스트 · " + escapeHtml(monthLabel(targetMonth)) + " (" + relatedItems.length + "건)" +
+    (hasAnyAdj ? " <span class=\"mat-sim-badge\">시뮬레이션 적용 중</span>" : "") + "</div>" +
     sharedNote +
     "<div class=\"cst-det-scroll\"><table class=\"cst-ss-table cst-drill-goods-table cst-mat-panel-table\"><thead><tr>" +
     "<th>자재코드</th><th>자재명</th><th>플랜트</th><th>단위</th>" +
     "<th>개당<br>소요량</th><th>완제품<br>생산계획</th><th>필요수량</th><th>기초재고</th><th>입고계획</th><th>부족수량</th>" +
-    "</tr></thead><tbody>" + rows + totalRow + "</tbody></table></div></div>";
+    "</tr></thead><tbody>" + rows + totalRow + "</tbody></table></div>" +
+    simPanel + "</div>";
 }
 
 // ── 요약 카드 ─────────────────────────────────────────────────────────────────
@@ -2295,6 +2405,36 @@ function bindConstraint() {
   var clearDrill = document.querySelector("#cstClearDrilldown");
   if (clearDrill) clearDrill.addEventListener("click", function() {
     state.cstDrilldown = null;
+    render("constraint");
+  });
+
+  // ── 자재 시뮬레이션 입고계획 인라인 편집 ──
+  document.querySelectorAll(".mat-sim-input").forEach(function(inp) {
+    inp.addEventListener("change", function() {
+      if (!state.matSimAdj) state.matSimAdj = {};
+      var key  = inp.dataset.key;
+      var orig = parseFloat(inp.dataset.orig) || 0;
+      var val  = Math.max(0, parseFloat(inp.value) || 0);
+      if (Math.abs(val - orig) < 0.001) {
+        delete state.matSimAdj[key];
+      } else {
+        state.matSimAdj[key] = val;
+      }
+      render("constraint");
+    });
+  });
+
+  // ── 결정사항 회의록 기록 ──
+  var recordBtn = document.querySelector(".mat-sim-record-btn");
+  if (recordBtn) recordBtn.addEventListener("click", function() {
+    var month = recordBtn.dataset.month;
+    if (state.cstDrilldown) recordMinutesEntry(state.cstDrilldown, month);
+  });
+
+  // ── 조정 초기화 ──
+  var resetBtn = document.querySelector(".mat-sim-reset-btn");
+  if (resetBtn) resetBtn.addEventListener("click", function() {
+    state.matSimAdj = {};
     render("constraint");
   });
 }
