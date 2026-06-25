@@ -988,3 +988,18 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
 }
 .cst-ss-short-num { color: #b02a37; font-weight: 700; }
 .cst-drill-month-hi td { background: rgba(29, 78, 216, 0.07) !important; }
+
+/* ── 드릴다운 완제품/상품 패널 테이블 ── */
+.cst-drill-goods-table th {
+  border: 1px solid rgba(255,255,255,0.25);
+  text-align: center !important;
+}
+.cst-drill-goods-table td {
+  border: 1px solid #e5e7eb;
+  text-align: center !important;
+}
+.cst-drill-mat-note {
+  color: #6b7280;
+  font-size: 12px;
+  padding: 8px 14px;
+}

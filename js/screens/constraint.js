@@ -596,7 +596,7 @@ function _renderCstGoodsSinglePanel(d) {
 
   return "<div class=\"cst-det-section\" style=\"margin:12px 0;\">" +
     "<div class=\"cst-det-section-title\">" + escapeHtml(d.itemName || d.itemCode || "상품") + " · 월별 공급계획 현황</div>" +
-    "<div class=\"cst-det-scroll\"><table class=\"cst-ss-table\"><thead><tr>" +
+    "<div class=\"cst-det-scroll\"><table class=\"cst-ss-table cst-drill-goods-table\"><thead><tr>" +
     "<th>월</th><th>판매계획</th><th>공급계획</th><th>부족수량</th>" +
     "</tr></thead><tbody>" + rows + "</tbody></table></div></div>";
 }
@@ -636,11 +636,11 @@ function _renderCstGoodsAggPanel(d) {
     var shortage = Math.max(0, e.salesQty - e.supplyQty);
     var isShort  = shortage > 0;
     return "<tr>" +
-      "<td class=\"cst-ss-month\">" + escapeHtml(e.itemCode) + "</td>" +
-      "<td class=\"cst-cell-left\">" + escapeHtml(e.itemName) + "</td>" +
-      "<td class=\"cst-ss-num\">" + formatNumber(e.salesQty) + "</td>" +
-      "<td class=\"cst-ss-num\">" + formatNumber(e.supplyQty) + "</td>" +
-      "<td class=\"cst-ss-num" + (isShort ? " cst-ss-short-num" : "") + "\">" + formatNumber(shortage) + "</td>" +
+      "<td>" + escapeHtml(e.itemCode) + "</td>" +
+      "<td>" + escapeHtml(e.itemName) + "</td>" +
+      "<td>" + formatNumber(e.salesQty) + "</td>" +
+      "<td>" + formatNumber(e.supplyQty) + "</td>" +
+      "<td class=\"" + (isShort ? "cst-ss-short-num" : "") + "\">" + formatNumber(shortage) + "</td>" +
       "</tr>";
   }).join("");
 
@@ -648,8 +648,122 @@ function _renderCstGoodsAggPanel(d) {
   return "<div class=\"cst-det-section\" style=\"margin:12px 0;\">" +
     "<div class=\"cst-det-section-title\">" +
     escapeHtml(titleLabel) + " · " + escapeHtml(monthLabel(targetMonth)) + " 품목별 공급계획 현황</div>" +
-    "<div class=\"cst-det-scroll\"><table class=\"cst-ss-table\"><thead><tr>" +
+    "<div class=\"cst-det-scroll\"><table class=\"cst-ss-table cst-drill-goods-table\"><thead><tr>" +
     "<th>품목코드</th><th>품목명</th><th>판매계획</th><th>공급계획</th><th>부족수량</th>" +
+    "</tr></thead><tbody>" + rows + "</tbody></table></div></div>";
+}
+
+// ── 완제품 드릴다운 공급현황 패널 ─────────────────────────────────────────────
+function renderCstFinishedGoodsPanel(d) {
+  var months = getRtfMonths();
+  var targetMonth = d.month;
+
+  if (d.isAggregate) {
+    var codeSet = new Set(d.itemCodes || []);
+    var itemMap = new Map();
+    state.mappedData.plan_monthly.forEach(function(r) {
+      var code = cleanOptional(r.itemCode), month = cleanOptional(r.month);
+      if (!code || !codeSet.has(code) || month !== targetMonth) return;
+      if (!itemMap.has(code)) itemMap.set(code, { itemCode:code, itemName:cleanOptional(r.itemName)||code, salesQty:0, supplyQty:0 });
+      var e = itemMap.get(code);
+      e.salesQty  += (cleanNumber(r.salesQty)  || 0);
+      e.supplyQty += (cleanNumber(r.supplyQty) || 0);
+    });
+    var entries = Array.from(itemMap.values()).sort(function(a, b) {
+      return Math.max(0, b.salesQty - b.supplyQty) - Math.max(0, a.salesQty - a.supplyQty);
+    });
+    if (entries.length === 0) return "";
+    var titleLabel = d.itemGroup || (d.label ? d.label.replace(/ 계$/, "") : "완제품");
+    var rows = entries.map(function(e) {
+      var shortage = Math.max(0, e.salesQty - e.supplyQty);
+      var isShort = shortage > 0;
+      return "<tr><td>" + escapeHtml(e.itemCode) + "</td><td>" + escapeHtml(e.itemName) + "</td>" +
+        "<td>" + formatNumber(e.salesQty) + "</td><td>" + formatNumber(e.supplyQty) + "</td>" +
+        "<td class=\"" + (isShort ? "cst-ss-short-num" : "") + "\">" + formatNumber(shortage) + "</td></tr>";
+    }).join("");
+    return "<div class=\"cst-det-section\" style=\"margin:12px 0;\">" +
+      "<div class=\"cst-det-section-title\">" + escapeHtml(titleLabel) + " · " + escapeHtml(monthLabel(targetMonth)) + " 완제품 공급현황</div>" +
+      "<div class=\"cst-det-scroll\"><table class=\"cst-ss-table cst-drill-goods-table\"><thead><tr>" +
+      "<th>품목코드</th><th>품목명</th><th>판매계획</th><th>공급계획</th><th>부족수량</th>" +
+      "</tr></thead><tbody>" + rows + "</tbody></table></div></div>";
+  }
+
+  // 개별 품목: 월별 현황
+  var rows2 = months.map(function(month) {
+    var salesQty = 0, supplyQty = 0, found = false;
+    state.mappedData.plan_monthly.forEach(function(r) {
+      if (cleanOptional(r.itemCode) === d.itemCode && cleanOptional(r.month) === month &&
+          (!d.plant || cleanOptional(r.plant) === d.plant)) {
+        salesQty  += (cleanNumber(r.salesQty)  || 0);
+        supplyQty += (cleanNumber(r.supplyQty) || 0);
+        found = true;
+      }
+    });
+    var shortage = found ? Math.max(0, salesQty - supplyQty) : null;
+    var isShort  = shortage !== null && shortage > 0;
+    var hlCls    = month === targetMonth ? " cst-drill-month-hi" : "";
+    return "<tr class=\"" + hlCls + "\">" +
+      "<td>" + escapeHtml(monthLabel(month)) + "</td>" +
+      "<td>" + (found ? formatNumber(salesQty)  : "-") + "</td>" +
+      "<td>" + (found ? formatNumber(supplyQty) : "-") + "</td>" +
+      "<td class=\"" + (isShort ? "cst-ss-short-num" : "") + "\">" + (shortage !== null ? formatNumber(shortage) : "-") + "</td>" +
+      "</tr>";
+  }).join("");
+  return "<div class=\"cst-det-section\" style=\"margin:12px 0;\">" +
+    "<div class=\"cst-det-section-title\">" + escapeHtml(d.itemName || d.itemCode || "") + " · 월별 공급현황</div>" +
+    "<div class=\"cst-det-scroll\"><table class=\"cst-ss-table cst-drill-goods-table\"><thead><tr>" +
+    "<th>월</th><th>판매계획</th><th>공급계획</th><th>부족수량</th>" +
+    "</tr></thead><tbody>" + rows2 + "</tbody></table></div></div>";
+}
+
+// ── 드릴다운 부족자재 패널 ────────────────────────────────────────────────────
+function renderCstShortMaterialsPanel(d) {
+  if (state.bomStatus !== BOM_STATUS.DONE || !state.bomResult) {
+    return "<div class=\"cst-det-section\" style=\"margin:12px 0;\">" +
+      "<div class=\"cst-det-section-title\">부족 자재 리스트</div>" +
+      "<div class=\"cst-drill-mat-note\">공급원인 화면에서 BOM 전개 후 확인 가능합니다.</div></div>";
+  }
+  var months = getRtfMonths();
+  var targetMonth = d.month;
+  var monthIdx = months.indexOf(targetMonth);
+  var codes = d.isAggregate ? new Set(d.itemCodes || []) : new Set(d.itemCode ? [d.itemCode] : []);
+  var plantFilter = (!d.isAggregate && d.plant) ? d.plant : null;
+
+  var relatedItems = (state.bomResult.items || []).filter(function(item) {
+    return item.hasAnyShortage && item.parentItems.some(function(p) {
+      return codes.has(p.code) && (!plantFilter || p.plant === plantFilter);
+    });
+  }).sort(function(a, b) {
+    var aS = (a.monthlyData[monthIdx] || {}).shortageQty || 0;
+    var bS = (b.monthlyData[monthIdx] || {}).shortageQty || 0;
+    return bS - aS;
+  });
+
+  if (relatedItems.length === 0) {
+    return "<div class=\"cst-det-section\" style=\"margin:12px 0;\">" +
+      "<div class=\"cst-det-section-title\">부족 자재 리스트 · " + escapeHtml(monthLabel(targetMonth)) + "</div>" +
+      "<div class=\"cst-drill-mat-note\">연결된 BOM 부족자재 없음</div></div>";
+  }
+
+  var rows = relatedItems.map(function(item) {
+    var md = item.monthlyData[monthIdx] || {};
+    var isShort = md.shortageQty !== null && md.shortageQty > 0;
+    var dec = _cstDecByUnit(item.unit);
+    var sharedBadge = item.isShared ? " <span class=\"cst-shared-badge\">공용</span>" : "";
+    return "<tr>" +
+      "<td>" + escapeHtml(item.componentCode) + "</td>" +
+      "<td>" + escapeHtml(item.componentName) + sharedBadge + "</td>" +
+      "<td>" + escapeHtml(displayPlantName(item.plant)) + "</td>" +
+      "<td>" + escapeHtml(item.unit || "-") + "</td>" +
+      "<td class=\"" + (isShort ? "cst-ss-short-num" : "") + "\">" +
+        (isShort ? escapeHtml(_cstFmtVal(md.shortageQty, dec, item.unit)) : "-") + "</td>" +
+      "</tr>";
+  }).join("");
+
+  return "<div class=\"cst-det-section\" style=\"margin:12px 0;\">" +
+    "<div class=\"cst-det-section-title\">부족 자재 리스트 · " + escapeHtml(monthLabel(targetMonth)) + " (" + relatedItems.length + "건)</div>" +
+    "<div class=\"cst-det-scroll\"><table class=\"cst-ss-table cst-drill-goods-table\"><thead><tr>" +
+    "<th>자재코드</th><th>자재명</th><th>플랜트</th><th>단위</th><th>자재 부족수량</th>" +
     "</tr></thead><tbody>" + rows + "</tbody></table></div></div>";
 }
 
@@ -1963,6 +2077,8 @@ function renderConstraint() {
     "</section>" +
     (d ? renderCstDrilldownBanner(d) : "") +
     (isGoods ? renderCstGoodsPanel(d) : "") +
+    (isGoods && d ? renderCstShortMaterialsPanel(d) : "") +
+    (!isGoods && d ? renderCstFinishedGoodsPanel(d) : "") +
     (!isGoods ? (bomStatus === BOM_STATUS.DONE && state.bomResult ? renderConstraintSummaryCard(state.bomResult) : "") : "") +
     (!isGoods ? renderConstraintTableSection(state.bomResult, bomStatus, months) : "") +
     (!isGoods ? renderValidationPanel() : "") +
