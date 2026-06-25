@@ -1560,16 +1560,14 @@ function renderCstDetailExpanded(item, months, totalCols) {
   var hasMore = sortedParents.length > EXPAND_LIMIT;
   var shownParents = sortedParents.slice(0, EXPAND_LIMIT);
 
-  // 5컬럼/월: 생산계획, 부족, 총 자재 필요수량, 자재 부족수량, 완제품 환산 영향수량
+  // 3컬럼/월: 생산계획, 부족, 자재 부족수량
   var impMonthHeads = months.map(function(m) {
-    return "<th class=\"cst-imp-month impact-month-header\" colspan=\"5\">" + escapeHtml(monthLabel(m)) + "</th>";
+    return "<th class=\"cst-imp-month impact-month-header\" colspan=\"3\">" + escapeHtml(monthLabel(m)) + "</th>";
   }).join("");
   var impSubHeads = months.map(function() {
     return "<th class=\"cst-imp-sub impact-month-metric-header\">생산계획</th>" +
            "<th class=\"cst-imp-sub impact-month-metric-header\">부족</th>" +
-           "<th class=\"cst-imp-sub impact-month-metric-header\">총 자재 필요수량</th>" +
-           "<th class=\"cst-imp-sub impact-month-metric-header\">자재 부족수량</th>" +
-           "<th class=\"cst-imp-sub impact-month-metric-header\">완제품 환산 영향수량</th>";
+           "<th class=\"cst-imp-sub impact-month-metric-header\">자재 부족수량</th>";
   }).join("");
 
   var impRows = shownParents.map(function(p) {
@@ -1595,9 +1593,6 @@ function renderCstDetailExpanded(item, months, totalCols) {
       var rtfShortage = Math.max(0, salesQty - md.prodQty);
       var rtfDisp = rtfShortage > 0 ? formatNumber(Math.round(rtfShortage)) : "-";
 
-      // 총 자재 필요수량
-      var reqDisp = md.reqQty > 0 ? escapeHtml(_cstFmtVal(md.reqQty, dec, matUnit)) : "-";
-
       // 자재 부족수량: 전체 자재 부족수량을 reqQty 비율로 안분
       var totalShortage = monthlyShortage.get(month);
       var totalReqQty = totalReqByMonth.get(month) || 0;
@@ -1608,18 +1603,9 @@ function renderCstDetailExpanded(item, months, totalCols) {
       var matDisp = (pMatShortage !== null && pMatShortage > 0)
         ? escapeHtml(_cstFmtVal(pMatShortage, dec, matUnit)) : "-";
 
-      // 완제품 환산 영향수량: 자재 부족수량 / 개당 소요량 = pMatShortage * prodQty / reqQty
-      var fgImpact = null;
-      if (pMatShortage !== null && pMatShortage > 0 && md.reqQty > 0) {
-        fgImpact = pMatShortage * md.prodQty / md.reqQty;
-      }
-      var fgDisp = (fgImpact !== null && fgImpact > 0) ? formatNumber(Math.round(fgImpact)) : "-";
-
       return "<td class=\"cst-imp-num" + sc + "\">" + prodDisp + "</td>" +
              "<td class=\"cst-imp-num cst-imp-short" + sc + "\">" + rtfDisp + "</td>" +
-             "<td class=\"cst-imp-num" + sc + "\">" + reqDisp + "</td>" +
-             "<td class=\"cst-imp-num cst-imp-matshort" + sc + "\">" + matDisp + "</td>" +
-             "<td class=\"cst-imp-num" + sc + "\">" + fgDisp + "</td>";
+             "<td class=\"cst-imp-num cst-imp-matshort" + sc + "\">" + matDisp + "</td>";
     }).join("");
 
     return "<tr class=\"cst-imp-row\">" +
@@ -1640,14 +1626,11 @@ function renderCstDetailExpanded(item, months, totalCols) {
       var sc = mi % 2 === 1 ? " cst-imp-col-shade" : "";
       var md = item.monthlyData[mi];
       var totalShortage = monthlyShortage.get(month);
-      var reqDisp = md.requiredQty > 0 ? escapeHtml(_cstFmtVal(md.requiredQty, dec, matUnit)) : "-";
       var shortDisp = (canCompute && totalShortage !== null && totalShortage > 0)
         ? escapeHtml(_cstFmtVal(totalShortage, dec, matUnit)) : "-";
       return "<td class=\"cst-imp-num" + sc + "\">-</td>" +
              "<td class=\"cst-imp-num" + sc + "\">-</td>" +
-             "<td class=\"cst-imp-num cst-imp-total-num" + sc + "\">" + reqDisp + "</td>" +
-             "<td class=\"cst-imp-num cst-imp-total-num cst-imp-matshort" + sc + "\">" + shortDisp + "</td>" +
-             "<td class=\"cst-imp-num" + sc + "\">-</td>";
+             "<td class=\"cst-imp-num cst-imp-total-num cst-imp-matshort" + sc + "\">" + shortDisp + "</td>";
     }).join("") +
     "<td class=\"cst-imp-adj\">-</td>" +
     "</tr>";
