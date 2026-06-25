@@ -1952,12 +1952,12 @@ function renderCstDetailExpanded(item, months, totalCols) {
     "<div class=\"cst-imp-note\">공용자재의 자재 부족수량은 영향품목 기준으로 표시되며, 최종 배분은 회의에서 결정합니다.</div>" +
     "<div class=\"cst-det-scroll\"><table class=\"cst-imp-table impact-items-table\"><thead>" +
     "<tr class=\"cst-imp-head\">" +
-    "<th class=\"info-col-header\" rowspan=\"2\">완제품코드</th>" +
-    "<th class=\"info-col-header\" rowspan=\"2\">완제품명</th>" +
-    "<th class=\"info-col-header\" rowspan=\"2\">품목군</th>" +
-    "<th class=\"info-col-header\" rowspan=\"2\" title=\"완제품 1개 생산 시 소요량\">개당 소요량</th>" +
+    "<th class=\"impact-month-header\" rowspan=\"2\">완제품코드</th>" +
+    "<th class=\"impact-month-header\" rowspan=\"2\">완제품명</th>" +
+    "<th class=\"impact-month-header\" rowspan=\"2\">품목군</th>" +
+    "<th class=\"impact-month-header\" rowspan=\"2\" title=\"완제품 1개 생산 시 소요량\">개당 소요량</th>" +
     impMonthHeads +
-    "<th class=\"info-col-header\" rowspan=\"2\">조율 후보</th></tr>" +
+    "<th class=\"impact-month-header\" rowspan=\"2\">조율 후보</th></tr>" +
     "<tr class=\"cst-imp-head\">" + impSubHeads + "</tr>" +
     "</thead><tbody>" + impRows + totalRow + "</tbody></table>" + moreMsg + "</div></div>";
 

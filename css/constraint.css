@@ -898,9 +898,9 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
 }
 
 /* ── Impact Items Table: 헤더 색상 규칙 ──────────────────────────────────── */
-/* 기본정보 컬럼 (완제품코드·완제품명·품목군·1개당 소요량·조율 후보): 진한 남색 */
+/* 모든 헤더를 녹색 단일 계열로 통일 — 컬럼별 별도 class 불필요 */
 .impact-items-table thead th {
-  background: #24272b;
+  background: #15803d;
   color: #fff;
   font-size: 12px;
   font-weight: 700;
@@ -909,13 +909,8 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
   vertical-align: middle;
   white-space: nowrap;
 }
-/* 월 그룹 헤더 (6월~12월): 녹색 통일 */
-.impact-items-table thead th.impact-month-header {
-  background: #15803d;
-}
-/* 월 지표 서브헤더 (생산계획·총 자재 필요수량·부족·자재 부족수량): 녹색 통일 */
+/* 월 지표 서브헤더는 글자 크기만 축소 */
 .impact-items-table thead th.impact-month-metric-header {
-  background: #15803d;
   font-size: 11px;
 }
 
