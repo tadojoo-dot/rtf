@@ -871,7 +871,7 @@ function renderRtfInventoryBar(items, baseItemsForDelta) {
 
   return "<div class=\"rtf-inv-bar rtf-card\" style=\"padding:14px 18px;margin-top:10px;\">" +
     "<div class=\"rtf-inv-bar-title\">월별 재고금액 · 재고일수</div>" +
-    "<div class=\"rtf-h-scroll\"><table class=\"rtf-inv-table\">" +
+    "<div><table class=\"rtf-inv-table\">" +
     "<thead><tr><th class=\"rtf-inv-row-label\"></th>" + monthHeaders + "</tr></thead>" +
     "<tbody>" +
     "<tr><td class=\"rtf-inv-label\">재고금액</td>" + amtRow  + "</tr>" +
@@ -909,12 +909,12 @@ function renderRtf() {
   const summaryUnit = state.rtfDisplayMode === "amount" ? "" : "개";
   const summaryLine = `${monthLabel(months[0])} 총 판매계획 <b>${escapeHtml(formatDisplayQtyMoney(firstMonth.salesQty, firstMonth.salesPlanAmount))}${summaryUnit}</b>, RTF <b>${escapeHtml(formatDisplayQtyMoney(firstMonth.rtfQty, firstMonth.rtfAmount))}${summaryUnit}</b>. ${Number.isFinite(firstShortage) && firstShortage > 0 ? `<span class="rtf-alert-text">Shortage ${escapeHtml(state.rtfDisplayMode === "amount" ? formatMoney(firstShortage) : formatNumber(firstShortage) + summaryUnit)}</span>` : `<span class="rtf-ok-text">Shortage 없음</span>`}`;
 
-  // 4. 전후 토글 UI
+  // 4. 전후 토글 UI (항상 표시, 조정 없으면 "조정 후" 비활성)
   const adjCount = Object.keys(state.matSimAdj || {}).length;
-  const toggleHtml = hasAdj ? `<div class="rtf-view-toggle" aria-label="RTF 보기 기준">
+  const toggleHtml = `<div class="rtf-view-toggle" aria-label="RTF 보기 기준">
     <button type="button" class="rtf-view-btn ${state.rtfViewMode === "current" ? "active" : ""}" data-rtf-view="current">현재 계획</button>
-    <button type="button" class="rtf-view-btn ${state.rtfViewMode === "adjusted" ? "active" : ""}" data-rtf-view="adjusted">조정 후 ●${adjCount}건</button>
-  </div>` : "";
+    <button type="button" class="rtf-view-btn ${state.rtfViewMode === "adjusted" ? "active" : ""}${!hasAdj ? " disabled" : ""}" data-rtf-view="adjusted"${!hasAdj ? ' disabled title="공급원인 화면에서 자재 입고계획을 조정한 후 사용 가능합니다"' : ""}>조정 후${hasAdj ? ` ●${adjCount}건` : ""}</button>
+  </div>`;
 
   // 5. 조정내역 패널
   const adjPanelHtml = hasAdj ? renderRtfAdjPanel() : "";

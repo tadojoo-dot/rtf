@@ -522,7 +522,13 @@
   border-color: #15803d;
   color: #fff;
 }
-.rtf-view-btn:not(.active):hover { background: #f3f4f6; }
+.rtf-view-btn:not(.active):not(.disabled):hover { background: #f3f4f6; }
+.rtf-view-btn.disabled,
+.rtf-view-btn:disabled {
+  color: #9ca3af;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
 
 /* ── 조정후 셀 하이라이트 ── */
 .rtf-adj-cell-improved { background: #f0fdf4 !important; }
@@ -585,6 +591,7 @@
   border-collapse: collapse;
   font-size: 12px;
   width: 100%;
+  border: 1px solid #d1d5db;
 }
 .rtf-inv-table th {
   background: #1e293b;
@@ -592,17 +599,21 @@
   min-width: 90px;
   padding: 6px 10px;
   text-align: center;
+  border-right: 1px solid #374151;
 }
-.rtf-inv-table th.rtf-inv-row-label { min-width: 110px; text-align: left; }
+.rtf-inv-table th:last-child { border-right: none; }
+.rtf-inv-table th.rtf-inv-row-label { min-width: 110px; text-align: center; }
 .rtf-inv-table td {
   border-bottom: 1px solid #e5e7eb;
+  border-right: 1px solid #e5e7eb;
   padding: 5px 10px;
-  text-align: right;
+  text-align: center;
 }
+.rtf-inv-table td:last-child { border-right: none; }
 .rtf-inv-table td.rtf-inv-label {
   color: #374151;
   font-weight: 500;
-  text-align: left;
+  text-align: center;
 }
 .rtf-inv-delta-row td { background: #f0fdf4; font-size: 11px; }
 .rtf-inv-delta-pos { color: #15803d; font-weight: 600; }

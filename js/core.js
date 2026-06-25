@@ -32,6 +32,7 @@ const requiredFiles = [
   { id:"wipInventory",      label:"기초재고_재공품_RAW.xlsx" },
   { id:"itemMaster",        label:"사업부 별 품목 기준정보.xlsx" },
   { id:"bom",               label:"BOM_RAW.xlsx" },
+  { id:"targetInventory",   label:"적정재고_RAW.xlsx" },
 ];
 
 // 앱 상태
@@ -45,6 +46,7 @@ const state = {
     plan_monthly: [],
     bom_components: [],
     business_mapping: [],
+    target_inv: [],
   },
   rtfExpanded: false,
   expandedItemGroups: new Set(),
@@ -64,7 +66,11 @@ const state = {
   cstDrilldown: null,   // RTF 화면에서 넘어온 드릴다운 컨텍스트
   matSimAdj: {},        // "compCode|plant|month" → 조정된 입고수량(number)
   minutesLog: [],       // 회의록 결정사항 배열
-  rtfViewMode: "current", // "current" | "adjusted"
+  rtfViewMode: "current",   // "current" | "adjusted"
+  invSupplyAdj: {},         // "itemCode|plant|month" → 조정된 공급수량(number)
+  invViewMode: "current",   // "current" | "adjusted"
+  invFilter: "all",         // "all" | "excess"
+  invExpandedRows: new Set(),
 };
 
 // DOM 참조
