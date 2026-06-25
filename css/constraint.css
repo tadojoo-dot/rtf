@@ -1003,3 +1003,9 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
   font-size: 12px;
   padding: 8px 14px;
 }
+
+/* ── 부족자재 패널 테이블 ── */
+.cst-mat-panel-table { min-width: max-content; }
+.cst-mat-shortage-row td { background: #fff5f5; }
+.cst-mat-unknown-row  td { background: #fffbeb; }
+.cst-drill-usage { color: #6b7280; font-size: 12px; }
