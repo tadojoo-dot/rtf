@@ -294,7 +294,7 @@ function bindSummary() {
       var ms = item.monthlyStatus[i];
       if (ms && Number.isFinite(ms.endingAmount)) total += ms.endingAmount;
     });
-    baseData[idx] = total;
+    baseData[idx] = total / 100000000; // 원 → 억원
   });
 
   _summaryChartInst = new Chart(canvas.getContext("2d"), {
@@ -325,7 +325,7 @@ function bindSummary() {
         tooltip: {
           callbacks: {
             label: function(ctx) {
-              return ctx.raw !== null ? ctx.dataset.label + ": " + formatMoney(ctx.raw) : null;
+              return ctx.raw !== null ? ctx.dataset.label + ": " + ctx.raw.toFixed(1) + "억" : null;
             },
           },
         },
@@ -335,7 +335,7 @@ function bindSummary() {
         y: {
           title: { display: true, text: "재고금액 (억원)", color: "#6b7280", font: { size: 11 } },
           grid: { color: "#f3f4f6" },
-          ticks: { callback: function(v) { return formatMoney(v); } },
+          ticks: { callback: function(v) { return v.toFixed(1) + "억"; } },
         },
       },
     },

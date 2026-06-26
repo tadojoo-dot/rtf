@@ -61,7 +61,7 @@ function _getForecastSeries(filterType, metric, mode, rtfItemsArr, matAdjBomMap)
     });
 
     if (metric === "invDays") return totalSalesQty > 0 ? totalEndQty / totalSalesQty : null;
-    return hasAmt ? totalAmt : 0;
+    return hasAmt ? totalAmt / 100000000 : 0; // 원 → 억원
   });
 }
 
@@ -241,7 +241,7 @@ function _initImpactChart() {
               var v = ctx.raw;
               if (v === null) return null;
               if (_impactMetric === "invDays") return ctx.dataset.label + ": " + Math.round(v) + "일";
-              return ctx.dataset.label + ": " + formatMoney(v);
+              return ctx.dataset.label + ": " + v.toFixed(1) + "억";
             },
           },
         },
@@ -262,7 +262,7 @@ function _initImpactChart() {
           grid: { color: "#f3f4f6" },
           ticks: {
             callback: function(v) {
-              return _impactMetric === "invDays" ? Math.round(v) + "일" : formatMoney(v);
+              return _impactMetric === "invDays" ? Math.round(v) + "일" : v.toFixed(1) + "억";
             },
           },
         },
