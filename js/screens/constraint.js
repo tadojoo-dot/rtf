@@ -2995,6 +2995,7 @@ function bindConstraint() {
   // ── 완제품 행 클릭 → 자재 조정 펼침/접기 ──
   document.querySelectorAll(".cst-fgl-row").forEach(function(row) {
     row.addEventListener("click", function() {
+      if (window.getSelection && window.getSelection().toString()) return; // 텍스트 선택 중이면 무시
       if (!state.cstRtfExpanded) state.cstRtfExpanded = new Set();
       var key = row.dataset.fgkey;
       if (state.cstRtfExpanded.has(key)) state.cstRtfExpanded.delete(key);
