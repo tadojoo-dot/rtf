@@ -265,12 +265,12 @@ function bindSummary() {
   var allMonths = [];
   for (var m = 1; m <= 12; m++) allMonths.push("2026-" + (m < 10 ? "0" + m : "" + m));
   var rtfMonths   = getRtfMonths();
-  var rtfItemsArr = computeRtfItems();
+  var rtfItemsArr = computeRtfItems(undefined, true);
 
   // 실적 (완제품+상품, Table1 plant="전체")
   var actualsRaw = allMonths.map(function(month) {
     var rows = (state.mappedData.actuals_monthly || []).filter(function(r) {
-      return r.month === month && r.plant === "전체" && (r.type === "완제품" || r.type === "상품");
+      return r.month === month && r.plant === "전체";
     });
     if (!rows.length) return null;
     return rows.reduce(function(s, r) { return s + (r.invAmt || 0); }, 0);

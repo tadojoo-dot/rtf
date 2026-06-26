@@ -156,7 +156,7 @@ function displayPlantName(plantCode) {
   return PLANT_NAME_MAP[code] || code || NEED_MASTER;
 }
 
-function computeRtfItems(bomMapArg) {
+function computeRtfItems(bomMapArg, allTypes) {
   const _bomMap = (bomMapArg !== undefined) ? bomMapArg : buildBomMaxProducibleMap(); // BOM 완료 시 자재 제약 맵, 미완료 시 null
   const planRows      = state.mappedData.plan_monthly;
   const inventoryRows = state.mappedData.inventory_base;
@@ -253,7 +253,7 @@ function computeRtfItems(bomMapArg) {
       return { month, salesQty, supplyQty, rtfQty, rtfAmount, endingQty, endingAmount, shortageQty, shortageAmount, lostSalesAmount, inventoryDays, salesAmount, salesPlanAmount, status, reason, noSalesPlan, bomConstrained, planShortageQty };
     });
     return item;
-  }).filter((item) => item.typeGroup === "상품" || item.typeGroup === "완제품");
+  }).filter((item) => allTypes || item.typeGroup === "상품" || item.typeGroup === "완제품");
 }
 
 // ── 집계 ─────────────────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ var _impactType      = "전체";     // "전체" | "완제품" | "상품"
 function _getActualsForMonth(month, filterType, metric) {
   var rows = (state.mappedData.actuals_monthly || []).filter(function(r) {
     if (r.month !== month || r.plant !== "전체") return false;
-    if (filterType === "전체") return r.type === "완제품" || r.type === "상품";
+    if (filterType === "전체") return true;
     return r.type === filterType;
   });
   if (!rows.length) return null;
@@ -153,7 +153,7 @@ function _initImpactChart() {
   var allMonths = [];
   for (var m = 1; m <= 12; m++) allMonths.push("2026-" + (m < 10 ? "0" + m : "" + m));
   var rtfMonths    = getRtfMonths(); // 6~12월
-  var rtfItemsArr  = computeRtfItems();
+  var rtfItemsArr  = computeRtfItems(undefined, true);
   var matAdjBomMap = Object.keys(state.matSimAdj || {}).length > 0
     ? buildBomMaxProducibleMap(state.matSimAdj) : null;
 
