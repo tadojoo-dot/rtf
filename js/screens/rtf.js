@@ -51,34 +51,61 @@ function buildBomMaxProducibleMap(adjOverrides) {
   const map = new Map(); // key: "itemCode|plant|month" → 생산 가능수량 (병목 기준)
   state.bomResult.items.forEach((bi) => {
     if (!bi.monthlyData || !bi.parentItems) return;
-    bi.parentItems.forEach((pi) => {
-      if (!pi.monthly) return;
-      pi.monthly.forEach((mData, j) => {
-        const md = bi.monthlyData[j];
-        if (!md || md.availableQty === null) return; // 판단불가 자재 → skip
-        const prodQty = mData.prodQty || 0;
-        const reqQty  = mData.reqQty  || 0;
-        if (prodQty === 0 || reqQty === 0) return;  // 소요 없으면 무제약
-        const coeff   = reqQty / prodQty;            // 완제품 1개당 자재 소요량
 
-        let availableQty = md.availableQty;
-        if (origSupplyMap && adjOverrides) {
-          const adjKey = bi.componentCode + "|" + (bi.plant || "") + "|" + mData.month;
-          if (adjKey in adjOverrides) {
-            const orig = origSupplyMap.get(adjKey) || 0;
-            availableQty = availableQty + (adjOverrides[adjKey] - orig);
-          }
+    bi.monthlyData.forEach((md, j) => {
+      if (!md || md.availableQty === null) return; // 판단불가 자재 → skip
+
+      // 조정값 반영 가용수량 (자재+월 기준, 모든 부모에 공통 적용)
+      let availableQty = md.availableQty;
+      if (origSupplyMap && adjOverrides) {
+        const adjKey = bi.componentCode + "|" + (bi.plant || "") + "|" + md.month;
+        if (adjKey in adjOverrides) {
+          const orig = origSupplyMap.get(adjKey) || 0;
+          availableQty = availableQty + (adjOverrides[adjKey] - orig);
         }
+      }
+      availableQty = Math.max(0, availableQty);
 
-        const maxProd = coeff > 0 ? availableQty / coeff : Infinity;
-        const key     = `${pi.code}|${pi.plant}|${mData.month}`;
-        const cur     = map.get(key);
+      // 소요량 내림차순 정렬 → 소요 많은 완제품부터 우선 차감 (waterfall)
+      const parents = bi.parentItems
+        .map((pi) => {
+          if (!pi.monthly) return null;
+          const mData = pi.monthly[j];
+          if (!mData) return null;
+          const prodQty = mData.prodQty || 0;
+          const reqQty  = mData.reqQty  || 0;
+          if (prodQty === 0 || reqQty === 0) return null;
+          return { pi, prodQty, reqQty, coeff: reqQty / prodQty, month: mData.month };
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.reqQty - a.reqQty);
+
+      let remaining = availableQty;
+      parents.forEach(({ pi, reqQty, coeff, month }) => {
+        const allocated = Math.min(reqQty, remaining);
+        remaining       = Math.max(0, remaining - allocated);
+        const maxProd   = coeff > 0 ? allocated / coeff : Infinity;
+        const key       = `${pi.code}|${pi.plant}|${month}`;
+        const cur       = map.get(key);
         // 복수 자재 중 가장 낮은 값(병목)을 유지
         if (cur === undefined || maxProd < cur) map.set(key, Math.max(0, maxProd));
       });
     });
   });
   return map;
+}
+
+// 공용자재 경합 경고 대상 완제품 키 집합 (isShared=true이고 부족 발생한 자재의 부모 완제품)
+function buildSharedAlertSet() {
+  if (state.bomStatus !== "done" || !state.bomResult) return new Set();
+  const set = new Set();
+  (state.bomResult.items || []).forEach(function(bi) {
+    if (!bi.isShared || !bi.hasAnyShortage) return;
+    (bi.parentItems || []).forEach(function(pi) {
+      set.add(pi.code + "|" + pi.plant);
+    });
+  });
+  return set;
 }
 
 // ── RTF 계산 ─────────────────────────────────────────────────────────────────
@@ -156,6 +183,7 @@ function computeRtfItems(bomMapArg) {
       metaMap.set(key, { itemCode: code, itemName: cleanText(row.itemName, code), plant, itemType: cleanOptional(row.itemType) });
   });
 
+  const sharedAlertSet = buildSharedAlertSet();
   return [...metaMap.values()].map((meta) => {
     const key = itemPlantKey(meta.itemCode, meta.plant);
     const master = masterMap.get(meta.itemCode), standardCost = costMap.get(key) ?? null;
@@ -164,6 +192,7 @@ function computeRtfItems(bomMapArg) {
       itemGroup: cleanText(master?.itemGroup, NEED_MASTER), standardCost,
       hasCost: standardCost !== null && standardCost > 0,
       hasInventory: inventorySet.has(key), baseQty: inventorySet.has(key) ? (baseQtyMap.get(key) ?? 0) : null,
+      hasSharedAlert: sharedAlertSet.has(key),
     };
     item.typeGroup = itemTypeGroup(item);
     let openingQty = item.baseQty;
@@ -692,7 +721,10 @@ function renderHierarchyRow(node, leftColDefs, compressed, mode, rowspanMap) {
       colIndex = nameIndex;
       continue;
     }
-    leftCells.push(`<td class="rtf-sticky ${alignCls}${extraCls}${mergeCls}" style="left:${col.left}px;width:${col.width}px;"${titleAttr}${rowspan}>${toggleBtn}${escapeHtml(value)}</td>`);
+    const sharedBadge = col.isName && isItem && item && item.hasSharedAlert
+      ? `<span class="rtf-shared-alert-badge" title="공용자재 경합 — 소요량 우선차감 적용">⚠공용</span>`
+      : "";
+    leftCells.push(`<td class="rtf-sticky ${alignCls}${extraCls}${mergeCls}" style="left:${col.left}px;width:${col.width}px;"${titleAttr}${rowspan}>${toggleBtn}${escapeHtml(value)}${sharedBadge}</td>`);
   }
 
   const kindCls = isTotal ? "is-total" : (isItem ? "is-item" : "is-group");
@@ -958,7 +990,7 @@ function renderRtf() {
         <button type="button" class="rtf-mode-btn ${state.rtfDisplayMode === "amount" ? "active" : ""}" data-rtf-mode="amount">금액</button>
       </div>
       <button type="button" id="rtfExpandToggle" class="rtf-extra-toggle ${state.rtfExpanded ? "active" : ""}">${state.rtfExpanded ? "축소" : "확대"}</button>
-      <button type="button" class="adj-candidate-btn" disabled title="조정입력 연계 기능은 후속 단계에서 구현 예정입니다.">조정안에 담기</button>
+      <button type="button" id="rtfGoConstraintBtn" class="rtf-go-constraint-btn">공급원인 분석 →</button>
       <span class="rtf-toolbar-hint">${state.rtfExpanded ? "분석용 상세 · 보기 기준 탭 선택" : "발표용 기본 · 사업부/플랜트/유형 전체 표시"}</span>
     </div>
     ${sectionHtml}
@@ -1021,6 +1053,13 @@ function bindRtf() {
     if (!body) return;
     body.hidden = !body.hidden;
     if (arrow) arrow.textContent = body.hidden ? "▶" : "▼";
+  });
+
+  document.querySelector("#rtfGoConstraintBtn")?.addEventListener("click", () => {
+    state.cstDrilldown = null;
+    state.constraintFilter = "shortage";
+    state.constraintSearch = "";
+    render("constraint");
   });
 
   document.querySelectorAll("[data-cst-drill]").forEach((td) => {
