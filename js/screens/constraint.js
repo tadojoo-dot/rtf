@@ -2648,7 +2648,10 @@ function renderCstRtfShortList(months) {
     var summaryRow = "<tr class=\"cst-fgl-row" + (isOpen ? " cst-fgl-open" : "") +
       "\" data-fgkey=\"" + escapeHtml(fgKey) + "\">" +
       "<td class=\"cst-fgl-icon\">" + (isOpen ? "▼" : "▶") + "</td>" +
-      "<td class=\"cst-fgl-name\">" + escapeHtml(fg.itemName) + "</td>" +
+      "<td class=\"cst-fgl-name\">" + escapeHtml(fg.itemName) +
+        "<span class=\"cst-fgl-code-sub\">" + escapeHtml(fg.itemCode) +
+        (fg.businessUnit && fg.businessUnit !== "기준정보 확인 필요" ? " · " + escapeHtml(fg.businessUnit) : "") +
+        "</span></td>" +
       "<td class=\"cst-fgl-plant\">" + escapeHtml(fg.plant) + "</td>" +
       "<td class=\"cst-fgl-meta\"><span class=\"cst-fgl-matbadge" + (relMats.length === 0 ? " cst-fgl-matbadge-none" : "") + "\">" +
       escapeHtml(matBadge) + "</span></td>" +
