@@ -2645,17 +2645,22 @@ function renderCstRtfShortList(months) {
       ? monthLabel(worst.month) + " " + formatNumber(Math.round(worst.shortageQty)) + "개 부족"
       : "";
 
+    var sharedAlertBadge = fg.hasSharedAlert
+      ? "<span class=\"cst-fgl-shared-badge\">⚠공용</span>" : "";
     var summaryRow = "<tr class=\"cst-fgl-row" + (isOpen ? " cst-fgl-open" : "") +
       "\" data-fgkey=\"" + escapeHtml(fgKey) + "\">" +
       "<td class=\"cst-fgl-icon\">" + (isOpen ? "▼" : "▶") + "</td>" +
-      "<td class=\"cst-fgl-name\">" + escapeHtml(fg.itemName) +
-        "<span class=\"cst-fgl-code-sub\">" + escapeHtml(fg.itemCode) +
+      "<td class=\"cst-fgl-name\">" + escapeHtml(fg.itemName) + sharedAlertBadge +
+        "<span class=\"cst-fgl-code-sub\">" +
+        escapeHtml(fg.itemCode) +
         (fg.businessUnit && fg.businessUnit !== "기준정보 확인 필요" ? " · " + escapeHtml(fg.businessUnit) : "") +
+        " · " + escapeHtml(fg.plant) +
         "</span></td>" +
-      "<td class=\"cst-fgl-plant\">" + escapeHtml(fg.plant) + "</td>" +
       "<td class=\"cst-fgl-meta\"><span class=\"cst-fgl-matbadge" + (relMats.length === 0 ? " cst-fgl-matbadge-none" : "") + "\">" +
       escapeHtml(matBadge) + "</span></td>" +
-      "<td class=\"cst-fgl-shortage\">" + escapeHtml(worstStr) + "</td>" +
+      "<td class=\"cst-fgl-shortage\">" +
+      (worstStr ? "<span class=\"cst-fgl-short-chip\">" + escapeHtml(worstStr) + "</span>" : "") +
+      "</td>" +
       "</tr>";
 
     if (!isOpen) return summaryRow;
@@ -2664,7 +2669,7 @@ function renderCstRtfShortList(months) {
       ? "<div class=\"cst-fgl-no-mat\">BOM 전개 후 재확인 — 연결된 자재가 없습니다.</div>"
       : renderCstFgMatTable(relMats, months, supplyMap, simAdj);
 
-    var detailRow = "<tr class=\"cst-fgl-detail-row\"><td colspan=\"5\" class=\"cst-fgl-detail-cell\">" + matContent + "</td></tr>";
+    var detailRow = "<tr class=\"cst-fgl-detail-row\"><td colspan=\"4\" class=\"cst-fgl-detail-cell\">" + matContent + "</td></tr>";
     return summaryRow + detailRow;
   }).join("");
 

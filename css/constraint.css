@@ -1160,7 +1160,7 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
 /* ── 완제품 클릭 → 자재 조정 리스트 ── */
 .cst-fgl-section { margin-bottom: 10px; }
 .cst-fgl-table {
-  border-collapse: collapse; width: 100%; font-size: 13px;
+  border-collapse: collapse; width: 100%; font-size: 14px;
 }
 .cst-fgl-row {
   cursor: pointer; border-bottom: 1px solid #e5e7eb;
@@ -1171,37 +1171,56 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
 .cst-fgl-row.cst-fgl-open:hover td { background: #e0e7ff !important; }
 .cst-fgl-icon {
   width: 28px; text-align: center; color: #6b7280;
-  padding: 10px 6px 10px 10px; font-size: 11px;
+  padding: 14px 6px 14px 12px; font-size: 12px;
 }
 .cst-fgl-open .cst-fgl-icon { color: #4f46e5; }
 .cst-fgl-name {
-  padding: 10px 6px; font-weight: 600; color: #1e293b;
+  padding: 12px 8px; font-weight: 700; color: #0f172a; font-size: 14px; line-height: 1.4;
 }
 .cst-fgl-code-sub {
-  display: block; font-size: 11px; font-weight: 400; color: #94a3b8; margin-top: 1px;
+  display: block; font-size: 11px; font-weight: 400; color: #94a3b8; margin-top: 3px; letter-spacing: 0.02em;
 }
-.cst-fgl-plant {
-  padding: 10px 6px; color: #6b7280; font-size: 12px; white-space: nowrap;
+.cst-fgl-shared-badge {
+  display: inline-block; font-size: 10px; font-weight: 700;
+  color: #92400e; background: #fef3c7; border: 1px solid #d97706;
+  border-radius: 3px; padding: 0 4px; margin-left: 6px; vertical-align: middle;
 }
-.cst-fgl-meta { padding: 10px 6px; }
+.cst-fgl-meta { padding: 12px 8px; }
 .cst-fgl-matbadge {
-  display: inline-block; padding: 2px 8px; border-radius: 10px;
-  background: #dbeafe; color: #1d4ed8; font-size: 11px; font-weight: 600;
+  display: inline-block; padding: 3px 10px; border-radius: 12px;
+  background: #dbeafe; color: #1d4ed8; font-size: 12px; font-weight: 600;
 }
 .cst-fgl-matbadge-none { background: #f3f4f6; color: #9ca3af; }
 .cst-fgl-shortage {
-  padding: 10px 12px 10px 6px; color: #b91c1c; font-weight: 600;
-  font-size: 12px; white-space: nowrap; text-align: right;
+  padding: 12px 16px 12px 8px; white-space: nowrap; text-align: right;
+}
+.cst-fgl-short-chip {
+  display: inline-block; padding: 4px 10px; border-radius: 6px;
+  background: #fef2f2; border: 1px solid #fca5a5;
+  color: #b91c1c; font-weight: 700; font-size: 13px;
 }
 .cst-fgl-detail-row { }
 .cst-fgl-detail-cell {
   padding: 0 !important; background: #f8f9ff !important;
   border-bottom: 2px solid #818cf8 !important;
 }
-.cst-fgl-mat-wrap { padding: 8px 14px 12px; }
+.cst-fgl-mat-wrap { padding: 10px 16px 14px; }
 .cst-fgl-no-mat {
-  padding: 12px 16px; color: #9ca3af; font-size: 12px; font-style: italic;
+  padding: 14px 18px; color: #9ca3af; font-size: 13px; font-style: italic;
 }
+
+/* ── AI 제안 박스 크기 개선 ── */
+.cst-ai-box {
+  font-size: 14px !important; padding: 14px 18px !important;
+}
+.cst-ai-label {
+  font-size: 12px !important; padding: 3px 10px !important;
+}
+.cst-ai-text { font-size: 14px; line-height: 1.7; }
+.cst-ai-shared-section { font-size: 13px; }
+.cst-ai-shared-title { font-size: 13px; font-weight: 700; }
+.cst-ai-conflict-row { font-size: 13px; line-height: 1.6; }
+.cst-ai-conflict-detail { font-size: 12px; }
 
 /* ── BOM 테이블 입고조정 모드 ── */
 .cst-adj-mode-btn {
