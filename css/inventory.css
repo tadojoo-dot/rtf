@@ -50,13 +50,42 @@
   border-right: 1px solid #374151;
 }
 .inv-table th:last-child { border-right: none; }
+.inv-th-gc   { min-width: 80px; }
+.inv-th-name { min-width: 140px; }
 .inv-table td {
   padding: 6px 8px; border-bottom: 1px solid #f3f4f6;
   border-right: 1px solid #f3f4f6; text-align: center;
 }
 .inv-table td:last-child { border-right: none; }
-.inv-main-row:hover td { background: #f9fafb !important; cursor: pointer; }
-.inv-row-name { text-align: left !important; font-weight: 500; min-width: 120px; }
+
+/* ── 그룹 셀 (사업부/플랜트/유형 컬럼) ── */
+.inv-gc { font-weight: 500; vertical-align: top; white-space: nowrap; }
+/* 시각적 병합 연속 셀: 위쪽 테두리 숨김 */
+td.inv-gc-cont { border-top: none !important; }
+
+/* 구분선: 각 그룹 시작 행 */
+.inv-sep-bu td { border-top: 2px solid #94a3b8 !important; }
+.inv-sep-pl td { border-top: 1px solid #d1d5db !important; }
+.inv-sep-ty td { border-top: 1px dashed #e5e7eb !important; }
+/* 연속 셀은 구분선보다 후순위로 오버라이드 (동일 명시도 — 이 규칙이 나중에 위치) */
+td.inv-gc-cont { border-top: none !important; }
+
+/* 품목 행 */
+.inv-item-row:hover td { background: #f9fafb !important; cursor: pointer; }
+.inv-item-name { text-align: left !important; white-space: nowrap; }
+
+/* ── 소계 / 총합계 행 ── */
+.inv-subtotal-row td { font-weight: 600; }
+.inv-st-type td  { background: #f8fafc !important; border-top: 1px solid #cbd5e1 !important; }
+.inv-st-plant td { background: #f1f5f9 !important; border-top: 1.5px solid #94a3b8 !important; }
+.inv-st-bu td    { background: #e2e8f0 !important; border-top: 2px solid #64748b !important; font-weight: 700; }
+.inv-grand-total td { background: #1e293b !important; color: #f1f5f9 !important; border-top: 2px solid #334155 !important; font-weight: 700; }
+.inv-st-label { text-align: right !important; padding-right: 14px !important; font-style: italic; }
+.inv-st-dash  { text-align: center !important; color: #9ca3af; }
+.inv-st-cell  { }
+.inv-gt-cell  { }
+/* 소계 행의 연속 셀도 테두리 없음 */
+.inv-subtotal-row td.inv-gc-cont { border-top: none !important; }
 
 /* 재고일수 상태 */
 .inv-days-excess { background: #fef2f2 !important; color: #b91c1c; font-weight: 700; }
@@ -65,18 +94,33 @@
 .inv-days-unset  { color: #9ca3af; font-style: italic; }
 .inv-danger-icon { color: #ef4444; font-size: 11px; margin-left: 2px; }
 
-/* 펼치기 버튼 */
+/* 드릴다운 펼치기 버튼 */
 .inv-row-toggle {
   background: none; border: none; cursor: pointer;
   font-size: 10px; color: #6b7280; padding: 0 4px 0 0;
 }
 .inv-row-toggle:hover { color: #1e293b; }
 
-/* 조정후 배지 */
+/* 조정 배지 */
 .inv-adj-badge {
   display: inline-block; font-size: 9px; font-weight: 700;
   padding: 1px 4px; border-radius: 3px; margin-left: 3px;
   background: #dcfce7; color: #15803d; vertical-align: middle;
+}
+/* RTF 자재조정 연동 배지 */
+.inv-rtf-badge {
+  display: inline-block; font-size: 9px; font-weight: 700;
+  padding: 1px 4px; border-radius: 3px; margin-left: 3px;
+  background: #fff7ed; color: #c2410c; vertical-align: middle;
+  border: 1px solid #fed7aa;
+}
+/* 드릴다운 RTF조정 셀 */
+.inv-rtf-cell { background: #fff7ed !important; color: #c2410c; font-weight: 600; }
+/* 드릴다운 안내 문구 */
+.inv-drill-note {
+  font-size: 11px; color: #c2410c; background: #fff7ed;
+  border: 1px solid #fed7aa; border-radius: 4px;
+  padding: 4px 10px; margin-bottom: 8px; display: inline-block;
 }
 
 /* 드릴다운 */

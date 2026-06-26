@@ -204,12 +204,24 @@ function renderSummary() {
       "</tr>";
   }).join("");
 
+  var chartSection = hasData
+    ? "<div class=\"sum-card sum-chart-card\">" +
+        "<div class=\"sum-chart-header\"><h3>연간 재고금액 추이</h3><span class=\"sum-chart-sub\">완제품+상품 전사 합계 · 실적(1~5월) + 원계획(6~12월)</span></div>" +
+        "<div class=\"sum-chart-wrap\"><canvas id=\"sumInvChart\"></canvas></div>" +
+        "<div class=\"sum-chart-legend\">" +
+          "<span class=\"sum-leg sum-leg-actual\">실적</span>" +
+          "<span class=\"sum-leg sum-leg-base\">원계획</span>" +
+        "</div>" +
+      "</div>"
+    : "";
+
   return "<div class=\"sum-screen\">" +
     "<section class=\"sum-card sum-header\">" +
     "<h2>수급관리 회의안건</h2>" +
     "<p>현재 계획 기준으로 RTF 공급부족 및 재고초과 이슈를 확인하고, RTF 조정과 재고조정 의사결정이 필요한 안건을 요약합니다.</p>" +
     "</section>" +
     kpiHtml +
+    chartSection +
     "<div class=\"sum-card sum-agenda-card\">" +
     "<div class=\"sum-agenda-header\"><h3>회의 안건 목록</h3><span class=\"sum-agenda-note\">데이터 기준 자동 생성 · 가짜 항목 없음</span></div>" +
     "<div class=\"sum-h-scroll\"><table class=\"sum-agenda-table\"><thead>" + agendaThead + "</thead><tbody>" + agendaTbody + "</tbody></table></div>" +
@@ -238,6 +250,96 @@ function renderDiagnosis() {
       ${adjTypes.map(t => `<span class="cause-type-tag" style="margin:3px 4px 3px 0;display:inline-block;">${escapeHtml(t)}</span>`).join(" ")}
     </div>
   </section>`;
+}
+
+// ── 회의안건 차트 ─────────────────────────────────────────────────────────────
+var _summaryChartInst = null;
+
+function bindSummary() {
+  if (!window.Chart) return;
+  var canvas = document.querySelector("#sumInvChart");
+  if (!canvas) return;
+
+  if (_summaryChartInst) { _summaryChartInst.destroy(); _summaryChartInst = null; }
+
+  var allMonths = [];
+  for (var m = 1; m <= 12; m++) allMonths.push("2026-" + (m < 10 ? "0" + m : "" + m));
+  var rtfMonths   = getRtfMonths();
+  var rtfItemsArr = computeRtfItems();
+
+  // 실적 (완제품+상품, Table1 plant="전체")
+  var actualsRaw = allMonths.map(function(month) {
+    var rows = (state.mappedData.actuals_monthly || []).filter(function(r) {
+      return r.month === month && r.plant === "전체" && (r.type === "완제품" || r.type === "상품");
+    });
+    if (!rows.length) return null;
+    return rows.reduce(function(s, r) { return s + (r.invAmt || 0); }, 0);
+  });
+  var lastActualIdx = -1;
+  actualsRaw.forEach(function(v, i) { if (v !== null) lastActualIdx = i; });
+
+  // 실적 데이터셋 (전망 월 null, 연결점 포함)
+  var actualsData = allMonths.map(function(m, i) {
+    return rtfMonths.includes(m) ? null : actualsRaw[i];
+  });
+
+  // 원계획 데이터셋 (실적 월 null, 연결점에서 시작)
+  var baseData = allMonths.map(function() { return null; });
+  if (lastActualIdx >= 0) baseData[lastActualIdx] = actualsRaw[lastActualIdx];
+  rtfMonths.forEach(function(m, i) {
+    var idx = allMonths.indexOf(m);
+    if (idx < 0) return;
+    var total = 0;
+    rtfItemsArr.forEach(function(item) {
+      var ms = item.monthlyStatus[i];
+      if (ms && Number.isFinite(ms.endingAmount)) total += ms.endingAmount;
+    });
+    baseData[idx] = total;
+  });
+
+  _summaryChartInst = new Chart(canvas.getContext("2d"), {
+    type: "line",
+    data: {
+      labels: allMonths.map(monthLabel),
+      datasets: [
+        {
+          label: "실적",
+          data: actualsData,
+          borderColor: "#2563eb", backgroundColor: "rgba(37,99,235,0.08)",
+          borderWidth: 2.5, pointRadius: 4, tension: 0.3,
+          fill: true, spanGaps: false,
+        },
+        {
+          label: "원계획",
+          data: baseData,
+          borderColor: "#9ca3af", borderDash: [6, 3],
+          borderWidth: 2, pointRadius: 3, tension: 0.3,
+          fill: false, spanGaps: false,
+        },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              return ctx.raw !== null ? ctx.dataset.label + ": " + formatMoney(ctx.raw) : null;
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { color: "#f3f4f6" } },
+        y: {
+          title: { display: true, text: "재고금액 (억원)", color: "#6b7280", font: { size: 11 } },
+          grid: { color: "#f3f4f6" },
+          ticks: { callback: function(v) { return formatMoney(v); } },
+        },
+      },
+    },
+  });
 }
 
 // ── 회의록 ────────────────────────────────────────────────────────────────────
@@ -317,7 +419,7 @@ function render(menuId) {
     "inventory-variance":  () => renderExcessAdjustment(),
     "diagnosis":           renderDiagnosis,
     "adjustment":          () => renderPlaceholder("조정안 입력"),
-    "impact":              () => renderPlaceholder("조정 후 영향 분석"),
+    "impact":              renderImpact,
     "minutes":             renderMinutes,
   };
   screenRoot.innerHTML = (screens[menu[0]] || renderMeeting)();
@@ -327,6 +429,8 @@ function render(menuId) {
   if (menu[0] === "minutes")            bindMinutes();
   if (menu[0] === "inventory-forecast")  bindInventoryForecast();
   if (menu[0] === "inventory-variance")  bindExcessAdjustment();
+  if (menu[0] === "impact")              bindImpact();
+  if (menu[0] === "summary")             bindSummary();
 }
 
 // ── 시작 ─────────────────────────────────────────────────────────────────────

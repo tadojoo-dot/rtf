@@ -7,7 +7,7 @@ function detectRawType(fileName) {
   if (name.includes("사업부") && name.includes("품목 기준정보")) return "itemMaster";
   if (name.includes("BOM"))              return "bom";
   if (name.includes("적정재고"))         return "targetInventory";
-  if (name.includes("결산실적_월별요약")) return "actualMonthly";
+  if (name.includes("결산실적_월별요약") || name.includes("결산_raw") || name.includes("결산_RAW")) return "actualMonthly";
   if (name.includes("RTF_RAW_보조양식")) return "rtfHelper";
   return "unknown";
 }
@@ -86,7 +86,7 @@ function mapTargetInvRows(rows) {
 }
 
 function mapRawData(rawFiles) {
-  const tables = { item_master:[], inventory_base:[], plan_monthly:[], bom_components:[], business_mapping:[], target_inv:[] };
+  const tables = { item_master:[], inventory_base:[], plan_monthly:[], bom_components:[], business_mapping:[], target_inv:[], actuals_monthly:[] };
   Object.values(rawFiles).filter((f) => f.parseSuccess).forEach((file) => {
     const rows = file.sheets?.[0]?.rows ?? [];
     if (file.rawType === "salesSupplyPlan")   tables.plan_monthly.push(...mapPlanRows(rows));
@@ -97,8 +97,9 @@ function mapRawData(rawFiles) {
       tables.item_master.push(...itemRows);
       tables.business_mapping.push(...itemRows);
     }
-    if (file.rawType === "bom")           tables.bom_components.push(...mapBomRows(rows));
+    if (file.rawType === "bom")             tables.bom_components.push(...mapBomRows(rows));
     if (file.rawType === "targetInventory") tables.target_inv.push(...mapTargetInvRows(rows));
+    if (file.rawType === "actualMonthly")   tables.actuals_monthly.push(...mapActualsRows(rows));
   });
   return tables;
 }
@@ -191,4 +192,75 @@ function mapBomRows(rows) {
     componentQty:   toNumber(get(row, idx("구성요소 수량"))),
     componentUnit:  get(row, idx("구성품목 단위")),
   }));
+}
+
+// ── 결산_raw 파싱 ─────────────────────────────────────────────────────────────
+// 구조: row1=날짜헤더(merged), row2=지표헤더, row3~12=유형별(전체), row18~56=플랜트×유형
+function mapActualsRows(rows) {
+  var dateRow   = rows[1] || [];
+  var metricRow = rows[2] || [];
+
+  // 월 → {invAmt, supplyAmt, salesAmt, invDays} 컬럼 인덱스 맵
+  var monthCols = {};
+  var curMonth  = null;
+  for (var ci = 2; ci < dateRow.length; ci++) {
+    var dv = String(dateRow[ci] || "").trim();
+    if (dv.match(/^\d{4}-\d{2}$/)) curMonth = dv;
+    if (!curMonth) continue;
+    if (!monthCols[curMonth]) monthCols[curMonth] = {};
+    var mv = String(metricRow[ci] || "").trim();
+    if      (mv === "재고금액") monthCols[curMonth].invAmt    = ci;
+    else if (mv === "입고금액") monthCols[curMonth].supplyAmt = ci;
+    else if (mv === "출고금액") monthCols[curMonth].salesAmt  = ci;
+    else if (mv === "재고일수") monthCols[curMonth].invDays   = ci;
+  }
+
+  var SKIP_TYPES = new Set(["합계","총 합계","유형"]);
+  var SKIP_KEYWORDS = ["합계","총"];
+  function shouldSkip(type) {
+    if (!type) return true;
+    if (SKIP_TYPES.has(type)) return true;
+    return SKIP_KEYWORDS.some(function(k) { return type.includes(k); });
+  }
+
+  function extractRow(row, plant, months) {
+    var type = String(row[0] || "").trim();
+    if (shouldSkip(type)) return [];
+    var result = [];
+    months.forEach(function(month) {
+      var cols = monthCols[month];
+      if (!cols || cols.invAmt === undefined) return;
+      var invAmt = parseFloat(row[cols.invAmt]);
+      if (!Number.isFinite(invAmt)) return; // 빈 월 스킵 → 실적/전망 경계 자동 판단
+      result.push({
+        month:     month,
+        plant:     plant,
+        type:      type,
+        invAmt:    invAmt,
+        supplyAmt: Number.isFinite(parseFloat(row[cols.supplyAmt])) ? parseFloat(row[cols.supplyAmt]) : null,
+        salesAmt:  Number.isFinite(parseFloat(row[cols.salesAmt]))  ? parseFloat(row[cols.salesAmt])  : null,
+        invDays:   Number.isFinite(parseFloat(row[cols.invDays]))   ? parseFloat(row[cols.invDays])   : null,
+      });
+    });
+    return result;
+  }
+
+  var months  = Object.keys(monthCols);
+  var result  = [];
+
+  // Table 1: 유형별 전체 (row index 3~12, 1-indexed rows 4~13)
+  for (var r = 3; r <= 12; r++) {
+    if (rows[r]) result.push.apply(result, extractRow(rows[r], "전체", months));
+  }
+
+  // Table 2: 플랜트×유형 (row index 17~55, 1-indexed rows 18~56)
+  for (var r2 = 19; r2 <= 55; r2++) {
+    var row    = rows[r2];
+    if (!row) continue;
+    var plant2 = String(row[1] || "").trim();
+    if (!plant2) continue; // 플랜트 없는 행 = 소계/전체 → Table1에서 이미 읽음
+    result.push.apply(result, extractRow(row, plant2.replace(/\s+/g, ""), months));
+  }
+
+  return result;
 }

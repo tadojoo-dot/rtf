@@ -47,6 +47,7 @@ const state = {
     bom_components: [],
     business_mapping: [],
     target_inv: [],
+    actuals_monthly: [],
   },
   rtfExpanded: false,
   expandedItemGroups: new Set(),
