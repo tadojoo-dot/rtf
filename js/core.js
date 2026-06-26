@@ -19,7 +19,7 @@ const menus = [
   ["rtf",                "RTF판정", "RTF(공급가능성 판정)"],
   ["constraint",         "공급원인", "공급제한 원인 분석"],
   ["inventory-forecast", "재고전망", "현재 계획 기준 재고금액·재고일수 전망"],
-  ["inventory-variance", "재고변동", "재고금액 변동분석"],
+  ["inventory-variance", "과잉감축", "적정재고 초과 품목 감축 계획"],
   ["diagnosis",          "수급진단", "수급진단 및 조정 대상 선별"],
   ["adjustment",         "조정입력", "조정안 입력"],
   ["impact",             "조정영향", "조정 후 영향 분석"],
@@ -65,12 +65,16 @@ const state = {
   calcCriteriaOpen: false,
   cstDrilldown: null,   // RTF 화면에서 넘어온 드릴다운 컨텍스트
   matSimAdj: {},        // "compCode|plant|month" → 조정된 입고수량(number)
+  cstAnalysisOpen: false,    // 상세 분석 섹션 펼침 여부
+  cstRtfExpanded: new Set(), // 펼쳐진 완제품 "itemCode|plantCode" 키
   minutesLog: [],       // 회의록 결정사항 배열
   rtfViewMode: "current",   // "current" | "adjusted"
-  invSupplyAdj: {},         // "itemCode|plant|month" → 조정된 공급수량(number)
-  invViewMode: "current",   // "current" | "adjusted"
+  invSupplyAdj: {},         // "itemCode|plant|month" → 재고화면 직접조정 공급수량
+  excessAdj: {},            // "itemCode|plant|month" → 과잉감축 조정 공급수량
+  invViewMode: "current",   // "current" | "rtf" | "excess"
   invFilter: "all",         // "all" | "excess"
-  invExpandedRows: new Set(),
+  invExpandedRows: new Set(), // 드릴다운 펼쳐진 "itemCode|plant" 키
+  excessExpandedRows: new Set(), // 과잉감축 화면 드릴다운 펼쳐진 키
 };
 
 // DOM 참조

@@ -314,7 +314,7 @@ function render(menuId) {
     "summary":             renderSummary,
     "constraint":          renderConstraint,
     "inventory-forecast":  renderInventoryForecast,
-    "inventory-variance":  () => renderPlaceholder("재고금액 변동분석"),
+    "inventory-variance":  () => renderExcessAdjustment(),
     "diagnosis":           renderDiagnosis,
     "adjustment":          () => renderPlaceholder("조정안 입력"),
     "impact":              () => renderPlaceholder("조정 후 영향 분석"),
@@ -325,7 +325,8 @@ function render(menuId) {
   if (menu[0] === "rtf")                bindRtf();
   if (menu[0] === "constraint")         bindConstraint();
   if (menu[0] === "minutes")            bindMinutes();
-  if (menu[0] === "inventory-forecast") bindInventoryForecast();
+  if (menu[0] === "inventory-forecast")  bindInventoryForecast();
+  if (menu[0] === "inventory-variance")  bindExcessAdjustment();
 }
 
 // ── 시작 ─────────────────────────────────────────────────────────────────────
