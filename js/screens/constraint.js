@@ -2647,10 +2647,12 @@ function renderCstRtfShortList(months) {
 
     var sharedAlertBadge = fg.hasSharedAlert
       ? "<span class=\"cst-fgl-shared-badge\">⚠공용</span>" : "";
+    var altBomBadge = fg.hasAltBomAlert
+      ? "<span class=\"cst-fgl-altbom-badge\" title=\"대체 BOM 존재 — 공급 부족 시 전환 검토 가능\">대체BOM</span>" : "";
     var summaryRow = "<tr class=\"cst-fgl-row" + (isOpen ? " cst-fgl-open" : "") +
       "\" data-fgkey=\"" + escapeHtml(fgKey) + "\">" +
       "<td class=\"cst-fgl-icon\">" + (isOpen ? "▼" : "▶") + "</td>" +
-      "<td class=\"cst-fgl-name\">" + escapeHtml(fg.itemName) + sharedAlertBadge +
+      "<td class=\"cst-fgl-name\">" + escapeHtml(fg.itemName) + sharedAlertBadge + altBomBadge +
         "<span class=\"cst-fgl-code-sub\">" +
         escapeHtml(fg.itemCode) +
         (fg.businessUnit && fg.businessUnit !== "기준정보 확인 필요" ? " · " + escapeHtml(fg.businessUnit) : "") +

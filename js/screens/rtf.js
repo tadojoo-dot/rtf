@@ -1,9 +1,9 @@
 // ── 정렬 상태 (렌더 간 유지) ──────────────────────────────────────────────────
 var _rtfBaseItemMap = new Map(); // "itemCode|plantCode" → item (현재 계획 기준, 비교용)
 var rtfSortState = {
-  "rtfBusinessMatrix": { colKey: null, dir: "asc" },
-  "rtfPlantMatrix":    { colKey: null, dir: "asc" },
-  "rtfTypeMatrix":     { colKey: null, dir: "asc" },
+  "rtfBusinessMatrix": { colKey: "판매계획", dir: "desc" },
+  "rtfPlantMatrix":    { colKey: "판매계획", dir: "desc" },
+  "rtfTypeMatrix":     { colKey: "판매계획", dir: "desc" },
 };
 var _rtfItems = []; // 정렬 재빌드용 캐시
 
@@ -95,6 +95,17 @@ function buildBomMaxProducibleMap(adjOverrides) {
   return map;
 }
 
+// 대체 BOM 존재 완제품 키 집합 (BOM_RAW 직접 조회 — BOM 전개 완료 불필요)
+function buildAltBomSet() {
+  const set = new Set();
+  (state.mappedData.bom_components || []).forEach(function(r) {
+    if (!r.rootItemCode || !r.rootItemCode.startsWith("9")) return;
+    const alt = cleanOptional(r.alternativeBom);
+    if (alt !== "" && alt !== "1") set.add(r.rootItemCode + "|" + cleanOptional(r.plant || ""));
+  });
+  return set;
+}
+
 // 공용자재 경합 경고 대상 완제품 키 집합 (isShared=true이고 부족 발생한 자재의 부모 완제품)
 function buildSharedAlertSet() {
   if (state.bomStatus !== "done" || !state.bomResult) return new Set();
@@ -184,6 +195,7 @@ function computeRtfItems(bomMapArg) {
   });
 
   const sharedAlertSet = buildSharedAlertSet();
+  const altBomSet      = buildAltBomSet();
   return [...metaMap.values()].map((meta) => {
     const key = itemPlantKey(meta.itemCode, meta.plant);
     const master = masterMap.get(meta.itemCode), standardCost = costMap.get(key) ?? null;
@@ -192,7 +204,8 @@ function computeRtfItems(bomMapArg) {
       itemGroup: cleanText(master?.itemGroup, NEED_MASTER), standardCost,
       hasCost: standardCost !== null && standardCost > 0,
       hasInventory: inventorySet.has(key), baseQty: inventorySet.has(key) ? (baseQtyMap.get(key) ?? 0) : null,
-      hasSharedAlert: sharedAlertSet.has(key),
+      hasSharedAlert:  sharedAlertSet.has(key),
+      hasAltBomAlert:  altBomSet.has(key),
     };
     item.typeGroup = itemTypeGroup(item);
     let openingQty = item.baseQty;
@@ -724,7 +737,10 @@ function renderHierarchyRow(node, leftColDefs, compressed, mode, rowspanMap) {
     const sharedBadge = col.isName && isItem && item && item.hasSharedAlert
       ? `<span class="rtf-shared-alert-badge" title="공용자재 경합 — 소요량 우선차감 적용">⚠공용</span>`
       : "";
-    leftCells.push(`<td class="rtf-sticky ${alignCls}${extraCls}${mergeCls}" style="left:${col.left}px;width:${col.width}px;"${titleAttr}${rowspan}>${toggleBtn}${escapeHtml(value)}${sharedBadge}</td>`);
+    const altBomBadge = col.isName && isItem && item && item.hasAltBomAlert
+      ? `<span class="rtf-altbom-badge" title="대체 BOM 존재 — 공급 부족 시 대체 BOM 전환 검토 가능">대체BOM</span>`
+      : "";
+    leftCells.push(`<td class="rtf-sticky ${alignCls}${extraCls}${mergeCls}" style="left:${col.left}px;width:${col.width}px;"${titleAttr}${rowspan}>${toggleBtn}${escapeHtml(value)}${sharedBadge}${altBomBadge}</td>`);
   }
 
   const kindCls = isTotal ? "is-total" : (isItem ? "is-item" : "is-group");

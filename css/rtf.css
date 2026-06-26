@@ -484,6 +484,21 @@
   vertical-align: super;
 }
 
+/* 대체 BOM 존재 배지 */
+.rtf-altbom-badge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  color: #1e40af;
+  background: #dbeafe;
+  border: 1px solid #93c5fd;
+  border-radius: 3px;
+  padding: 0 3px;
+  margin-left: 4px;
+  vertical-align: middle;
+  cursor: default;
+}
+
 /* 공용자재 경합 경고 배지 */
 .rtf-shared-alert-badge {
   display: inline-block;
