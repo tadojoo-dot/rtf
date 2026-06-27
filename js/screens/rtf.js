@@ -945,7 +945,7 @@ function renderRtf() {
   _rtfItems = items;
 
   if (!state.mappedData.plan_monthly.length) {
-    return `<div class="rtf-screen"><section class="rtf-card rtf-top"><h2 class="rtf-title">RTF(공급가능성 판정)</h2><div class="rtf-nodata">데이터 연결 필요<br>데이터점검 화면에서 RAW 파일을 선택해 주세요.</div></section></div>`;
+    return `<div class="rtf-screen"><section class="rtf-card rtf-top"><div class="rtf-nodata">데이터 연결 필요<br>데이터점검 화면에서 RAW 파일을 선택해 주세요.</div></section></div>`;
   }
 
   const months = getRtfMonths();
@@ -967,8 +967,39 @@ function renderRtf() {
   // 5. 조정내역 패널
   const adjPanelHtml = hasAdj ? renderRtfAdjPanel() : "";
 
-  // 6. 하단 재고 바
-  const invBarHtml = renderRtfInventoryBar(items, state.rtfViewMode === "adjusted" ? baseItems : null);
+  // 6. 인포바 데이터 계산
+  const shortageCount = items.filter(function(item) {
+    return item.monthlyStatus.some(function(m) { return m.status === STATUS.SHORTAGE; });
+  }).length;
+  const unknownCount = items.filter(function(item) {
+    return !item.monthlyStatus.some(function(m) { return m.status === STATUS.SHORTAGE; }) &&
+      item.monthlyStatus.some(function(m) { return m.status === STATUS.UNKNOWN; });
+  }).length;
+
+  const statusBadge = shortageCount > 0
+    ? `<span class="rtf-ib-badge rtf-ib-shortage">공급부족 ${shortageCount}건</span>`
+    : `<span class="rtf-ib-badge rtf-ib-ok">공급부족 없음</span>`;
+  const unknownBadge = unknownCount > 0
+    ? `<span class="rtf-ib-badge rtf-ib-unknown">판단불가 ${unknownCount}건</span>`
+    : "";
+  const bomBadge = state.bomStatus === "done"
+    ? `<span class="rtf-ib-badge rtf-ib-bom">${(state.bomResult && state.bomResult.stats && state.bomResult.stats.indeterminate > 0) ? `BOM반영 · 판단불가 ${state.bomResult.stats.indeterminate}건` : "BOM 반영"}</span>`
+    : `<span class="rtf-ib-badge rtf-ib-bom-off">BOM 미반영</span>`;
+
+  const infobarHtml = `<div class="rtf-infobar">
+    <div class="rtf-ib-left">
+      ${statusBadge}${unknownBadge}
+      <span class="rtf-ib-sep">|</span>
+      <span class="rtf-ib-meta">기준월: ${escapeHtml(months[0])} &nbsp;·&nbsp; 대상기간: ${escapeHtml(months.map(monthLabel).join(" ~ "))} &nbsp;·&nbsp; 표시: ${state.rtfDisplayMode === "qty" ? "수량" : "금액"}</span>
+      <span class="rtf-ib-sep">|</span>
+      ${bomBadge}
+      ${verifyHtml}
+    </div>
+    <div class="rtf-ib-right">${toggleHtml}</div>
+  </div>`;
+
+  // 7. 서브탭 + 패널
+  if (!state.rtfSubTab) state.rtfSubTab = "matrix";
 
   const activeSection = activeRtfSection();
   const sectionTabs = state.rtfExpanded ? RTF_SECTION_OPTIONS.map((option) =>
@@ -978,29 +1009,20 @@ function renderRtf() {
     ? renderMatrixSection(activeSection.title, activeSection.mode, items, activeSection.sectionId)
     : RTF_SECTION_OPTIONS.map((option) => renderMatrixSection(option.title, option.mode, items, option.sectionId)).join("");
 
+  const isMatrix = state.rtfSubTab === "matrix";
+  const panelHtml = isMatrix
+    ? sectionHtml
+    : `<div class="rtf-inv-panel">${renderRtfInventoryBar(items, state.rtfViewMode === "adjusted" ? baseItems : null)}</div>`;
+
   return `<div class="rtf-screen rtf-excel-layout">
-    <section class="rtf-card rtf-top">
-      <h2 class="rtf-title">RTF(공급가능성 판정)</h2>
-      <div class="rtf-meta">
-        기준월: ${escapeHtml(months[0])} | 대상기간: ${escapeHtml(months.map(monthLabel).join(" ~ "))} | 표시: ${state.rtfDisplayMode === "qty" ? "수량" : "금액"}
-        ${verifyHtml}
-      </div>
-      <div class="rtf-insight">${summaryLine}</div>
-      <div class="rtf-formula">
-        <span>RTF = 판매계획 대비 공급가능수량</span>
-        <span>부족수량 = MAX(판매계획 − RTF, 0)</span>
-        <span>부족금액 = 부족수량 × 표준원가</span>
-        ${state.bomStatus === "done"
-          ? `<span class="rtf-bom-badge">BOM 전개 반영 중 (완제품만)${(state.bomResult && state.bomResult.stats && state.bomResult.stats.indeterminate > 0) ? ` · 판단불가 ${state.bomResult.stats.indeterminate}건` : ""}</span>`
-          : `<span class="rtf-bom-badge rtf-bom-badge-off">BOM 미반영 — 공급원인 화면에서 BOM 전개 필요 (완제품만 적용)</span>`}
-      </div>
-      ${toggleHtml}
-      ${adjPanelHtml}
-    </section>
+    ${infobarHtml}
     <div class="rtf-toolbar">
-      ${state.rtfExpanded ? `<div class="rtf-section-tabs" aria-label="RTF 보기 기준">
-        ${sectionTabs}
-      </div>` : ""}
+      <div class="rtf-subtabs">
+        <button type="button" class="rtf-subtab ${isMatrix ? "active" : ""}" data-rtf-subtab="matrix">RTF 매트릭스</button>
+        <button type="button" class="rtf-subtab ${!isMatrix ? "active" : ""}" data-rtf-subtab="inventory">재고현황</button>
+      </div>
+      ${isMatrix && state.rtfExpanded ? `<div class="rtf-section-tabs" aria-label="RTF 보기 기준">${sectionTabs}</div>` : ""}
+      ${isMatrix ? `
       <div class="rtf-mode-group" aria-label="표시 단위">
         <button type="button" class="rtf-mode-btn ${state.rtfDisplayMode === "qty" ? "active" : ""}" data-rtf-mode="qty">수량</button>
         <button type="button" class="rtf-mode-btn ${state.rtfDisplayMode === "amount" ? "active" : ""}" data-rtf-mode="amount">금액</button>
@@ -1008,9 +1030,10 @@ function renderRtf() {
       <button type="button" id="rtfExpandToggle" class="rtf-extra-toggle ${state.rtfExpanded ? "active" : ""}">${state.rtfExpanded ? "축소" : "확대"}</button>
       <button type="button" id="rtfGoConstraintBtn" class="rtf-go-constraint-btn">공급원인 분석 →</button>
       <span class="rtf-toolbar-hint">${state.rtfExpanded ? "분석용 상세 · 보기 기준 탭 선택" : "발표용 기본 · 사업부/플랜트/유형 전체 표시"}</span>
+      ` : ""}
     </div>
-    ${sectionHtml}
-    ${invBarHtml}
+    ${adjPanelHtml}
+    ${panelHtml}
   </div>`;
 }
 
@@ -1049,6 +1072,15 @@ function bindRtf() {
       const s = rtfSortState[sectionId];
       s.dir    = s.colKey === colKey ? (s.dir === "asc" ? "desc" : "asc") : "asc";
       s.colKey = colKey;
+      render("rtf");
+    });
+  });
+
+  // 서브탭
+  document.querySelectorAll("[data-rtf-subtab]").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      if (state.rtfSubTab === btn.dataset.rtfSubtab) return;
+      state.rtfSubTab = btn.dataset.rtfSubtab;
       render("rtf");
     });
   });

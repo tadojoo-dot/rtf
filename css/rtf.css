@@ -14,80 +14,145 @@
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
 }
 
-/* ── 상단 헤더 카드 ── */
+/* ── 인포바 ── */
+.rtf-infobar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fff;
+  border: 1px solid #e3e7ef;
+  border-top: 3px solid #28278f;
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.rtf-ib-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.rtf-ib-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.rtf-ib-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.rtf-ib-shortage { background: #fef2f2; color: #7f1d1d; border: 1px solid #fca5a5; }
+.rtf-ib-ok       { background: #f0fdf4; color: #14532d; border: 1px solid #86efac; }
+.rtf-ib-unknown  { background: #fffbeb; color: #78350f; border: 1px solid #fcd34d; }
+.rtf-ib-bom      { background: #eff6ff; color: #1e3a8a; border: 1px solid #93c5fd; font-size: 12px; }
+.rtf-ib-bom-off  { background: #f9fafb; color: #9ca3af; border: 1px solid #e5e7eb; font-size: 12px; }
+
+.rtf-ib-sep {
+  color: #d1d5db;
+  font-size: 14px;
+  font-weight: 300;
+}
+
+.rtf-ib-meta {
+  color: #4b5563;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* 총합계 검증 표시 */
+.rtf-verify-ok  { color: #198754; font-size: 11px; font-weight: 700; }
+.rtf-verify-err { color: #b02a37; font-size: 11px; font-weight: 700; }
+
+.rtf-alert-text { color: #d6424b; font-weight: 800; }
+.rtf-ok-text    { color: #117a52; font-weight: 800; }
+
+/* ── 서브탭 ── */
+.rtf-subtabs {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.rtf-subtab {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 18px;
+  border: 1.5px solid #d1d5db;
+  border-radius: 6px;
+  background: #f3f5f9;
+  color: #4b5563;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+  font-family: "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+
+.rtf-subtab:hover {
+  background: #e8ecf5;
+  border-color: #9ca3af;
+  color: #1f2933;
+}
+
+.rtf-subtab.active {
+  background: #28278f;
+  border-color: #28278f;
+  color: #fff;
+  font-weight: 700;
+}
+
+/* ── 재고현황 패널 ── */
+.rtf-inv-panel {
+  background: #fff;
+  border: 1px solid #e3e7ef;
+  border-radius: 8px;
+  padding: 24px 28px;
+}
+
+.rtf-inv-panel .rtf-inv-bar {
+  border-top: none;
+  padding: 0;
+  margin: 0;
+}
+
+.rtf-inv-panel .rtf-inv-bar-title {
+  font-size: 17px;
+}
+
+.rtf-inv-panel .rtf-inv-table {
+  font-size: 16px;
+}
+
+.rtf-inv-panel .rtf-inv-table th {
+  font-size: 15px;
+  padding: 12px 16px;
+}
+
+.rtf-inv-panel .rtf-inv-table td {
+  font-size: 16px;
+  padding: 12px 16px;
+}
+
+/* 상단 헤더 카드(구) - 데이터 없을 때만 사용 */
 .rtf-top {
   border-top: 4px solid #28278f;
   margin-bottom: 10px;
   padding: 18px;
-}
-
-.rtf-title {
-  color: #1f2933;
-  font-size: 21px;
-  font-weight: 700;
-  margin: 0 0 5px;
-}
-
-.rtf-meta {
-  align-items: center;
-  color: #6b7280;
-  display: flex;
-  flex-wrap: wrap;
-  font-size: 12px;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-/* 총합계 검증 표시 */
-.rtf-verify-ok {
-  color: #198754;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.rtf-verify-err {
-  color: #b02a37;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.rtf-insight {
-  background: #f7f9fc;
-  border-left: 4px solid #28278f;
-  border-radius: 4px;
-  color: #1f2933;
-  font-size: 12px;
-  line-height: 1.7;
-  padding: 8px 12px;
-}
-
-.rtf-insight b {
-  color: #000;
-  font-weight: 800;
-}
-
-.rtf-alert-text {
-  color: #d6424b;
-  font-weight: 800;
-}
-
-.rtf-ok-text {
-  color: #117a52;
-  font-weight: 800;
-}
-
-/* ── 산식 표기 ── */
-.rtf-formula {
-  color: #9ca3af;
-  display: flex;
-  flex-wrap: wrap;
-  font-size: 11px;
-  gap: 0 16px;
-  margin-top: 6px;
-}
-
-.rtf-formula span::before {
-  content: "∙ ";
 }
 
 /* ── 툴바 ── */

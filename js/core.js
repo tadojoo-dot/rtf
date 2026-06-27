@@ -69,6 +69,7 @@ const state = {
   cstAnalysisOpen: false,    // 상세 분석 섹션 펼침 여부
   cstRtfExpanded: new Set(), // 펼쳐진 완제품 "itemCode|plantCode" 키
   minutesLog: [],       // 회의록 결정사항 배열
+  rtfSubTab: "matrix",       // "matrix" | "inventory"
   rtfViewMode: "current",   // "current" | "adjusted"
   invSupplyAdj: {},         // "itemCode|plant|month" → 재고화면 직접조정 공급수량
   excessAdj: {},            // "itemCode|plant|month" → 과잉감축 조정 공급수량

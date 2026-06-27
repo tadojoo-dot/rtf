@@ -187,14 +187,16 @@
 }
 
 .screen-titlebar {
-  padding: 18px 32px 14px;
+  padding: 8px 32px 7px;
   border-bottom: 1px solid var(--line);
   background: #ffffff;
 }
 
 .screen-titlebar h1 {
-  font-size: 24px;
+  font-size: 18px;
+  font-weight: 700;
   line-height: 1.2;
+  color: #1f2933;
 }
 
 .screen-root {
