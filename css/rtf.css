@@ -691,6 +691,36 @@
 .rtf-muted-metric  { color: #6b7280; font-weight: 400; }
 .rtf-rtf-cell      { color: #000000; font-weight: 600; }
 .rtf-shortage-cell { font-weight: 700; }
+
+/* 다크 배경 행(level-0, level-1, total)에서 텍스트 가시성 보정 */
+.rtf-h-row.level-0 td.rtf-muted-metric,
+.rtf-h-row.level-1 td.rtf-muted-metric {
+  color: rgba(255, 255, 255, 0.65) !important;
+}
+
+.rtf-h-row.level-0 td.rtf-metric-cell,
+.rtf-h-row.level-1 td.rtf-metric-cell {
+  color: #ffffff;
+}
+
+/* 다크 배경 행에서 shortage/warn 배경 제거 — 텍스트 색으로만 구분 */
+.rtf-h-row.level-0 td.rtf-status-text.shortage,
+.rtf-h-row.level-1 td.rtf-status-text.shortage {
+  background: transparent !important;
+  color: #fca5a5 !important;
+}
+
+.rtf-h-row.level-0 td.rtf-status-text.warn,
+.rtf-h-row.level-1 td.rtf-status-text.warn {
+  background: transparent !important;
+  color: #fcd34d !important;
+}
+
+.rtf-h-row.is-total td.rtf-status-text.shortage,
+.rtf-h-row.is-total td.rtf-status-text.warn {
+  background: transparent !important;
+  color: #fca5a5 !important;
+}
 .rtf-rtf-cell.rtf-status-text,
 .rtf-rtf-cell.rtf-status-text.ok,
 .rtf-rtf-cell.rtf-status-text.warn,
