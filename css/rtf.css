@@ -706,7 +706,7 @@
 /* ── 상태 텍스트 색상 (배경 없음) ── */
 .rtf-status-text.ok       { color: #2f5f3a; }
 .rtf-status-text.warn     { color: #e67e22; font-weight: 700; }
-.rtf-status-text.shortage { color: #c0392b; font-weight: 700; }
+.rtf-status-text.shortage { color: #7f1d1d; font-weight: 700; }
 .rtf-status-text.unknown  { color: #6b7280; }
 
 .rtf-neutral-text { color: #6b7280; }
