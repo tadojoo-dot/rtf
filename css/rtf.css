@@ -380,14 +380,14 @@
 /* 품목군 소계 */
 .rtf-h-row.level-2,
 .rtf-h-row.level-3 {
-  background: #f2f2f2;
+  background: #fff;
   color: #343a40;
   font-weight: 600;
 }
 
 .rtf-h-row.level-2 td,
 .rtf-h-row.level-3 td {
-  background: #f2f2f2 !important;
+  background: #fff !important;
   border-top: 1px solid #cbd3dc;
   font-weight: 600;
 }
