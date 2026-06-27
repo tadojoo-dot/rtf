@@ -15,7 +15,7 @@ const SHORT_TEXT = { [NEED_DATA]:"연결필요", [NEED_MASTER]:"확인필요" };
 const menus = [
   ["meeting",            "회의체계", "수급관리 회의체계"],
   ["data-check",         "데이터점검", "데이터 정합성 점검"],
-  ["summary",            "회의안건", "수급관리 회의안건"],
+  ["summary",            "회의안건", "회의안건"],
   ["rtf",                "RTF판정", "RTF(공급가능성 판정)"],
   ["constraint",         "공급원인", "공급제한 원인 분석"],
   ["inventory-forecast", "재고전망", "현재 계획 기준 재고금액·재고일수 전망"],

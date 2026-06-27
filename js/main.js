@@ -221,7 +221,7 @@ function renderSummary() {
 
   return "<div class=\"sum-screen\">" +
     "<section class=\"sum-card sum-header\">" +
-    "<h2>수급관리 회의안건</h2>" +
+    "<h2>회의안건</h2>" +
     "<p>현재 계획 기준으로 RTF 공급부족 및 재고초과 이슈를 확인하고, RTF 조정과 재고조정 의사결정이 필요한 안건을 요약합니다.</p>" +
     "</section>" +
     kpiHtml +

@@ -288,9 +288,9 @@ function bindSummary() {
         meta.data.forEach(function(el, i) {
           var val = ds.data[i];
           if (!val || val <= 0) return;
-          ctx.font = "9px " + FONT;
+          ctx.font = "bold 12px " + FONT;
           ctx.fillStyle = "#6b7280";
-          ctx.fillText(Math.round(val).toLocaleString(), el.x, el.y - 3);
+          ctx.fillText(Math.round(val).toLocaleString(), el.x, el.y - 4);
         });
       });
       ctx.restore();
@@ -305,7 +305,7 @@ function bindSummary() {
       var metaActive = chart.getDatasetMeta(activeInvLineIdx);
 
       ctx.save();
-      ctx.font = "bold 9px " + FONT;
+      ctx.font = "bold 12px " + FONT;
       ctx.textAlign = "center";
 
       allMonths.forEach(function(m, i) {
@@ -318,17 +318,18 @@ function bindSummary() {
         if (!el) return;
 
         // 재고금액 레이블 (선 위)
+        ctx.font         = "bold 12px " + FONT;
         ctx.fillStyle    = isFcst ? (sc === "기존" ? "#9ca3af" : "#1e3a8a") : "#1e3a8a";
         ctx.textBaseline = "bottom";
-        ctx.fillText(Math.round(lineVal).toLocaleString(), el.x, el.y - 6);
+        ctx.fillText(Math.round(lineVal).toLocaleString(), el.x, el.y - 8);
 
         // 재고일수 태그 (선 아래)
         var dv = activeDaysData ? activeDaysData[i] : null;
         if (dv === null || dv === undefined) return;
         var text = Math.round(dv) + "일";
-        ctx.font = "bold 9px " + FONT;
-        var tw   = ctx.measureText(text).width + 10;
-        var th   = 15;
+        ctx.font = "bold 12px " + FONT;
+        var tw   = ctx.measureText(text).width + 12;
+        var th   = 18;
         var tx   = el.x - tw / 2;
         var ty   = el.y + 5;
         if (ty + th > chart.chartArea.bottom - 2) return;
@@ -372,10 +373,10 @@ function bindSummary() {
         },
       },
       scales: {
-        x: { grid: { color: "#f3f4f6" }, ticks: { font: { family: FONT, size: 11 } } },
+        x: { grid: { color: "#f3f4f6" }, ticks: { font: { family: FONT, size: 13 } } },
         y: {
           grid: { color: "#f3f4f6" },
-          ticks: { font: { family: FONT, size: 11 }, callback: function(v) { return Math.round(v).toLocaleString() + "억"; } },
+          ticks: { font: { family: FONT, size: 13 }, callback: function(v) { return Math.round(v).toLocaleString() + "억"; } },
         },
       },
     },
