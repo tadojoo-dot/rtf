@@ -206,12 +206,16 @@ function renderSummary() {
 
   var chartSection = hasData
     ? "<div class=\"sum-card sum-chart-card\">" +
-        "<div class=\"sum-chart-header\"><h3>연간 재고금액 추이</h3><span class=\"sum-chart-sub\">완제품+상품 전사 합계 · 실적(1~5월) + 원계획(6~12월)</span></div>" +
-        "<div class=\"sum-chart-wrap\"><canvas id=\"sumInvChart\"></canvas></div>" +
-        "<div class=\"sum-chart-legend\">" +
-          "<span class=\"sum-leg sum-leg-actual\">실적</span>" +
-          "<span class=\"sum-leg sum-leg-base\">원계획</span>" +
+        "<div class=\"sum-chart-header\">" +
+          "<h3>연간 수급 추이</h3>" +
+          "<div class=\"sum-scenario-btns\">" +
+            "<button class=\"sum-scen-btn\" data-scenario=\"기존\">기존</button>" +
+            "<button class=\"sum-scen-btn\" data-scenario=\"RTF조정\">RTF조정</button>" +
+            "<button class=\"sum-scen-btn\" data-scenario=\"과잉조정\">과잉조정</button>" +
+          "</div>" +
         "</div>" +
+        "<div class=\"sum-chart-wrap\"><canvas id=\"sumInvChart\"></canvas></div>" +
+        "<div id=\"sumChartLegend\" class=\"sum-chart-legend\"></div>" +
       "</div>"
     : "";
 

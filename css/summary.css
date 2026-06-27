@@ -1,7 +1,7 @@
 .sum-screen {
   background: #f3f5f9;
   color: #1f2933;
-  font-family: "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-family: "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   font-size: 13px;
   line-height: 1.45;
 }
@@ -216,10 +216,23 @@
 
 /* ── 연간 추이 차트 ── */
 .sum-chart-card { display: flex; flex-direction: column; gap: 10px; }
-.sum-chart-header { display: flex; align-items: baseline; gap: 10px; }
+.sum-chart-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .sum-chart-header h3 { font-size: 14px; font-weight: 700; margin: 0; }
 .sum-chart-sub { font-size: 11px; color: #9ca3af; }
-.sum-chart-wrap { position: relative; height: 260px; }
+
+/* 시나리오 버튼 */
+.sum-scenario-btns { display: flex; gap: 4px; }
+.sum-scen-btn {
+  font-size: 11px; font-weight: 600; padding: 4px 12px;
+  border: 1px solid #d1d5db; border-radius: 20px;
+  background: #fff; color: #6b7280; cursor: pointer;
+  transition: all 0.15s;
+  font-family: "Pretendard Variable", Pretendard, sans-serif;
+}
+.sum-scen-btn:hover:not(:disabled) { border-color: #1e3a8a; color: #1e3a8a; }
+.sum-scen-btn.active { background: #1e3a8a; border-color: #1e3a8a; color: #fff; }
+.sum-scen-btn:disabled { opacity: 0.35; cursor: default; }
+.sum-chart-wrap { position: relative; height: 300px; }
 .sum-chart-legend { display: flex; gap: 16px; }
 .sum-leg {
   display: inline-flex; align-items: center; gap: 6px;
@@ -228,3 +241,23 @@
 .sum-leg::before { content: ""; display: inline-block; width: 24px; height: 3px; border-radius: 2px; }
 .sum-leg-actual::before { background: #2563eb; }
 .sum-leg-base::before   { background: transparent; border-top: 2px dashed #9ca3af; height: 0; }
+
+/* 막대 범례 */
+.sum-leg-sales-act::before   { background: rgba(30,58,138,0.85); height: 10px; border-radius: 2px; }
+.sum-leg-sales-fcst::before  { background: rgba(30,58,138,0.28); height: 10px; border-radius: 2px; }
+.sum-leg-supply-act::before  { background: rgba(55,65,81,0.85);  height: 10px; border-radius: 2px; }
+.sum-leg-supply-fcst::before { background: rgba(55,65,81,0.28);  height: 10px; border-radius: 2px; }
+/* RTF 증분 막대 범례 */
+.sum-leg-rtf-delta::before { background: rgba(59,130,246,0.7); height: 10px; border-radius: 2px; }
+/* 선 범례 */
+.sum-leg-inv-act::before    { background: #1e3a8a; height: 3px; }
+.sum-leg-inv-base::before   { background: transparent; border-top: 2px dashed #9ca3af; height: 0; }
+.sum-leg-inv-rtf::before    { background: transparent; border-top: 2px dashed #1e3a8a; height: 0; }
+.sum-leg-inv-excess::before { background: #16a34a; height: 3px; }
+
+/* 재고일수 행 */
+.sum-days-row   { display: flex; align-items: center; gap: 8px; padding: 8px 0 2px; border-top: 1px solid #f3f4f6; }
+.sum-days-label { font-size: 11px; font-weight: 700; color: #6b7280; white-space: nowrap; min-width: 52px; }
+.sum-days-cells { display: flex; flex: 1; justify-content: space-around; }
+.sum-days-cell  { font-size: 11px; font-weight: 600; color: #1e3a8a; text-align: center; }
+.sum-days-cell.fcst { color: #9ca3af; font-weight: 400; }
