@@ -12,7 +12,7 @@
   z-index: 100;
   display: flex;
   align-items: stretch;
-  height: 58px;
+  height: 68px;
   flex-shrink: 0;
   background: #ffffff;
   border-bottom: 3px solid #24272b;
@@ -45,13 +45,71 @@
 
 .tab-nav {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   flex: 1;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
   overflow-x: auto;
-  padding: 12px 8px 0;
+  padding: 10px 8px 0;
   scrollbar-width: none;
+}
+
+/* ── 메인 네비게이션 탭 ─────────────────────────────────────── */
+.tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  height: 100%;
+  padding: 0 20px;
+  border: 1px solid #d1d5db;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  background: #f3f5f9;
+  color: #4b5563;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  font-family: "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+
+.tab-btn:hover {
+  background: #e8ecf5;
+  color: #1f2933;
+  border-color: #9ca3af;
+}
+
+.tab-btn.active {
+  background: #24272b;
+  color: #ffffff;
+  border-color: #24272b;
+  font-weight: 700;
+}
+
+.tab-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.12);
+  color: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.tab-btn.active .tab-num {
+  background: rgba(255,255,255,0.18);
+  color: #fff;
+}
+
+.tab-label {
+  font-size: 15px;
+  font-weight: inherit;
 }
 
 .tab-nav::-webkit-scrollbar {
@@ -80,13 +138,36 @@
 .topbar-status {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   flex-shrink: 0;
   padding: 0 20px;
   border-left: 1px solid #e1e5ec;
   color: #6b7280;
-  font-size: 12px;
+  font-size: 13px;
   white-space: nowrap;
+}
+
+.data-check-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #f3f5f9;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s, border-color 0.1s;
+  font-family: "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+
+.data-check-btn:hover {
+  background: #e8ecf5;
+  border-color: #28278f;
+  color: #28278f;
 }
 
 .status-dot {

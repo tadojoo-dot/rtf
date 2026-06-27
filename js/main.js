@@ -1,23 +1,45 @@
 // ── 탭 렌더 ──────────────────────────────────────────────────────────────────
 function renderTabs(activeId) {
-  tabNav.innerHTML = menus.map(([id, label]) =>
-    `<button type="button" class="tab-btn ${id === activeId ? "active" : ""}" data-menu-id="${escapeHtml(id)}">${escapeHtml(label)}</button>`,
-  ).join("");
-  tabNav.querySelectorAll("[data-menu-id]").forEach((btn) =>
-    btn.addEventListener("click", () => render(btn.dataset.menuId)));
+  var visible = menus.filter(function(m) { return m[3] !== false; });
+  tabNav.innerHTML = visible.map(function(m, idx) {
+    var id = m[0], label = m[1];
+    return `<button type="button" class="tab-btn ${id === activeId ? "active" : ""}" data-menu-id="${escapeHtml(id)}"><span class="tab-num">${idx + 1}</span><span class="tab-label">${escapeHtml(label)}</span></button>`;
+  }).join("");
+  tabNav.querySelectorAll("[data-menu-id]").forEach(function(btn) {
+    btn.addEventListener("click", function() { render(btn.dataset.menuId); });
+  });
 }
 
 // ── 회의체계 ─────────────────────────────────────────────────────────────────
 function renderMeeting() {
   return `<section class="section-band">
     <div class="section-header">
-      <div><p class="eyebrow">local mode</p><h2>로컬 파일 모드</h2></div>
-      <p>서버 없이 index.html을 직접 열어 사용합니다. 데이터점검 화면에서 RAW 파일을 선택하면 브라우저 메모리에서만 읽어 RTF 화면에 반영합니다.</p>
+      <div><p class="eyebrow">수급관리 S&amp;OP</p><h2>회의체계 개편 배경 및 목적</h2></div>
     </div>
+    <div class="notice-no-data" style="font-size:15px;line-height:2;">
+      <strong>이 화면의 내용을 입력해주세요.</strong><br>
+      아래 항목을 직접 작성하면 됩니다:<br><br>
+      ① 기존 회의체계와 무엇이 달라졌는가<br>
+      ② RTF 점검을 도입한 이유<br>
+      ③ 과잉재고 점검을 도입한 이유<br>
+      ④ 이 회의를 통해 달성하려는 목적
+    </div>
+  </section>
+  <section class="section-band">
+    <div class="section-header"><h2>오늘 회의 진행 순서</h2></div>
     <div class="process-grid">
-      <article class="card process-card"><h3>1. RAW 선택</h3><p>데이터점검에서 엑셀 파일을 복수 선택합니다.</p></article>
-      <article class="card process-card"><h3>2. RTF 확인</h3><p>사업부별/플랜트별/유형별 계층형 월별 매트릭스를 확인합니다.</p></article>
-      <article class="card process-card"><h3>3. 상세 점검</h3><p>그룹을 펼쳐 유형, 품목군, 자재별 월별 항목을 확인합니다.</p></article>
+      <article class="card process-card">
+        <h3 style="font-size:16px;font-weight:800;margin-bottom:8px;">1부 — 품절 점검</h3>
+        <p style="font-size:14px;line-height:1.7;"><strong>RTF판정:</strong> 어디서 품절이 나는가<br><strong>공급원인:</strong> 왜 품절이 나는가</p>
+      </article>
+      <article class="card process-card">
+        <h3 style="font-size:16px;font-weight:800;margin-bottom:8px;">2부 — 재고 점검</h3>
+        <p style="font-size:14px;line-height:1.7;"><strong>재고전망:</strong> 재고금액이 어떻게 되는가<br><strong>과잉감축:</strong> 어떻게 줄일 것인가</p>
+      </article>
+      <article class="card process-card">
+        <h3 style="font-size:16px;font-weight:800;margin-bottom:8px;">3부 — 의사결정</h3>
+        <p style="font-size:14px;line-height:1.7;"><strong>조정영향:</strong> 조정 시 효과가 얼마인가<br><strong>회의록:</strong> 결정사항 및 액션오너 확정</p>
+      </article>
     </div>
   </section>`;
 }
