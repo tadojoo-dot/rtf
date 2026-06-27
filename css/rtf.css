@@ -440,8 +440,9 @@
 }
 
 /* hover */
-.rtf-h-row:not(.is-total):hover td {
+.rtf-h-matrix-table .rtf-h-row:not(.is-total):hover td {
   background: #fff4cc !important;
+  color: #1f2933 !important;
 }
 
 /* ── 축소모드: 합계 제외 전체 흰색 배경 ── */
