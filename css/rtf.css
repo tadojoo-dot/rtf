@@ -339,69 +339,56 @@
 
 /* 총합계 행 */
 .rtf-h-row.is-total td {
-  background: #24272b !important;
-  border-bottom: 1px solid #374151 !important;
-  border-top: 1px solid #374151 !important;
-  color: #ffffff;
+  background: #b7b7b7 !important;
+  border-bottom: 1px solid #cbd3dc !important;
+  border-top: 1px solid #cbd3dc !important;
+  color: #1f2933;
   font-size: 13px;
   font-weight: 800;
   padding: 6px 10px;
 }
 
+/* sticky 컬럼은 inherit를 덮어야 total 배경 유지 */
 .rtf-h-row.is-total .rtf-sticky {
-  background: #24272b !important;
-  color: #ffffff;
+  background: #b7b7b7 !important;
 }
 
 /* 1단계 소계 */
 .rtf-h-row.level-0 {
-  background: #1e293b;
+  background: #d9d9d9;
   font-weight: 700;
 }
 
 .rtf-h-row.level-0 td {
-  background: #1e293b !important;
-  border-top: 2px solid #0f172a;
-  color: #ffffff;
+  background: #d9d9d9 !important;
+  border-top: 1px solid #cfd6df;
   font-weight: 700;
-}
-
-.rtf-h-row.level-0 .rtf-sticky {
-  background: #1e293b !important;
-  color: #ffffff;
 }
 
 /* 2단계 소계 */
 .rtf-h-row.level-1 {
-  background: #334155;
+  background: #e7e7e7;
   font-weight: 700;
 }
 
 .rtf-h-row.level-1 td {
-  background: #334155 !important;
-  border-top: 1px solid #475569;
-  color: #f1f5f9;
+  background: #e7e7e7 !important;
+  border-top: 1px solid #cbd3dc;
   font-weight: 700;
-}
-
-.rtf-h-row.level-1 .rtf-sticky {
-  background: #334155 !important;
-  color: #f1f5f9;
 }
 
 /* 품목군 소계 */
 .rtf-h-row.level-2,
 .rtf-h-row.level-3 {
-  background: #eef2ff;
-  color: #1e293b;
+  background: #f2f2f2;
+  color: #343a40;
   font-weight: 600;
 }
 
 .rtf-h-row.level-2 td,
 .rtf-h-row.level-3 td {
-  background: #eef2ff !important;
-  border-top: 1px solid #c7d2fe;
-  color: #1e293b;
+  background: #f2f2f2 !important;
+  border-top: 1px solid #cbd3dc;
   font-weight: 600;
 }
 
@@ -409,7 +396,7 @@
 .rtf-h-row.level-4,
 .rtf-h-row.is-item {
   background: #fff;
-  color: #1f2933;
+  color: #343a40;
   font-weight: 400;
 }
 
@@ -454,8 +441,7 @@
 
 /* hover */
 .rtf-h-row:not(.is-total):hover td {
-  background: #eef2ff !important;
-  color: #1e293b !important;
+  background: #fff4cc !important;
 }
 
 /* ── + 버튼 ── */
@@ -535,8 +521,8 @@
   text-decoration-style: dotted;
 }
 .rtf-drillable:hover {
-  background: #fef2f2 !important;
-  color: #991b1b !important;
+  background: #450a0a !important;
+  color: #fca5a5 !important;
 }
 
 .rtf-item-toggle:hover {
@@ -648,8 +634,6 @@
   font-size: 14px;
   width: 100%;
   border: 1px solid #cbd3dc;
-  border-radius: 6px;
-  overflow: hidden;
 }
 .rtf-inv-table th {
   background: #1e293b;
@@ -680,47 +664,13 @@
   text-align: center;
   background: #f8f9fc;
 }
-.rtf-inv-delta-row td {
-  background: #f0fdf4;
-  font-size: 13px;
-  font-weight: 700;
-}
+.rtf-inv-delta-row td { background: #f0fdf4; font-size: 13px; font-weight: 700; }
 .rtf-inv-delta-pos { color: #15803d; font-weight: 700; }
 .rtf-inv-delta-neg { color: #b02a37; font-weight: 700; }
 
 .rtf-muted-metric  { color: #6b7280; font-weight: 400; }
 .rtf-rtf-cell      { color: #000000; font-weight: 600; }
 .rtf-shortage-cell { font-weight: 700; }
-
-/* 다크 배경 행(level-0, level-1, total)에서 텍스트 가시성 보정 */
-.rtf-h-row.level-0 td.rtf-muted-metric,
-.rtf-h-row.level-1 td.rtf-muted-metric {
-  color: rgba(255, 255, 255, 0.65) !important;
-}
-
-.rtf-h-row.level-0 td.rtf-metric-cell,
-.rtf-h-row.level-1 td.rtf-metric-cell {
-  color: #ffffff;
-}
-
-/* 다크 배경 행에서 shortage/warn 배경 제거 — 텍스트 색으로만 구분 */
-.rtf-h-row.level-0 td.rtf-status-text.shortage,
-.rtf-h-row.level-1 td.rtf-status-text.shortage {
-  background: transparent !important;
-  color: #fca5a5 !important;
-}
-
-.rtf-h-row.level-0 td.rtf-status-text.warn,
-.rtf-h-row.level-1 td.rtf-status-text.warn {
-  background: transparent !important;
-  color: #fcd34d !important;
-}
-
-.rtf-h-row.is-total td.rtf-status-text.shortage,
-.rtf-h-row.is-total td.rtf-status-text.warn {
-  background: transparent !important;
-  color: #fca5a5 !important;
-}
 .rtf-rtf-cell.rtf-status-text,
 .rtf-rtf-cell.rtf-status-text.ok,
 .rtf-rtf-cell.rtf-status-text.warn,
@@ -730,10 +680,10 @@
   font-weight: 600;
 }
 
-/* ── 상태 텍스트 색상 ── */
-.rtf-status-text.ok       { color: #15803d; }
-.rtf-status-text.warn     { background: #fff7ed !important; color: #c2410c; font-weight: 700; }
-.rtf-status-text.shortage { background: #fee2e2 !important; color: #991b1b; font-weight: 800; }
+/* ── 상태 텍스트 색상 (배경 없음) ── */
+.rtf-status-text.ok       { color: #2f5f3a; }
+.rtf-status-text.warn     { color: #e67e22; font-weight: 700; }
+.rtf-status-text.shortage { color: #c0392b; font-weight: 700; }
 .rtf-status-text.unknown  { color: #6b7280; }
 
 .rtf-neutral-text { color: #6b7280; }
