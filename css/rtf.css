@@ -444,6 +444,29 @@
   background: #fff4cc !important;
 }
 
+/* ── 축소모드: 합계 제외 전체 흰색 배경 ── */
+.rtf-h-matrix-table.is-compressed .rtf-h-row.level-0 td,
+.rtf-h-matrix-table.is-compressed .rtf-h-row.level-0 .rtf-sticky {
+  background: #fff !important;
+  color: #1f2933;
+  border-top: 1px solid #cfd6df;
+}
+
+.rtf-h-matrix-table.is-compressed .rtf-h-row.level-1 td,
+.rtf-h-matrix-table.is-compressed .rtf-h-row.level-1 .rtf-sticky {
+  background: #fff !important;
+  color: #1f2933;
+  border-top: 1px solid #cbd3dc;
+}
+
+.rtf-h-matrix-table.is-compressed .rtf-h-row.level-2 td,
+.rtf-h-matrix-table.is-compressed .rtf-h-row.level-2 .rtf-sticky,
+.rtf-h-matrix-table.is-compressed .rtf-h-row.level-3 td,
+.rtf-h-matrix-table.is-compressed .rtf-h-row.level-3 .rtf-sticky {
+  background: #fff !important;
+  color: #1f2933;
+}
+
 /* ── + 버튼 ── */
 .rtf-item-toggle {
   background: #fff;
