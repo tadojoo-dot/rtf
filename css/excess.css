@@ -466,3 +466,46 @@
 .exc-ai-apply:hover { background: #4338ca; }
 .exc-ai-clear { background: #fff; color: #64748b; border-color: #cbd5e1; }
 .exc-ai-clear:hover { background: #f1f5f9; color: #334155; }
+
+/* ── 제·상품 / 원부자재 탭 ─────────────────────────────────────────────── */
+.exc-tabbar { display: flex; gap: 6px; margin-bottom: 10px; }
+.exc-tab-btn {
+  padding: 8px 18px; border-radius: 8px; border: 1px solid #d1d5db;
+  background: #f8fafc; color: #64748b; font-size: 14px; font-weight: 700; cursor: pointer;
+}
+.exc-tab-btn .exc-tab-sub { font-size: 11px; font-weight: 500; color: #94a3b8; margin-left: 5px; }
+.exc-tab-btn.exc-tab-active { background: #1e293b; color: #fff; border-color: #1e293b; }
+.exc-tab-btn.exc-tab-active .exc-tab-sub { color: rgba(255,255,255,0.55); }
+
+/* ── 원부자재 테이블 ───────────────────────────────────────────────────── */
+.exc-mat-scroll { overflow: auto; flex: 1; min-height: 0; }
+.exc-mat-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+.exc-mat-table th {
+  background: #f1f5f9; color: #475569; padding: 5px 8px;
+  border: 1px solid #e2e8f0; font-weight: 700; white-space: nowrap;
+  position: sticky; top: 0; z-index: 2;
+}
+.exc-mat-table thead tr:nth-child(2) th { top: 27px; }
+.exc-mat-mo-hd { text-align: center; }
+.exc-mat-sub { font-size: 11px; font-weight: 600; }
+.exc-mat-table td { border: 1px solid #eef2f7; padding: 4px 6px; white-space: nowrap; }
+.exc-mat-name { min-width: 220px; max-width: 300px; white-space: normal !important; font-weight: 600; color: #1e293b; }
+.exc-mat-code { font-size: 11px; color: #94a3b8; font-weight: 500; }
+.exc-mat-cat { display: block; font-size: 11px; color: #94a3b8; font-weight: 500; }
+.exc-mat-cons { text-align: right; color: #64748b; }
+.exc-mat-in { text-align: right; }
+.exc-mat-input {
+  width: 76px; text-align: right; padding: 3px 5px;
+  border: 1px solid #cbd5e1; border-radius: 5px; font-size: 12px;
+}
+.exc-mat-input-edited { background: #fef9c3; border-color: #eab308; font-weight: 700; }
+.exc-mat-orig { font-size: 10px; color: #b45309; }
+.exc-mat-day { text-align: right; font-weight: 700; }
+.exc-mat-day-over { color: #dc2626; }
+.exc-mat-day-ok { color: #16a34a; }
+.exc-mat-day-danger { color: #fff; background: #dc2626; }
+.exc-mat-row-adj { background: #fffbeb; }
+.exc-mat-reset-td { text-align: center; }
+.exc-mat-reset { border: none; background: none; cursor: pointer; color: #94a3b8; font-size: 14px; }
+.exc-mat-reset:hover { color: #ef4444; }
+.exc-mat-empty { padding: 30px; text-align: center; color: #94a3b8; font-size: 14px; }

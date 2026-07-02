@@ -91,6 +91,7 @@ const state = {
   bomSimQty:     1000,      // 정전개 생산수량
   bomSimMatCode: "",        // 역전개 자재코드
   matExcessAdj: {},         // "matCode|plant|month" → 자재 입고 취소/조정 수량
+  aiMatKeys: {},            // AI 자재 감축 선제안으로 적용한 matExcessAdj 키 추적 (해제용)
   invViewMode: "current",   // "current" | "rtf" | "excess"
   invFilter: "all",         // "all" | "excess"
   invSectionMode: "business",       // "business" | "plant" | "type"

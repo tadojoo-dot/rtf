@@ -354,6 +354,7 @@ function computeBomExpansion() {
 
   // 결과 아이템 생성
   var resultItems = [];
+  var matFlows    = []; // 과잉감축 원부자재 탭용: 전체 구성품 흐름 (부족 필터와 무관)
   compReqs.forEach(function(comp) {
     var invKey   = comp.componentCode + "|" + comp.plant;
     var invData  = inventoryMap.get(invKey);
@@ -430,6 +431,39 @@ function computeBomExpansion() {
     // 품목유형 판별 (임의 추정 금지)
     var categoryDisplay = displayItemCategory(comp.itemCategory);
     var categoryUnknown = categoryDisplay === "품목유형 확인 필요";
+
+    // 자재 과잉관리용 흐름 데이터 (소비=부모 생산계획 비례라 완제품 감축 시 재계산 가능)
+    var _intake = {}, _reqBy = {};
+    months.forEach(function(month) {
+      var sd = compSupplyMap.get(comp.componentCode + "|" + comp.plant + "|" + month);
+      _intake[month] = sd ? sd.qty : 0;
+      _reqBy[month]  = comp.requiredByMonth.get(month) || 0;
+    });
+    var _parents = [];
+    comp.parentItems.forEach(function(pi) {
+      var pm = {};
+      pi.monthly.forEach(function(v, month) { pm[month] = { prodQty: v.prodQty, reqQty: v.reqQty }; });
+      _parents.push({ code: pi.code, plant: pi.plant, monthly: pm });
+    });
+    // 단위 정합: BOM·재고·입고계획 단위가 (알려진 것끼리) 모두 일치해야 흐름 계산 신뢰 가능
+    // (예: 재고 KG · 입고계획 TB 혼재 시 소비/입고 비교 불가 → 과잉 판단에서 제외)
+    var _units = [comp.bomUnit, invUnit, firstSupplyUnit]
+      .filter(function(u) { return u; })
+      .map(function(u) { return String(u).toLowerCase(); });
+    var unitOk = new Set(_units).size <= 1;
+    matFlows.push({
+      componentCode: comp.componentCode,
+      componentName: comp.componentName,
+      plant:         comp.plant,
+      category:      categoryDisplay,
+      unit:          resolvedUnit,
+      unitOk:        unitOk,
+      baseQty:       baseQty, // 현재고 (미연결이면 null)
+      unitVal:       _unitVal(comp.componentCode, comp.plant),
+      intakeByMonth: _intake,
+      reqByMonth:    _reqBy,
+      parents:       _parents,
+    });
     // 반제품 조달구분 확인 필요: 하위 BOM 없는 반제품 (구매/자체 구분 불가)
     var needsProvenanceCheck = needsSemiBom;
 
@@ -498,6 +532,7 @@ function computeBomExpansion() {
   result.completedAt     = new Date();
   result.items           = sorted;
   result.stageOutByMonth = stageOutByMonth; // 월별 단계 투입금액 (원) — 관리기준 출고 추정용
+  result.matFlows        = matFlows;        // 구성품 전체 흐름 — 과잉감축 원부자재 탭용
   result.stats = {
     totalConstraints:  sorted.filter(function(i) { return i.hasAnyShortage; }).length,
     sharedConstraints: sorted.filter(function(i) { return i.isShared && i.hasAnyShortage; }).length,

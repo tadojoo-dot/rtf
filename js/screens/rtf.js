@@ -1212,6 +1212,9 @@ function renderScenarioKpiBanner() {
   }
   function d(a, b) { return (Number.isFinite(a) && Number.isFinite(b)) ? a - b : null; }
 
+  // 자재 재고 변동 (자재 입고취소 - / 완제품 감축에 따른 자재 적체 + 반작용, 원)
+  var matDeltas = (typeof computeMatScenarioDeltas === "function") ? computeMatScenarioDeltas(months) : null;
+
   var data = months.map(function(month, mi) {
     var b = rtfHeadlineInv(sc.base, mi);
     var r = sc.hasRtfAdj ? rtfHeadlineInv(sc.rtfAdj, mi) : b;
@@ -1219,11 +1222,18 @@ function renderScenarioKpiBanner() {
     var bd = rtfDisclosureDays(sc.base, mi);
     var rd = sc.hasRtfAdj ? rtfDisclosureDays(sc.rtfAdj, mi) : bd;
     var fd = sc.hasExcess ? rtfDisclosureDays(sc.final, mi) : rd;
+    // 감축 시나리오에 자재 변동 합산 — 일수는 금액 비례 보정
+    var matD = matDeltas ? (matDeltas[mi] || 0) : 0;
+    var fAmt = Number.isFinite(f.amount) ? f.amount + matD : f.amount;
+    var scale = (matD !== 0 && Number.isFinite(f.amount) && f.amount > 0) ? fAmt / f.amount : 1;
+    var fMgmt = Number.isFinite(f.days) ? f.days * scale : f.days;
+    var fDisc = Number.isFinite(fd)     ? fd * scale     : fd;
+    var hasCut = sc.hasExcess || matD !== 0;
     return {
       month: month,
-      amt:  f.amount, amtRtf:  sc.hasRtfAdj ? d(r.amount, b.amount) : null, amtExc:  sc.hasExcess ? d(f.amount, r.amount) : null,
-      mgmt: f.days,   mgmtRtf: sc.hasRtfAdj ? d(r.days, b.days)     : null, mgmtExc: sc.hasExcess ? d(f.days, r.days)     : null,
-      disc: fd,       discRtf: sc.hasRtfAdj ? d(rd, bd)             : null, discExc: sc.hasExcess ? d(fd, rd)             : null,
+      amt:  fAmt,  amtRtf:  sc.hasRtfAdj ? d(r.amount, b.amount) : null, amtExc:  hasCut ? d(fAmt, r.amount)  : null,
+      mgmt: fMgmt, mgmtRtf: sc.hasRtfAdj ? d(r.days, b.days)     : null, mgmtExc: hasCut ? d(fMgmt, r.days)   : null,
+      disc: fDisc, discRtf: sc.hasRtfAdj ? d(rd, bd)             : null, discExc: hasCut ? d(fDisc, rd)       : null,
     };
   });
 
