@@ -2403,6 +2403,7 @@ function renderCstCompareBanner() {
 
   // RTF 상단과 동일 기준(전체재고 = 결산 앵커 + 완제품·상품 변동)으로 표시
   var _useTotal = (typeof rtfHeadlineInv === "function");
+  var _hasDisc  = (typeof rtfDisclosureDays === "function");
   var monthData = months.map(function(month, mi) {
     var ba = _useTotal ? rtfHeadlineInv(beforeItems, mi) : aggregateMonth(beforeItems, mi);
     var aa = _useTotal ? rtfHeadlineInv(afterItems,  mi) : aggregateMonth(afterItems,  mi);
@@ -2414,12 +2415,19 @@ function renderCstCompareBanner() {
     var aAmt  = Number.isFinite(aAmtRaw)  ? aAmtRaw : null;
     var bDays = Number.isFinite(bDaysRaw) ? Math.round(bDaysRaw) : null;
     var aDays = Number.isFinite(aDaysRaw) ? Math.round(aDaysRaw) : null;
+    // 재고일수(공시기준) — RTF 상단 패널과 동일 계산 (조정 시 delta 포함)
+    var bDiscRaw = _hasDisc ? rtfDisclosureDays(beforeItems, mi) : null;
+    var aDiscRaw = _hasDisc ? rtfDisclosureDays(afterItems,  mi) : null;
+    var bDisc = Number.isFinite(bDiscRaw) ? Math.round(bDiscRaw) : null;
+    var aDisc = Number.isFinite(aDiscRaw) ? Math.round(aDiscRaw) : null;
     return {
       month:     month,
       amtVal:    aAmt !== null ? formatMoney(aAmt) : "—",
       deltaAmt:  (hasAdj && bAmt !== null && aAmt !== null) ? aAmt - bAmt : null,
       daysVal:   aDays,
       deltaDays: (hasAdj && bDays !== null && aDays !== null) ? aDays - bDays : null,
+      discVal:   aDisc,
+      deltaDisc: (hasAdj && bDisc !== null && aDisc !== null) ? aDisc - bDisc : null,
       amtRaw:    aAmt,
     };
   });
@@ -2447,8 +2455,20 @@ function renderCstCompareBanner() {
         "</td>";
     }).join("") + "</tr>";
 
+  // 공시기준 행: 결산 매출원가(누적) 연결 시에만 표시 (RTF 상단 패널과 동일)
+  var hasDiscRow = monthData.some(function(d) { return d.discVal !== null; });
+  var discRow = hasDiscRow ? "<tr class='rtf-kpi-r-days'>" +
+    "<td class='rtf-kpi-row-lbl'>재고일수(공시기준)</td>" +
+    monthData.map(function(d) {
+      var txt = d.discVal !== null ? d.discVal + "일" : "—";
+      return "<td class='rtf-kpi-val'>" +
+        "<span class='rtf-kpi-main'>" + escapeHtml(txt) + "</span>" +
+        deltaSpan(d.deltaDisc, "일") +
+        "</td>";
+    }).join("") + "</tr>" : "";
+
   var daysRow = "<tr class='rtf-kpi-r-days'>" +
-    "<td class='rtf-kpi-row-lbl'>" + (_useTotal && typeof getActualsAnchor === "function" && getActualsAnchor() ? "재고일수(관리기준)" : "재고일수") + "</td>" +
+    "<td class='rtf-kpi-row-lbl'>" + (hasDiscRow || (_useTotal && typeof getActualsAnchor === "function" && getActualsAnchor()) ? "재고일수(관리기준)" : "재고일수") + "</td>" +
     monthData.map(function(d) {
       var txt = d.daysVal !== null ? d.daysVal + "일" : "—";
       var hiCls = d.daysVal !== null && d.daysVal > 120 ? " hi" : "";
@@ -2463,7 +2483,7 @@ function renderCstCompareBanner() {
   return "<div class='rtf-kpi-wrap' style='margin-bottom:12px;'>" +
     "<table class='rtf-kpi-table'>" +
     "<thead>" + headerRow + "</thead>" +
-    "<tbody>" + amtRow + daysRow + "</tbody>" +
+    "<tbody>" + amtRow + discRow + daysRow + "</tbody>" +
     "</table>" +
     (sharedChip ? "<div style='padding:6px 10px;'>" + sharedChip + "</div>" : "") +
   "</div>";
