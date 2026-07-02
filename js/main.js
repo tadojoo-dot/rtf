@@ -606,7 +606,8 @@ function render(menuId) {
     }
   }
 
-  if (heavyScreens.has(menu[0]) && hasPlanData) {
+  // "계산 중..." 플레이스홀더는 실제 탭 전환에서만 (같은 화면 내 재렌더=편집/토글은 바로 그려 깜빡임 방지)
+  if (heavyScreens.has(menu[0]) && hasPlanData && !isSameScreen) {
     screenRoot.innerHTML = "<div style='padding:80px 0;text-align:center;color:#94a3b8;font-size:15px;'>계산 중...</div>";
     requestAnimationFrame(function() { requestAnimationFrame(doRender); });
   } else {
