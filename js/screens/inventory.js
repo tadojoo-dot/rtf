@@ -1,7 +1,16 @@
 // ── 재고전망 화면 ─────────────────────────────────────────────────────────────
 
-// 월별 공급계획 조정 시뮬레이션
-// matAdjBomMap: buildBomMaxProducibleMap(state.matSimAdj) 결과 — RTF 자재조정 반영
+var INV_SECTION_OPTIONS = [
+  { mode: "business", label: "사업부별" },
+  { mode: "plant",    label: "플랜트별" },
+  { mode: "type",     label: "유형별"   },
+];
+
+var _invGroupNodeIds = []; // 모두 펼치기용 캐시
+var _invChartInst   = null; // Chart.js 인스턴스
+
+// ── 계산 함수 ─────────────────────────────────────────────────────────────────
+
 function computeAdjMonthly(item, matAdjBomMap) {
   var planMap = new Map();
   state.mappedData.plan_monthly.forEach(function(r) {
@@ -15,46 +24,32 @@ function computeAdjMonthly(item, matAdjBomMap) {
   var months  = getRtfMonths();
   var opening = (item.baseQty !== null && item.baseQty !== undefined) ? item.baseQty : 0;
   return months.map(function(month, mi) {
-    var origSupply = planMap.get(month) || 0;
-
-    // ① RTF 자재 조정 반영: BOM 제약으로 생산가능수량이 달라지면 공급 상한 적용
+    var origSupply   = planMap.get(month) || 0;
     var rtfAdjSupply = origSupply;
     if (matAdjBomMap) {
       var maxProd = matAdjBomMap.get(item.itemCode + "|" + item.plantCode + "|" + month);
       if (maxProd !== undefined) rtfAdjSupply = Math.min(origSupply, maxProd);
     }
-
-    // ② 재고전망 직접 조정 (invSupplyAdj): RTF조정 후를 기준으로 추가 조정
     var adjKey    = item.itemCode + "|" + item.plantCode + "|" + month;
     var adjSupply = (adjKey in state.invSupplyAdj) ? state.invSupplyAdj[adjKey] : rtfAdjSupply;
-
     var salesQty      = (item.monthlyStatus[mi] && item.monthlyStatus[mi].salesQty) ? item.monthlyStatus[mi].salesQty : 0;
     var available     = opening + adjSupply;
     var endingQty     = Math.max(0, available - salesQty);
     var shortageQty   = Math.max(0, salesQty - available);
     var endingAmount  = (item.hasCost && item.standardCost) ? endingQty * item.standardCost : null;
     var inventoryDays = salesQty > 0 ? endingQty / (salesQty / monthDays(month)) : null;
-
     opening = endingQty;
     return {
-      month:           month,
-      origSupply:      origSupply,
-      rtfAdjSupply:    rtfAdjSupply,   // RTF 자재조정 후 공급 (BOM 제약 반영)
-      adjSupply:       adjSupply,       // 최종 공급 (invSupplyAdj 포함)
-      salesQty:        salesQty,
-      endingQty:       endingQty,
-      endingAmount:    endingAmount,
-      shortageQty:     shortageQty,
-      inventoryDays:   inventoryDays,
-      isDanger:        shortageQty > 0,
-      isRtfAdjusted:   Math.abs(rtfAdjSupply - origSupply) > 0.01,  // RTF 조정으로 달라진 월
-      isInvAdjusted:   adjKey in state.invSupplyAdj,                 // 재고화면 직접 조정된 월
-      isAdjusted:      Math.abs(adjSupply - origSupply) > 0.01,
+      month, origSupply, rtfAdjSupply, adjSupply, salesQty,
+      endingQty, endingAmount, shortageQty, inventoryDays,
+      isDanger:      shortageQty > 0,
+      isRtfAdjusted: Math.abs(rtfAdjSupply - origSupply) > 0.01,
+      isInvAdjusted: adjKey in state.invSupplyAdj,
+      isAdjusted:    Math.abs(adjSupply - origSupply) > 0.01,
     };
   });
 }
 
-// 과잉감축 조정 반영 재고 계산 (RTF조정 위에 excessAdj 적용)
 function computeExcessMonthly(item, matAdjBomMap) {
   var planMap = new Map();
   state.mappedData.plan_monthly.forEach(function(r) {
@@ -64,47 +59,40 @@ function computeExcessMonthly(item, matAdjBomMap) {
       if (m) planMap.set(m, (planMap.get(m) || 0) + (cleanNumber(r.supplyQty) || 0));
     }
   });
-
   var months  = getRtfMonths();
   var opening = (item.baseQty !== null && item.baseQty !== undefined) ? item.baseQty : 0;
   return months.map(function(month, mi) {
-    var origSupply = planMap.get(month) || 0;
-
+    var origSupply   = planMap.get(month) || 0;
     var rtfAdjSupply = origSupply;
     if (matAdjBomMap) {
       var maxProd = matAdjBomMap.get(item.itemCode + "|" + item.plantCode + "|" + month);
       if (maxProd !== undefined) rtfAdjSupply = Math.min(origSupply, maxProd);
     }
-
     var adjKey      = item.itemCode + "|" + item.plantCode + "|" + month;
     var finalSupply = (adjKey in state.excessAdj) ? state.excessAdj[adjKey] : rtfAdjSupply;
-
-    var salesQty     = (item.monthlyStatus[mi] && item.monthlyStatus[mi].salesQty) ? item.monthlyStatus[mi].salesQty : 0;
-    var available    = opening + finalSupply;
-    var endingQty    = Math.max(0, available - salesQty);
-    var shortageQty  = Math.max(0, salesQty - available);
-    var endingAmount = (item.hasCost && item.standardCost) ? endingQty * item.standardCost : null;
+    var salesQty      = (item.monthlyStatus[mi] && item.monthlyStatus[mi].salesQty) ? item.monthlyStatus[mi].salesQty : 0;
+    var available     = opening + finalSupply;
+    var endingQty     = Math.max(0, available - salesQty);
+    var shortageQty   = Math.max(0, salesQty - available);
+    var endingAmount  = (item.hasCost && item.standardCost) ? endingQty * item.standardCost : null;
     var inventoryDays = salesQty > 0 ? endingQty / (salesQty / monthDays(month)) : null;
-
     opening = endingQty;
     return {
-      month, origSupply, rtfAdjSupply, finalSupply,
-      salesQty, endingQty, endingAmount, shortageQty, inventoryDays,
-      isDanger:          shortageQty > 0,
-      isRtfAdjusted:     Math.abs(rtfAdjSupply - origSupply) > 0.01,
-      isExcessAdjusted:  adjKey in state.excessAdj,
+      month, origSupply, rtfAdjSupply, finalSupply, salesQty,
+      endingQty, endingAmount, shortageQty, inventoryDays,
+      isDanger:         shortageQty > 0,
+      isRtfAdjusted:    Math.abs(rtfAdjSupply - origSupply) > 0.01,
+      isExcessAdjusted: adjKey in state.excessAdj,
     };
   });
 }
 
-// 기준월 재고일수 반환 (현재 계획 기준)
 function getBaseMonthDays(item) {
   var ms = item.monthlyStatus && item.monthlyStatus[0];
   if (!ms) return null;
   return Number.isFinite(ms.inventoryDays) ? ms.inventoryDays : null;
 }
 
-// 재고일수 상태 클래스
 function invDaysCls(days, targetDays) {
   if (targetDays === null || targetDays === undefined) return "inv-days-unset";
   if (!Number.isFinite(days)) return "";
@@ -114,113 +102,328 @@ function invDaysCls(days, targetDays) {
   return "inv-days-ok";
 }
 
-// ── 그룹 집계 월별 셀 렌더 ────────────────────────────────────────────────────
-function invMonthlyAggCells(items, months, adjCache, isAdj, rowCls) {
-  return months.map(function(month, mi) {
-    var totalEndQty = 0, totalEndAmt = 0, totalSalesQty = 0, hasAmt = false;
-    items.forEach(function(item) {
-      var key  = item.itemCode + "|" + item.plantCode;
-      var data = (isAdj && adjCache) ? (adjCache.get(key) || [])[mi] : null;
-      var ms   = item.monthlyStatus ? item.monthlyStatus[mi] : null;
-      var endQty = data ? data.endingQty   : (ms ? ms.endingQty   : null);
-      var endAmt = data ? data.endingAmount : (ms ? ms.endingAmount : null);
-      if (Number.isFinite(endQty)) totalEndQty += endQty;
-      if (Number.isFinite(endAmt)) { totalEndAmt += endAmt; hasAmt = true; }
-      if (ms && Number.isFinite(ms.salesQty)) totalSalesQty += ms.salesQty;
-    });
-    var days     = (totalSalesQty > 0) ? totalEndQty / (totalSalesQty / monthDays(month)) : null;
-    var daysDisp = Number.isFinite(days) ? Math.round(days) + "일" : "-";
-    var amtDisp  = hasAmt ? formatMoney(totalEndAmt) : "-";
-    return "<td class=\"" + rowCls + "\">" + escapeHtml(daysDisp) + "</td>" +
-           "<td class=\"" + rowCls + "\">" + escapeHtml(amtDisp) + "</td>";
-  }).join("");
-}
+// ── 계층 구조 빌드 ────────────────────────────────────────────────────────────
 
-// ── (구 계층 빌더 자리 — 아래는 삭제된 buildInvHierarchy stub) ────────────────
-function buildInvHierarchy(items) {
-  var groups = {};
-  items.forEach(function(item) {
-    var bu    = item.businessUnit || "(미분류)";
-    var plant = item.plant        || "(미분류)";
-    var type  = item.typeGroup    || "(기타)";
-    if (!groups[bu])              groups[bu] = {};
-    if (!groups[bu][plant])       groups[bu][plant] = {};
-    if (!groups[bu][plant][type]) groups[bu][plant][type] = [];
-    groups[bu][plant][type].push(item);
-  });
-
+function buildInvHierarchy(items, mode) {
   var nodes = [];
-  var sortKo = function(a, b) { return a.localeCompare(b, "ko-KR"); };
+  var sortKoFn = function(a, b) { return String(a).localeCompare(String(b), "ko-KR"); };
+  function uniqSorted(arr, key) {
+    return [...new Set(arr.map(function(i) { return i[key]; }))].filter(Boolean).sort(sortKoFn);
+  }
+  // colVals: [col0값, col1값, col2값] — 병합 알고리즘용 덧붙이는 조상 레이블
+  function mk(id, level, kind, label, nodeItems, colVals) {
+    return { id: id, level: level, kind: kind, label: label, items: nodeItems, colVals: colVals || [] };
+  }
 
-  Object.keys(groups).sort(sortKo).forEach(function(bu) {
-    var buId    = "bu|" + bu;
-    var buItems = [];
-    Object.values(groups[bu]).forEach(function(pm) {
-      Object.values(pm).forEach(function(ti) { buItems = buItems.concat(ti); });
-    });
-    nodes.push({ id: buId, label: bu, level: 0, parentId: "", kind: "group", items: buItems });
+  nodes.push(mk("inv_total", -1, "total", "전체 합계", items, []));
 
-    Object.keys(groups[bu]).sort(sortKo).forEach(function(plant) {
-      var plantId    = buId + "|" + plant;
-      var plantItems = [];
-      Object.values(groups[bu][plant]).forEach(function(ti) { plantItems = plantItems.concat(ti); });
-      nodes.push({ id: plantId, label: plant, level: 1, parentId: buId, kind: "group", items: plantItems });
-
-      Object.keys(groups[bu][plant]).sort(sortKo).forEach(function(type) {
-        var typeId    = plantId + "|" + type;
-        var typeItems = groups[bu][plant][type];
-        nodes.push({ id: typeId, label: type, level: 2, parentId: plantId, kind: "group", items: typeItems });
-
-        typeItems.forEach(function(item) {
-          nodes.push({
-            id:       typeId + "|" + item.itemCode + "|" + item.plantCode,
-            label:    item.itemName || item.itemCode,
-            level:    3,
-            parentId: typeId,
-            kind:     "item",
-            items:    [item],
-          });
+  if (mode === "business") {
+    uniqSorted(items, "businessUnit").forEach(function(bu) {
+      var buItems = items.filter(function(i) { return i.businessUnit === bu; });
+      nodes.push(mk("b|" + bu, 0, "group", bu, buItems, [bu, "", ""]));
+      uniqSorted(buItems, "typeGroup").forEach(function(type) {
+        var typeItems = buItems.filter(function(i) { return i.typeGroup === type; });
+        nodes.push(mk("b|" + bu + "|t|" + type, 1, "group", type, typeItems, [bu, type, ""]));
+        uniqSorted(typeItems, "itemGroup").forEach(function(group) {
+          var groupItems = typeItems.filter(function(i) { return i.itemGroup === group; });
+          nodes.push(mk("b|" + bu + "|t|" + type + "|g|" + group, 2, "itemGroup", group, groupItems, [bu, type, group]));
         });
       });
     });
-  });
+  } else if (mode === "plant") {
+    uniqSorted(items, "plant").forEach(function(plant) {
+      var plantItems = items.filter(function(i) { return i.plant === plant; });
+      nodes.push(mk("p|" + plant, 0, "group", plant, plantItems, [plant, "", ""]));
+      uniqSorted(plantItems, "typeGroup").forEach(function(type) {
+        var typeItems = plantItems.filter(function(i) { return i.typeGroup === type; });
+        nodes.push(mk("p|" + plant + "|t|" + type, 1, "group", type, typeItems, [plant, type, ""]));
+        uniqSorted(typeItems, "itemGroup").forEach(function(group) {
+          var groupItems = typeItems.filter(function(i) { return i.itemGroup === group; });
+          nodes.push(mk("p|" + plant + "|t|" + type + "|g|" + group, 2, "itemGroup", group, groupItems, [plant, type, group]));
+        });
+      });
+    });
+  } else {
+    uniqSorted(items, "typeGroup").forEach(function(type) {
+      var typeItems = items.filter(function(i) { return i.typeGroup === type; });
+      nodes.push(mk("t|" + type, 0, "group", type, typeItems, [type, "", ""]));
+      uniqSorted(typeItems, "businessUnit").forEach(function(bu) {
+        var buItems = typeItems.filter(function(i) { return i.businessUnit === bu; });
+        nodes.push(mk("t|" + type + "|b|" + bu, 1, "group", bu, buItems, [type, bu, ""]));
+        uniqSorted(buItems, "plant").forEach(function(plant) {
+          var plantItems = buItems.filter(function(i) { return i.plant === plant; });
+          nodes.push(mk("t|" + type + "|b|" + bu + "|p|" + plant, 2, "itemGroup", plant, plantItems, [type, bu, plant]));
+        });
+      });
+    });
+  }
   return nodes;
 }
 
-function invNodeVisible(node, nodes) {
-  if (node.level === 0) return true;
-  if (!state.invExpandedGroups.has(node.parentId)) return false;
-  var parent = null;
-  for (var i = 0; i < nodes.length; i++) { if (nodes[i].id === node.parentId) { parent = nodes[i]; break; } }
-  return parent ? invNodeVisible(parent, nodes) : true;
+// ── 셀 병합 맵 계산 ──────────────────────────────────────────────────────────
+
+function buildInvRowspanMap(nodes) {
+  var spans = new Map();
+  var skip  = new Set();
+  var vis   = nodes.filter(function(n) { return n.kind !== "total" && n.kind !== "item"; });
+
+  for (var ci = 0; ci < 3; ci++) {
+    var i = 0;
+    while (i < vis.length) {
+      var val = (vis[i].colVals || [])[ci] || "";
+      if (!val) { i++; continue; }
+      var span = 1;
+      while (i + span < vis.length && ((vis[i + span].colVals || [])[ci] || "") === val) span++;
+      if (span > 1) {
+        spans.set(vis[i].id + "|" + ci, span);
+        for (var off = 1; off < span; off++) skip.add(vis[i + off].id + "|" + ci);
+      }
+      i += span;
+    }
+  }
+  return { spans: spans, skip: skip };
 }
 
-function invAggMonth(groupItems, mi, adjCache) {
-  var months        = getRtfMonths();
-  var totalEndQty   = 0, totalEndAmt = 0, totalSalesQty = 0;
-  var hasQty = false, hasAmt = false, hasDanger = false;
-  groupItems.forEach(function(item) {
+// ── 노드 집계 ─────────────────────────────────────────────────────────────────
+
+function invNodeAgg(nodeItems, mi, adjCache) {
+  var month = getRtfMonths()[mi];
+  var totalEndQty = 0, totalEndAmt = 0, totalSalesQty = 0, hasAmt = false;
+  nodeItems.forEach(function(item) {
     var key  = item.itemCode + "|" + item.plantCode;
     var data = adjCache ? (adjCache.get(key) || [])[mi] : null;
     var ms   = item.monthlyStatus ? item.monthlyStatus[mi] : null;
-    var endQty = adjCache && data ? data.endingQty   : (ms ? ms.endingQty   : null);
-    var endAmt = adjCache && data ? data.endingAmount : (ms ? ms.endingAmount : null);
-    if (Number.isFinite(endQty)) { totalEndQty += endQty; hasQty = true; }
+    var endQty = data ? data.endingQty   : (ms ? ms.endingQty   : null);
+    var endAmt = data ? data.endingAmount : (ms ? ms.endingAmount : null);
+    if (Number.isFinite(endQty)) totalEndQty += endQty;
     if (Number.isFinite(endAmt)) { totalEndAmt += endAmt; hasAmt = true; }
     if (ms && Number.isFinite(ms.salesQty)) totalSalesQty += ms.salesQty;
-    if (adjCache && data && data.isDanger) hasDanger = true;
   });
-  var month = months[mi];
-  var inventoryDays = (hasQty && totalSalesQty > 0)
-    ? totalEndQty / (totalSalesQty / monthDays(month)) : null;
+  var inventoryDays = totalSalesQty > 0 ? totalEndQty / (totalSalesQty / monthDays(month)) : null;
   return {
+    inventoryDays: Number.isFinite(inventoryDays) ? inventoryDays : null,
     endingAmount:  hasAmt ? totalEndAmt : null,
-    inventoryDays: inventoryDays,
-    hasDanger:     hasDanger,
   };
 }
 
+// ── 좌측 컬럼 정의 ───────────────────────────────────────────────────────────
+
+function getInvLeftColDefs(mode) {
+  var defs;
+  if (mode === "plant") {
+    defs = [
+      { key: "col0", label: "플랜트", width: 120, align: "left" },
+      { key: "col1", label: "유형",   width: 100, align: "left" },
+      { key: "col2", label: "품목군", width: 160, align: "left" },
+    ];
+  } else if (mode === "type") {
+    defs = [
+      { key: "col0", label: "유형",   width: 100, align: "left" },
+      { key: "col1", label: "사업부", width: 120, align: "left" },
+      { key: "col2", label: "플랜트", width: 130, align: "left" },
+    ];
+  } else { // business
+    defs = [
+      { key: "col0", label: "사업부", width: 130, align: "left" },
+      { key: "col1", label: "유형",   width: 100, align: "left" },
+      { key: "col2", label: "품목군", width: 160, align: "left" },
+    ];
+  }
+  defs[defs.length - 1].isLast = true;
+  var left = 0;
+  return defs.map(function(d) { var r = Object.assign({}, d, { left: left }); left += d.width; return r; });
+}
+
+// ── 드릴다운 행 (공급계획 조정 input) ─────────────────────────────────────────
+
+function makeDrillRow(item, adjMonthly, totalCols, matAdjBomMapArg) {
+  var months = getRtfMonths();
+  var adj    = adjMonthly || computeAdjMonthly(item, matAdjBomMapArg || null);
+  var showRtfCol = adj.some(function(d) { return d.isRtfAdjusted; });
+
+  var drillBody = months.map(function(month, mi) {
+    var d        = adj[mi];
+    var adjKey   = item.itemCode + "|" + item.plantCode + "|" + month;
+    var daysDisp = Number.isFinite(d.inventoryDays) ? Math.round(d.inventoryDays) + "일" : "-";
+    var amtDisp  = Number.isFinite(d.endingAmount)  ? formatMoney(d.endingAmount)        : "-";
+    var dangerCls = d.isDanger ? " inv-danger-cell" : "";
+    var delta     = d.adjSupply - d.rtfAdjSupply;
+    var deltaHtml = d.isInvAdjusted
+      ? "<span class=\"" + (delta >= 0 ? "inv-adj-pos" : "inv-adj-neg") + "\">" +
+        escapeHtml((delta >= 0 ? "+" : "") + formatNumber(Math.round(delta))) + "</span>"
+      : "";
+    var rtfCell = showRtfCol
+      ? "<td class=\"" + (d.isRtfAdjusted ? "inv-rtf-cell" : "") + "\">" +
+        escapeHtml(formatNumber(Math.round(d.rtfAdjSupply))) +
+        (d.isRtfAdjusted ? "<span class=\"inv-rtf-badge\">RTF</span>" : "") + "</td>"
+      : "";
+    return "<tr>" +
+      "<td>" + escapeHtml(monthLabel(month)) + "</td>" +
+      "<td>" + escapeHtml(formatNumber(Math.round(d.origSupply))) + "</td>" +
+      rtfCell +
+      "<td><input type=\"number\" class=\"inv-supply-input" + (d.isInvAdjusted ? " adjusted" : "") + "\"" +
+        " data-key=\"" + escapeHtml(adjKey) + "\" data-orig=\"" + d.rtfAdjSupply + "\"" +
+        " value=\"" + Math.round(d.adjSupply) + "\" min=\"0\" step=\"1\"></td>" +
+      "<td>" + deltaHtml + "</td>" +
+      "<td class=\"" + dangerCls + "\">" + escapeHtml(formatNumber(Math.round(d.endingQty))) +
+        (d.isDanger ? "<span class=\"inv-danger-icon\">⚠</span>" : "") + "</td>" +
+      "<td class=\"" + dangerCls + "\">" + escapeHtml(daysDisp) + "</td>" +
+      "<td>" + escapeHtml(amtDisp) + "</td>" +
+      "</tr>";
+  }).join("");
+
+  var rtfTh = showRtfCol ? "<th>RTF조정 후</th>" : "";
+  return "<tr class=\"inv-drill-row\"><td colspan=\"" + totalCols + "\">" +
+    "<div class=\"inv-drill-inner\">" +
+    "<div class=\"inv-drill-title\">" + escapeHtml(item.itemName || item.itemCode) + " · 공급계획 조정</div>" +
+    (showRtfCol ? "<div class=\"inv-drill-note\">RTF 자재조정이 반영된 공급을 기준으로 추가 조정합니다.</div>" : "") +
+    "<div class=\"inv-table-wrap\"><table class=\"inv-drill-table\">" +
+    "<thead><tr><th>월</th><th>원 공급계획</th>" + rtfTh + "<th>재고 직접조정</th><th>변동</th><th>기말재고(EA)</th><th>재고일수</th><th>재고금액</th></tr></thead>" +
+    "<tbody>" + drillBody + "</tbody>" +
+    "</table></div>" +
+    "<div class=\"inv-drill-btns\">" +
+    "<button class=\"inv-record-btn\" data-item-code=\"" + escapeHtml(item.itemCode) + "\" data-plant=\"" + escapeHtml(item.plantCode || "") + "\">결정사항 회의록에 기록</button>" +
+    "<button class=\"inv-reset-btn\"  data-item-code=\"" + escapeHtml(item.itemCode) + "\" data-plant=\"" + escapeHtml(item.plantCode || "") + "\">조정 초기화</button>" +
+    "</div>" +
+    "</div>" +
+    "</td></tr>";
+}
+
+// ── 행 렌더 ──────────────────────────────────────────────────────────────────
+
+function renderInvRow(node, leftColDefs, adjCache, allMonths, rtfMonths, actualSet, rowspanMap) {
+  if (node.kind === "item") return "";
+  var isTotal = node.kind === "total";
+
+  var metricCells = allMonths.map(function(month) {
+    var isActual    = actualSet.has(month);
+    var isFirstFcst = month === rtfMonths[0];
+    var sepCls      = isFirstFcst ? " inv-fcst-sep" : "";
+
+    function daysCls(d) {
+      if (!Number.isFinite(d)) return " inv-days-unset";
+      return d > 120 ? " inv-days-excess" : d >= 90 ? " inv-days-warn" : " inv-days-ok";
+    }
+
+    if (isActual) {
+      if (isTotal) {
+        var rows = (state.mappedData.actuals_monthly || []).filter(function(r) {
+          return r.month === month && r.plant === "전체";
+        });
+        var invAmt  = rows.reduce(function(s, r) { return s + (r.invAmt  || 0); }, 0);
+        var invDays = rows.length ? rows.reduce(function(s, r) { return s + (r.invDays || 0); }, 0) / rows.length : null;
+        var daysDisp = (rows.length && Number.isFinite(invDays)) ? Math.round(invDays) + "일" : "-";
+        var amtDisp  = (rows.length && invAmt > 0) ? formatMoney(invAmt) : "-";
+        return "<td class=\"inv-mc inv-mc-days inv-act-cell" + sepCls + daysCls(invDays) + "\">" + escapeHtml(daysDisp) + "</td>" +
+               "<td class=\"inv-mc inv-mc-amt inv-act-cell\">" + escapeHtml(amtDisp) + "</td>";
+      }
+      return "<td class=\"inv-mc inv-act-cell inv-act-empty" + sepCls + "\">-</td>" +
+             "<td class=\"inv-mc inv-act-cell inv-act-empty\">-</td>";
+    }
+
+    var rtfMi    = rtfMonths.indexOf(month);
+    var agg      = invNodeAgg(node.items, rtfMi, adjCache);
+    var days     = agg.inventoryDays;
+    var amt      = agg.endingAmount;
+    var daysDisp = Number.isFinite(days) ? Math.round(days) + "일" : "-";
+    var amtDisp  = Number.isFinite(amt)  ? formatMoney(amt)        : "-";
+    return "<td class=\"inv-mc inv-mc-days" + sepCls + daysCls(days) + "\">" + escapeHtml(daysDisp) + "</td>" +
+           "<td class=\"inv-mc inv-mc-amt\">" + escapeHtml(amtDisp) + "</td>";
+  }).join("");
+
+  var leftCells;
+  if (isTotal) {
+    var totalW = leftColDefs.reduce(function(s, c) { return s + c.width; }, 0);
+    leftCells = "<td class=\"inv-sticky inv-lc-total\" colspan=\"" + leftColDefs.length + "\" style=\"left:0;width:" + totalW + "px;\">전체 합계</td>";
+  } else {
+    leftCells = leftColDefs.map(function(col, ci) {
+      var cellKey = node.id + "|" + ci;
+      if (rowspanMap && rowspanMap.skip.has(cellKey)) return "";
+      var value     = (node.colVals && node.colVals[ci]) || "";
+      var shadowCls = col.isLast ? " inv-col-last-sticky" : "";
+      var rsAttr    = (rowspanMap && rowspanMap.spans.has(cellKey))
+        ? " rowspan=\"" + rowspanMap.spans.get(cellKey) + "\"" : "";
+      return "<td class=\"inv-sticky inv-cell-center" + shadowCls + "\"" + rsAttr + " style=\"left:" + col.left + "px;width:" + col.width + "px;\">" +
+        escapeHtml(value) + "</td>";
+    }).join("");
+  }
+
+  var kindCls = isTotal ? "is-total" : (node.kind === "itemGroup" ? "is-itemgroup" : "is-group");
+  return "<tr class=\"inv-h-row level-" + node.level + " " + kindCls + "\">" +
+    leftCells + metricCells + "</tr>";
+}
+
+// ── 섹션 렌더 ────────────────────────────────────────────────────────────────
+
+function renderInvSection(mode, displayItems, adjCache) {
+  var leftColDefs = getInvLeftColDefs(mode);
+  var rtfMonths   = getRtfMonths();
+
+  // 실적 월 (actuals_monthly에 있는 월 중 RTF 전망 월 제외)
+  var actualsData  = state.mappedData.actuals_monthly || [];
+  var actualMonths = [];
+  if (actualsData.length) {
+    var monthSet = new Set(actualsData.map(function(r) { return r.month; }));
+    actualMonths = Array.from(monthSet)
+      .filter(function(m) { return rtfMonths.indexOf(m) < 0 && m.startsWith("2026"); })
+      .sort();
+  }
+  var actualSet = new Set(actualMonths);
+  var allMonths = actualMonths.concat(rtfMonths);
+
+  var leftW    = leftColDefs.reduce(function(s, c) { return s + c.width; }, 0);
+  var minWidth = leftW + allMonths.length * 140;
+
+  // ── 헤더 ────────────────────────────────────────────────────────────────
+  var leftHeaders = leftColDefs.map(function(col) {
+    var shadowCls = col.isLast ? " inv-col-last-sticky" : "";
+    return "<th class=\"inv-sticky inv-th" + shadowCls + "\" style=\"left:" + col.left + "px;width:" + col.width + "px;\" rowspan=\"3\">" + escapeHtml(col.label) + "</th>";
+  }).join("");
+
+  // 슈퍼 헤더 (실적 / 전망 구분)
+  var superHeader = "";
+  if (actualMonths.length) {
+    superHeader += "<th class=\"inv-mh inv-mh-actual\" colspan=\"" + (actualMonths.length * 2) + "\">실적</th>";
+  }
+  superHeader += "<th class=\"inv-mh inv-fcst-sep\" colspan=\"" + (rtfMonths.length * 2) + "\">전망</th>";
+
+  var monthHeader = allMonths.map(function(m) {
+    var sepCls = (m === rtfMonths[0]) ? " inv-fcst-sep" : "";
+    return "<th class=\"inv-mh" + sepCls + "\" colspan=\"2\">" + escapeHtml(monthLabel(m)) + "</th>";
+  }).join("");
+
+  var subHeader = allMonths.map(function(m) {
+    var sepCls = (m === rtfMonths[0]) ? " inv-fcst-sep" : "";
+    return "<th class=\"inv-sh" + sepCls + "\">재고일수</th>" +
+           "<th class=\"inv-sh inv-sh-amt\">재고금액</th>";
+  }).join("");
+
+  // ── 바디 ─────────────────────────────────────────────────────────────────
+  var nodes       = buildInvHierarchy(displayItems, mode);
+  var rowspanMap  = buildInvRowspanMap(nodes);
+  var bodyHtml    = nodes.map(function(node) {
+    return renderInvRow(node, leftColDefs, adjCache, allMonths, rtfMonths, actualSet, rowspanMap);
+  }).join("");
+
+  if (!bodyHtml.trim()) {
+    var totalCols = leftColDefs.length + allMonths.length * 2;
+    bodyHtml = "<tr><td colspan=\"" + totalCols + "\" style=\"text-align:center;padding:20px;color:#9ca3af;\">표시할 품목이 없습니다.</td></tr>";
+  }
+
+  var modeLabel = mode === "plant" ? "플랜트별" : mode === "type" ? "유형별" : "사업부별";
+  return "<div class=\"inv-section-hd\"><span>월별 재고현황 · " + modeLabel + "</span><span class=\"inv-section-unit\">단위: 억원, 일 &nbsp;|&nbsp; 재고일수 기준: 120일↑ 과잉, 90일↑ 주의</span></div>" +
+  "<div class=\"inv-table-wrap\"><table class=\"inv-h-table\" style=\"min-width:" + minWidth + "px;\">" +
+    "<thead>" +
+      "<tr>" + leftHeaders + superHeader + "</tr>" +
+      "<tr>" + monthHeader + "</tr>" +
+      "<tr>" + subHeader + "</tr>" +
+    "</thead>" +
+    "<tbody>" + bodyHtml + "</tbody>" +
+    "</table></div>";
+}
+
 // ── 메인 렌더 ─────────────────────────────────────────────────────────────────
+
 function renderInventoryForecast() {
   if (!state.mappedData.plan_monthly.length) {
     return "<section class=\"section-band\"><div class=\"section-header\"><h2>재고전망</h2>" +
@@ -230,117 +433,70 @@ function renderInventoryForecast() {
   var months   = getRtfMonths();
   var rtfItems = computeRtfItems();
 
-  // 적정재고 맵
   var targetMap = new Map();
   (state.mappedData.target_inv || []).forEach(function(r) {
     if (r.itemCode) targetMap.set(r.itemCode, r.targetDays);
   });
 
-  // 조정 가능 여부
-  var hasMatAdj   = Object.keys(state.matSimAdj  || {}).length > 0;
-  var hasExcessAdj = Object.keys(state.excessAdj || {}).length > 0;
-
-  // invViewMode 유효성 보정
-  if (state.invViewMode === "rtf"    && !hasMatAdj)    state.invViewMode = "current";
-  if (state.invViewMode === "excess" && !hasExcessAdj) state.invViewMode = "current";
-  // 레거시 "adjusted" 값 보정
+  var hasMatAdj    = Object.keys(state.matSimAdj  || {}).length > 0;
+  var hasExcessAdj = Object.keys(state.excessAdj  || {}).length > 0;
+  if (state.invViewMode === "rtf"      && !hasMatAdj)    state.invViewMode = "current";
+  if (state.invViewMode === "excess"   && !hasExcessAdj) state.invViewMode = "current";
   if (state.invViewMode === "adjusted") state.invViewMode = hasMatAdj ? "rtf" : "current";
+  var activeMode = state.invViewMode;
 
-  var activeMode = state.invViewMode; // "current" | "rtf" | "excess"
-
-  // RTF 자재조정 BOM 맵 (한 번만 계산, RTF/excess 모드 공통)
   var matAdjBomMap = hasMatAdj ? buildBomMaxProducibleMap(state.matSimAdj) : null;
 
-  // ── 3-패널 요약 계산 ──────────────────────────────────────────────────────
-  var totalBaseAmt = 0, totalRtfAmt = 0, totalExcessAmt = 0;
-  var totalTargetAmt = 0, excessCount = 0;
-  var baseHasAmt = false, rtfHasAmt = false, excessHasAmt = false;
-
+  // ── 3패널 요약 ────────────────────────────────────────────────────────────
+  var totalBaseAmt = 0, totalRtfAmt = 0, totalExcessAmt = 0, totalTargetAmt = 0;
+  var excessCount = 0, baseHasAmt = false, rtfHasAmt = false, excessHasAmt = false;
   rtfItems.forEach(function(item) {
     var ms0 = item.monthlyStatus && item.monthlyStatus[0];
     if (!ms0) return;
-
-    // 원계획
     if (Number.isFinite(ms0.endingAmount)) { totalBaseAmt += ms0.endingAmount; baseHasAmt = true; }
-
-    // RTF조정후
     var rtf0 = computeAdjMonthly(item, matAdjBomMap)[0];
     if (Number.isFinite(rtf0.endingAmount)) { totalRtfAmt += rtf0.endingAmount; rtfHasAmt = true; }
-
-    // 감축후
     var ex0 = computeExcessMonthly(item, matAdjBomMap)[0];
     if (Number.isFinite(ex0.endingAmount)) { totalExcessAmt += ex0.endingAmount; excessHasAmt = true; }
-
-    // 적정재고 / 과잉 카운트
     var targetDays = targetMap.get(item.itemCode);
-    if (targetDays && item.hasCost && ms0.salesQty > 0) {
+    if (targetDays && item.hasCost && ms0.salesQty > 0)
       totalTargetAmt += (ms0.salesQty / monthDays(months[0])) * targetDays * item.standardCost;
-    }
     var curDays = ms0.inventoryDays;
     if (targetDays && Number.isFinite(curDays) && curDays > targetDays) excessCount++;
   });
 
-  function fmtPanel(amt, hasAmt) { return hasAmt ? escapeHtml(formatMoney(amt)) : "<span class=\"inv-panel-nodata\">-</span>"; }
-  function fmtDelta(delta) {
-    if (delta === null) return "";
-    var pos = delta >= 0;
-    return "<div class=\"inv-panel-delta " + (pos ? "inv-delta-pos" : "inv-delta-neg") + "\">" +
-      escapeHtml((pos ? "△+" : "△") + formatMoney(Math.abs(delta))) + "</div>";
+  function fmtAmt(amt, has) { return has ? escapeHtml(formatMoney(amt)) : "-"; }
+  var rtfDelta    = (hasMatAdj && rtfHasAmt && baseHasAmt)      ? totalRtfAmt - totalBaseAmt : null;
+  var excessDelta = (hasExcessAdj && excessHasAmt && rtfHasAmt) ? totalExcessAmt - totalRtfAmt : null;
+  var m0Label     = escapeHtml(monthLabel(months[0])) + "말";
+
+  function kpiItem(label, valStr, sub, deltaVal, isActive, isDisabled) {
+    var activeCls   = isActive   ? " inv-kpi-active"   : "";
+    var disabledCls = isDisabled ? " inv-kpi-disabled"  : "";
+    var deltaHtml   = "";
+    if (deltaVal !== null) {
+      var neg = deltaVal < 0;
+      deltaHtml = " <span class=\"inv-kpi-delta " + (neg ? "inv-kd-neg" : "inv-kd-pos") + "\">" +
+        escapeHtml((neg ? "▽" : "△+") + formatMoney(Math.abs(deltaVal))) + "</span>";
+    }
+    return "<div class=\"inv-kpi-item" + activeCls + disabledCls + "\">" +
+      "<div class=\"inv-kpi-lbl\">" + label + "</div>" +
+      "<div class=\"inv-kpi-val\">" + valStr + deltaHtml + "</div>" +
+      "<div class=\"inv-kpi-sub\">" + sub + "</div>" +
+    "</div>";
   }
 
-  var rtfDelta    = (hasMatAdj && rtfHasAmt && baseHasAmt)   ? totalRtfAmt    - totalBaseAmt  : null;
-  var excessDelta = (hasExcessAdj && excessHasAmt && rtfHasAmt) ? totalExcessAmt - totalRtfAmt : null;
-  var netDelta    = (rtfDelta !== null || excessDelta !== null)
-    ? ((excessHasAmt ? totalExcessAmt : (rtfHasAmt ? totalRtfAmt : totalBaseAmt)) - totalBaseAmt)
-    : null;
+  var kpiBase   = kpiItem("원계획",    fmtAmt(totalBaseAmt, baseHasAmt),
+    m0Label + " · 과잉 " + excessCount + "개 · 적정 " + (totalTargetAmt > 0 ? escapeHtml(formatMoney(totalTargetAmt)) : "미설정"),
+    null, activeMode === "current", false);
+  var kpiRtf    = kpiItem("RTF 조정후", hasMatAdj ? fmtAmt(totalRtfAmt, rtfHasAmt) : "-",
+    hasMatAdj ? m0Label : "공급원인에서 조정 후 반영",
+    rtfDelta, activeMode === "rtf", !hasMatAdj);
+  var kpiExcess = kpiItem("감축 후",   hasExcessAdj ? fmtAmt(totalExcessAmt, excessHasAmt) : "-",
+    hasExcessAdj ? m0Label : "과잉감축 탭에서 입력",
+    excessDelta, activeMode === "excess", !hasExcessAdj);
 
-  var m0Label = escapeHtml(monthLabel(months[0])) + "말 기준";
-  var summaryHtml =
-    "<div class=\"inv-3panel\">" +
-      "<div class=\"inv-panel" + (activeMode === "current" ? " inv-panel-active" : "") + "\">" +
-        "<div class=\"inv-panel-title\">원계획</div>" +
-        "<div class=\"inv-panel-sub\">" + m0Label + "</div>" +
-        "<div class=\"inv-panel-value\">" + fmtPanel(totalBaseAmt, baseHasAmt) + "</div>" +
-        "<div class=\"inv-panel-meta\">적정재고 " + (totalTargetAmt > 0 ? escapeHtml(formatMoney(totalTargetAmt)) : "미설정") + " · 과잉 " + excessCount + "개</div>" +
-      "</div>" +
-      "<div class=\"inv-panel-arrow\">→</div>" +
-      "<div class=\"inv-panel" + (activeMode === "rtf" ? " inv-panel-active" : "") + (hasMatAdj ? "" : " inv-panel-disabled") + "\">" +
-        "<div class=\"inv-panel-title\">RTF 조정후" + (hasMatAdj ? "" : " <span class=\"inv-panel-need\">(조정없음)</span>") + "</div>" +
-        "<div class=\"inv-panel-sub\">" + m0Label + "</div>" +
-        "<div class=\"inv-panel-value\">" + (hasMatAdj ? fmtPanel(totalRtfAmt, rtfHasAmt) : "<span class=\"inv-panel-nodata\">-</span>") + "</div>" +
-        (rtfDelta !== null ? fmtDelta(rtfDelta) : "<div class=\"inv-panel-delta inv-panel-nodata\">조정 없음</div>") +
-      "</div>" +
-      "<div class=\"inv-panel-arrow\">→</div>" +
-      "<div class=\"inv-panel" + (activeMode === "excess" ? " inv-panel-active" : "") + (hasExcessAdj ? "" : " inv-panel-disabled") + "\">" +
-        "<div class=\"inv-panel-title\">감축 후" + (hasExcessAdj ? "" : " <span class=\"inv-panel-need\">(과잉감축 탭에서 입력)</span>") + "</div>" +
-        "<div class=\"inv-panel-sub\">" + m0Label + "</div>" +
-        "<div class=\"inv-panel-value\">" + (hasExcessAdj ? fmtPanel(totalExcessAmt, excessHasAmt) : "<span class=\"inv-panel-nodata\">-</span>") + "</div>" +
-        (excessDelta !== null ? fmtDelta(excessDelta) : "<div class=\"inv-panel-delta inv-panel-nodata\">감축 입력 필요</div>") +
-        (netDelta !== null ? "<div class=\"inv-panel-net\">순효과 " + escapeHtml((netDelta >= 0 ? "+" : "") + formatMoney(netDelta)) + "</div>" : "") +
-      "</div>" +
-    "</div>";
-
-  // ── 컨트롤 ──────────────────────────────────────────────────────────────
-  var filterAll    = state.invFilter !== "excess";
-  var controlsHtml =
-    "<div class=\"inv-controls\">" +
-      "<div class=\"inv-view-toggle\">" +
-        "<button type=\"button\" class=\"inv-view-btn" + (activeMode === "current" ? " active" : "") + "\" data-inv-view=\"current\">원계획</button>" +
-        "<button type=\"button\" class=\"inv-view-btn" + (activeMode === "rtf" ? " active" : "") + (hasMatAdj ? "" : " disabled") + "\"" +
-          (hasMatAdj ? "" : " disabled title=\"공급원인 화면에서 자재 입고 조정 후 활성화됩니다\"") +
-          " data-inv-view=\"rtf\">RTF 조정후</button>" +
-        "<button type=\"button\" class=\"inv-view-btn" + (activeMode === "excess" ? " active" : "") + (hasExcessAdj ? "" : " disabled") + "\"" +
-          (hasExcessAdj ? "" : " disabled title=\"과잉감축 탭에서 조정 입력 후 활성화됩니다\"") +
-          " data-inv-view=\"excess\">감축 후</button>" +
-      "</div>" +
-      "<div style=\"display:flex;gap:4px;\">" +
-        "<button type=\"button\" class=\"inv-filter-btn" + (filterAll ? " active" : "") + "\" data-inv-filter=\"all\">전체</button>" +
-        "<button type=\"button\" class=\"inv-filter-btn" + (!filterAll ? " active" : "") + "\" data-inv-filter=\"excess\">과잉만</button>" +
-      "</div>" +
-    "</div>";
-
-  // ── 조정 캐시 (activeMode에 따라 계산함수 선택) ──────────────────────────
-  var isAdj    = activeMode !== "current";
+  // ── adjCache ──────────────────────────────────────────────────────────────
   var adjCache = null;
   if (activeMode === "rtf") {
     adjCache = new Map();
@@ -354,7 +510,7 @@ function renderInventoryForecast() {
     });
   }
 
-  // 필터링
+  // ── 필터 ─────────────────────────────────────────────────────────────────
   var displayItems = rtfItems.filter(function(item) {
     if (state.invFilter !== "excess") return true;
     var td = targetMap.get(item.itemCode);
@@ -363,248 +519,71 @@ function renderInventoryForecast() {
     return Number.isFinite(d) && d > td;
   });
 
-  // 총 컬럼 수: 사업부 + 플랜트 + 유형 + 품목명 + 적정일수 + 월별(재고일수+재고금액)
-  var totalCols = 5 + months.length * 2;
+  // ── 컨트롤 ───────────────────────────────────────────────────────────────
+  var viewBtns = [
+    { m: "current", label: "원계획",    disabled: false },
+    { m: "rtf",     label: "RTF 조정후",disabled: !hasMatAdj },
+    { m: "excess",  label: "감축 후",   disabled: !hasExcessAdj },
+  ].map(function(v) {
+    return "<button type=\"button\" class=\"inv-view-btn" + (activeMode === v.m ? " active" : "") + (v.disabled ? " disabled" : "") + "\"" +
+      (v.disabled ? " disabled" : "") + " data-inv-view=\"" + v.m + "\">" + v.label + "</button>";
+  }).join("");
 
-  // ── 그룹 구조 빌드 ──
-  var sortKo  = function(a, b) { return a.localeCompare(b, "ko-KR"); };
-  var buGroups = {};
-  displayItems.forEach(function(item) {
-    var bu = item.businessUnit || "(미분류)";
-    var pl = item.plant        || "(미분류)";
-    var ty = item.typeGroup    || "(기타)";
-    if (!buGroups[bu])         buGroups[bu] = {};
-    if (!buGroups[bu][pl])     buGroups[bu][pl] = {};
-    if (!buGroups[bu][pl][ty]) buGroups[bu][pl][ty] = [];
-    buGroups[bu][pl][ty].push(item);
-  });
+  var sectionBtns = INV_SECTION_OPTIONS.map(function(opt) {
+    return "<button type=\"button\" class=\"inv-section-btn" + (state.invSectionMode === opt.mode ? " active" : "") + "\" data-inv-section=\"" + opt.mode + "\">" + opt.label + "</button>";
+  }).join("");
 
-  // ── 드릴다운 행 렌더 헬퍼 ──
-  function makeDrillRow(item, adjMonthly) {
-    var adj = adjMonthly || computeAdjMonthly(item, matAdjBomMap);
-    // RTF 조정이 있는 월이 하나라도 있으면 RTF조정 컬럼 표시
-    var showRtfCol = adj.some(function(d) { return d.isRtfAdjusted; });
-    var colCount   = showRtfCol ? 8 : 7;
-
-    var drillBody = months.map(function(month, mi) {
-      var d         = adj[mi];
-      var adjKey    = item.itemCode + "|" + item.plantCode + "|" + month;
-      var daysDisp  = Number.isFinite(d.inventoryDays) ? Math.round(d.inventoryDays) + "일" : "-";
-      var amtDisp   = Number.isFinite(d.endingAmount)  ? formatMoney(d.endingAmount)        : "-";
-      var dangerCls = d.isDanger ? " inv-danger-cell" : "";
-
-      // 변동: 최종 vs RTF조정 후 기준
-      var delta     = d.adjSupply - d.rtfAdjSupply;
-      var deltaHtml = d.isInvAdjusted
-        ? "<span class=\"" + (delta >= 0 ? "inv-adj-pos" : "inv-adj-neg") + "\">" +
-          escapeHtml((delta >= 0 ? "+" : "") + formatNumber(Math.round(delta))) + "</span>"
-        : "";
-
-      var rtfCell = showRtfCol
-        ? "<td class=\"" + (d.isRtfAdjusted ? "inv-rtf-cell" : "") + "\">" +
-          escapeHtml(formatNumber(Math.round(d.rtfAdjSupply))) +
-          (d.isRtfAdjusted ? "<span class=\"inv-rtf-badge\">RTF</span>" : "") + "</td>"
-        : "";
-
-      // input의 data-orig = rtfAdjSupply (재고직접조정의 기준점)
-      return "<tr>" +
-        "<td>" + escapeHtml(monthLabel(month)) + "</td>" +
-        "<td>" + escapeHtml(formatNumber(Math.round(d.origSupply))) + "</td>" +
-        rtfCell +
-        "<td><input type=\"number\" class=\"inv-supply-input" + (d.isInvAdjusted ? " adjusted" : "") + "\"" +
-          " data-key=\"" + escapeHtml(adjKey) + "\" data-orig=\"" + d.rtfAdjSupply + "\"" +
-          " value=\"" + Math.round(d.adjSupply) + "\" min=\"0\" step=\"1\"></td>" +
-        "<td>" + deltaHtml + "</td>" +
-        "<td class=\"" + dangerCls + "\">" + escapeHtml(formatNumber(Math.round(d.endingQty))) +
-          (d.isDanger ? "<span class=\"inv-danger-icon\">⚠</span>" : "") + "</td>" +
-        "<td class=\"" + dangerCls + "\">" + escapeHtml(daysDisp) + "</td>" +
-        "<td>" + escapeHtml(amtDisp) + "</td>" +
-      "</tr>";
-    }).join("");
-
-    var rtfTh = showRtfCol ? "<th>RTF조정 후</th>" : "";
-    return "<tr class=\"inv-drill-row\"><td colspan=\"" + totalCols + "\">" +
-      "<div class=\"inv-drill-inner\">" +
-        "<div class=\"inv-drill-title\">" + escapeHtml(item.itemName || item.itemCode) + " · 공급계획 조정</div>" +
-        (showRtfCol ? "<div class=\"inv-drill-note\">RTF 자재조정이 반영된 공급을 기준으로 추가 조정합니다.</div>" : "") +
-        "<div class=\"inv-table-wrap\"><table class=\"inv-drill-table\">" +
-          "<thead><tr><th>월</th><th>원 공급계획</th>" + rtfTh + "<th>재고 직접조정</th><th>변동</th><th>기말재고(EA)</th><th>재고일수</th><th>재고금액</th></tr></thead>" +
-          "<tbody>" + drillBody + "</tbody>" +
-        "</table></div>" +
-        "<div class=\"inv-drill-btns\">" +
-          "<button class=\"inv-record-btn\" data-item-code=\"" + escapeHtml(item.itemCode) + "\" data-plant=\"" + escapeHtml(item.plantCode || "") + "\">결정사항 회의록에 기록</button>" +
-          "<button class=\"inv-reset-btn\"  data-item-code=\"" + escapeHtml(item.itemCode) + "\" data-plant=\"" + escapeHtml(item.plantCode || "") + "\">조정 초기화</button>" +
-        "</div>" +
+  var controlsHtml =
+    "<div class=\"inv-toolbar\">" +
+      "<div class=\"inv-view-toggle\">" + viewBtns + "</div>" +
+      "<div class=\"inv-section-tabs\">" + sectionBtns + "</div>" +
+      "<div class=\"inv-toolbar-right\">" +
+        "<button type=\"button\" class=\"inv-filter-btn" + (state.invFilter !== "excess" ? " active" : "") + "\" data-inv-filter=\"all\">전체</button>" +
+        "<button type=\"button\" class=\"inv-filter-btn" + (state.invFilter === "excess" ? " active" : "") + "\" data-inv-filter=\"excess\">과잉만</button>" +
       "</div>" +
-    "</td></tr>";
-  }
+    "</div>";
 
-  // ── 행 렌더링 ──
-  var bodyHtml  = "";
-  var allItems  = []; // 총합계용
-  var CONT = "<td class=\"inv-gc inv-gc-cont\"></td>"; // 시각적 병합 연속 셀
+  var sectionHtml = renderInvSection(state.invSectionMode, displayItems, adjCache);
 
-  Object.keys(buGroups).sort(sortKo).forEach(function(bu) {
-    var buAllItems   = [];
-    var isFirstBuRow = true;
-
-    Object.keys(buGroups[bu]).sort(sortKo).forEach(function(plant) {
-      var plantAllItems   = [];
-      var isFirstPlantRow = true;
-
-      Object.keys(buGroups[bu][plant]).sort(sortKo).forEach(function(type) {
-        var typeItems = buGroups[bu][plant][type];
-
-        typeItems.forEach(function(item, itemIdx) {
-          var rowKey     = item.itemCode + "|" + item.plantCode;
-          var isExpDrill = state.invExpandedRows.has(rowKey);
-          var adjMonthly = adjCache ? adjCache.get(rowKey) : (isExpDrill ? computeAdjMonthly(item, matAdjBomMap) : null);
-          var targetDays = targetMap.get(item.itemCode);
-
-          // 병합 셀: 그룹이 바뀔 때만 내용 표시, 이후엔 빈 연속 셀
-          var buCell    = isFirstBuRow
-            ? "<td class=\"inv-gc inv-gc-bu\">" + escapeHtml(bu) + "</td>" : CONT;
-          var plantCell = isFirstPlantRow
-            ? "<td class=\"inv-gc inv-gc-pl\">" + escapeHtml(plant) + "</td>" : CONT;
-          var typeCell  = (itemIdx === 0)
-            ? "<td class=\"inv-gc inv-gc-ty\">" + escapeHtml(type) + "</td>" : CONT;
-
-          // 구분선 클래스
-          var sepCls = isFirstBuRow ? " inv-sep-bu" : (isFirstPlantRow ? " inv-sep-pl" : (itemIdx === 0 ? " inv-sep-ty" : ""));
-
-          // 월별 셀
-          var monthCells = months.map(function(month, mi) {
-            var ms     = item.monthlyStatus[mi];
-            var useAdj = isAdj && adjMonthly;
-            var days   = useAdj ? adjMonthly[mi].inventoryDays : (ms ? ms.inventoryDays : null);
-            var amt    = useAdj ? adjMonthly[mi].endingAmount  : (ms ? ms.endingAmount  : null);
-            var danger = useAdj && adjMonthly[mi].isDanger;
-            var cls    = invDaysCls(days, targetDays);
-            var dDisp  = Number.isFinite(days) ? Math.round(days) + "일" : "-";
-            var aDisp  = Number.isFinite(amt)  ? formatMoney(amt)        : "-";
-            var icon      = danger ? "<span class=\"inv-danger-icon\">⚠</span>" : "";
-            var rtfBadge  = (isAdj && adjMonthly && adjMonthly[mi].isRtfAdjusted)  ? "<span class=\"inv-rtf-badge\">RTF</span>"  : "";
-            var invBadge  = (isAdj && adjMonthly && adjMonthly[mi].isInvAdjusted)  ? "<span class=\"inv-adj-badge\">조정</span>" : "";
-            return "<td class=\"" + cls + "\">" + escapeHtml(dDisp) + icon + rtfBadge + invBadge + "</td>" +
-                   "<td>" + escapeHtml(aDisp) + "</td>";
-          }).join("");
-
-          var targetDisp = (targetDays !== undefined && targetDays !== null)
-            ? escapeHtml(Math.round(targetDays) + "일")
-            : "<span class=\"inv-days-unset\">미설정</span>";
-
-          bodyHtml +=
-            "<tr class=\"inv-item-row" + sepCls + "\" data-row-key=\"" + escapeHtml(rowKey) + "\">" +
-              buCell + plantCell + typeCell +
-              "<td class=\"inv-item-name\" title=\"" + escapeHtml(item.itemCode) + "\">" +
-                "<button type=\"button\" class=\"inv-row-toggle\" data-row-key=\"" + escapeHtml(rowKey) + "\">" +
-                  (isExpDrill ? "▼" : "▶") + "</button> " +
-                escapeHtml(item.itemName || item.itemCode) +
-              "</td>" +
-              "<td>" + targetDisp + "</td>" +
-              monthCells +
-            "</tr>";
-
-          if (isExpDrill) bodyHtml += makeDrillRow(item, adjMonthly);
-
-          isFirstBuRow    = false;
-          isFirstPlantRow = false;
-        }); // items
-
-        // 유형 소계
-        bodyHtml +=
-          "<tr class=\"inv-subtotal-row inv-st-type\">" +
-            CONT + CONT +
-            "<td colspan=\"2\" class=\"inv-st-label\">" + escapeHtml(type) + " 소계</td>" +
-            "<td class=\"inv-st-dash\">-</td>" +
-            invMonthlyAggCells(typeItems, months, adjCache, isAdj, "inv-st-cell") +
-          "</tr>";
-
-        plantAllItems = plantAllItems.concat(typeItems);
-      }); // types
-
-      // 플랜트 소계
-      bodyHtml +=
-        "<tr class=\"inv-subtotal-row inv-st-plant\">" +
-          CONT +
-          "<td colspan=\"3\" class=\"inv-st-label\">" + escapeHtml(plant) + " 소계</td>" +
-          "<td class=\"inv-st-dash\">-</td>" +
-          invMonthlyAggCells(plantAllItems, months, adjCache, isAdj, "inv-st-cell") +
-        "</tr>";
-
-      buAllItems = buAllItems.concat(plantAllItems);
-    }); // plants
-
-    // 사업부 소계
-    bodyHtml +=
-      "<tr class=\"inv-subtotal-row inv-st-bu\">" +
-        "<td colspan=\"4\" class=\"inv-st-label\">" + escapeHtml(bu) + " 소계</td>" +
-        "<td class=\"inv-st-dash\">-</td>" +
-        invMonthlyAggCells(buAllItems, months, adjCache, isAdj, "inv-st-cell") +
-      "</tr>";
-
-    allItems = allItems.concat(buAllItems);
-  }); // bus
-
-  // 총합계
-  if (allItems.length > 0) {
-    bodyHtml +=
-      "<tr class=\"inv-subtotal-row inv-grand-total\">" +
-        "<td colspan=\"4\" class=\"inv-st-label\">총합계</td>" +
-        "<td class=\"inv-st-dash\">-</td>" +
-        invMonthlyAggCells(allItems, months, adjCache, isAdj, "inv-gt-cell") +
-      "</tr>";
-  }
-
-  var noData = displayItems.length === 0
-    ? "<tr><td colspan=\"" + totalCols + "\" style=\"text-align:center;padding:24px;color:#9ca3af;\">표시할 품목이 없습니다.</td></tr>"
-    : "";
-
-  // 테이블 헤더
-  var monthHeads = months.map(function(m) {
-    return "<th colspan=\"2\">" + escapeHtml(monthLabel(m)) + "</th>";
-  }).join("");
-  var subHeads = months.map(function() {
-    return "<th>재고일수</th><th>재고금액</th>";
-  }).join("");
-
-  var tableHtml =
-    "<div class=\"inv-table-wrap\"><table class=\"inv-table\">" +
-      "<thead>" +
-        "<tr>" +
-          "<th rowspan=\"2\" class=\"inv-th-gc\">사업부</th>" +
-          "<th rowspan=\"2\" class=\"inv-th-gc\">플랜트</th>" +
-          "<th rowspan=\"2\" class=\"inv-th-gc\">유형</th>" +
-          "<th rowspan=\"2\" class=\"inv-th-name\">품목명</th>" +
-          "<th rowspan=\"2\">적정일수</th>" +
-          monthHeads +
-        "</tr>" +
-        "<tr>" + subHeads + "</tr>" +
-      "</thead>" +
-      "<tbody>" + (bodyHtml || noData) + "</tbody>" +
-    "</table></div>";
+  var comboHtml =
+    "<div class=\"inv-combo-card\">" +
+      "<div class=\"inv-kpi-strip\">" +
+        kpiBase +
+        "<div class=\"inv-kpi-arr\">→</div>" +
+        kpiRtf +
+        "<div class=\"inv-kpi-arr\">→</div>" +
+        kpiExcess +
+      "</div>" +
+    "</div>" +
+    "<div class=\"inv-chart-section\"><canvas id=\"invForecastChart\"></canvas></div>";
 
   return "<div class=\"inv-screen\"><div class=\"inv-inner\">" +
-    summaryHtml + controlsHtml + tableHtml +
-  "</div></div>";
+    comboHtml + controlsHtml + sectionHtml +
+    "</div></div>";
 }
 
 // ── 이벤트 바인딩 ──────────────────────────────────────────────────────────────
+
 function bindInventoryForecast() {
   var root = document.querySelector("#screenRoot");
   if (!root) return;
 
-  // 전후 토글
   root.querySelectorAll("[data-inv-view]").forEach(function(btn) {
     btn.addEventListener("click", function() {
-      if (btn.disabled) return;
-      if (state.invViewMode === btn.dataset.invView) return;
+      if (btn.disabled || state.invViewMode === btn.dataset.invView) return;
       state.invViewMode = btn.dataset.invView;
       render("inventory-forecast");
     });
   });
 
-  // 필터
+  root.querySelectorAll("[data-inv-section]").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      if (state.invSectionMode === btn.dataset.invSection) return;
+      state.invSectionMode = btn.dataset.invSection;
+      render("inventory-forecast");
+    });
+  });
+
   root.querySelectorAll("[data-inv-filter]").forEach(function(btn) {
     btn.addEventListener("click", function() {
       if (state.invFilter === btn.dataset.invFilter) return;
@@ -613,95 +592,344 @@ function bindInventoryForecast() {
     });
   });
 
-  // 품목 드릴다운 펼치기/접기
-  root.querySelectorAll(".inv-row-toggle").forEach(function(btn) {
-    btn.addEventListener("click", function(e) {
-      e.stopPropagation();
-      var key = btn.dataset.rowKey;
-      if (state.invExpandedRows.has(key)) state.invExpandedRows.delete(key);
-      else                                 state.invExpandedRows.add(key);
-      render("inventory-forecast");
+  bindInvChart();
+}
+
+// ── 재고전망 차트 ──────────────────────────────────────────────────────────────
+
+function bindInvChart() {
+  if (!window.Chart) return;
+  var canvas = document.querySelector("#invForecastChart");
+  if (!canvas) return;
+  if (_invChartInst) { _invChartInst.destroy(); _invChartInst = null; }
+
+  // 1~12월 전체 레이블 축
+  var allMonths = [];
+  for (var m = 1; m <= 12; m++) allMonths.push("2026-" + (m < 10 ? "0" + m : "" + m));
+
+  var rtfMonths    = getRtfMonths();                         // 6~12월
+  var rtfItemsArr  = computeRtfItems(undefined, true);
+  var hasRtfAdj    = Object.keys(state.matSimAdj  || {}).length > 0;
+  var hasExcessAdj = Object.keys(state.excessAdj  || {}).length > 0;
+  var matAdjBomMap = hasRtfAdj ? buildBomMaxProducibleMap(state.matSimAdj) : null;
+  var hasActuals   = (state.mappedData.actuals_monthly || []).length > 0;
+
+  // 1~5월 실적: actuals_monthly에서 plant="전체" 합산
+  function getActualInvAmt(month) {
+    if (!hasActuals) return null;
+    var rows = (state.mappedData.actuals_monthly || []).filter(function(r) {
+      return r.month === month && r.plant === "전체";
+    });
+    if (!rows.length) return null;
+    var total = rows.reduce(function(s, r) { return s + (r.invAmt || 0); }, 0);
+    return Math.round(total / 100000000 * 10) / 10;
+  }
+
+  function sumEndAmt(ri, getter) {
+    var total = 0;
+    rtfItemsArr.forEach(function(item) {
+      var v = getter(item, ri);
+      if (Number.isFinite(v)) total += v;
+    });
+    return Math.round(total / 100000000 * 10) / 10;
+  }
+
+  // 원계획: 1~5월=실적, 6~12월=계획
+  var baseData = allMonths.map(function(month) {
+    var ri = rtfMonths.indexOf(month);
+    if (ri < 0) return getActualInvAmt(month); // 1~5월
+    return sumEndAmt(ri, function(item) {
+      return item.monthlyStatus[ri] && item.monthlyStatus[ri].endingAmount;
     });
   });
 
-  // 공급계획 조정 입력 — 조정 즉시 "조정 후" 모드로 전환해 소계/총합계에 반영
-  root.querySelectorAll(".inv-supply-input").forEach(function(input) {
-    input.addEventListener("change", function() {
-      var key  = input.dataset.key;
-      var orig = parseFloat(input.dataset.orig) || 0;
-      var val  = parseFloat(input.value);
-      if (!Number.isFinite(val) || val < 0) { input.value = Math.round(orig); return; }
-      if (Math.abs(val - orig) < 0.01) {
-        delete state.invSupplyAdj[key];
-        if (!Object.keys(state.invSupplyAdj).length && !Object.keys(state.matSimAdj || {}).length) {
-          state.invViewMode = "current";
-        }
-      } else {
-        state.invSupplyAdj[key] = val;
-        state.invViewMode = "rtf";
+  // 실적선 (1~5월만, 6월 접합점 포함)
+  var actData = allMonths.map(function(month) {
+    var ri = rtfMonths.indexOf(month);
+    if (ri < 0) return getActualInvAmt(month);
+    if (month === rtfMonths[0]) return getActualInvAmt(month) !== null
+      ? getActualInvAmt(month) : sumEndAmt(0, function(item) {
+          return item.monthlyStatus[0] && item.monthlyStatus[0].endingAmount;
+        });
+    return null;
+  });
+
+  var hasActLine = actData.some(function(v) { return v !== null; });
+
+  // RTF 조정후: 1~5월=실적, 6~12월=RTF계산
+  var rtfData = (hasRtfAdj && matAdjBomMap) ? allMonths.map(function(month) {
+    var ri = rtfMonths.indexOf(month);
+    if (ri < 0) return getActualInvAmt(month);
+    return sumEndAmt(ri, function(item) {
+      var adj = computeAdjMonthly(item, matAdjBomMap)[ri];
+      return adj && Number.isFinite(adj.endingAmount) ? adj.endingAmount
+        : item.monthlyStatus[ri] && item.monthlyStatus[ri].endingAmount;
+    });
+  }) : null;
+
+  // 감축후: 1~5월=실적, 6~12월=excess계산
+  var excessData = hasExcessAdj ? allMonths.map(function(month) {
+    var ri = rtfMonths.indexOf(month);
+    if (ri < 0) return getActualInvAmt(month);
+    return sumEndAmt(ri, function(item) {
+      var ex = computeExcessMonthly(item, matAdjBomMap)[ri];
+      return ex && Number.isFinite(ex.endingAmount) ? ex.endingAmount
+        : item.monthlyStatus[ri] && item.monthlyStatus[ri].endingAmount;
+    });
+  }) : null;
+
+  // 오늘 기준선: 6월이 전망 시작점
+  var todayAnnotation = rtfMonths[0] ? allMonths.indexOf(rtfMonths[0]) : -1;
+
+  var datasets = [];
+
+  // 실적선 (있을 때만)
+  if (hasActLine) {
+    datasets.push({
+      label: "실적",
+      data: actData,
+      borderColor: "#1e3a8a",
+      backgroundColor: "transparent",
+      fill: false,
+      borderWidth: 3,
+      pointRadius: 4,
+      pointHoverRadius: 6,
+      tension: 0.3,
+      spanGaps: false,
+    });
+  }
+
+  // 원계획선 (6~12월 구간만 별도 표시)
+  datasets.push({
+    label: "원계획",
+    data: baseData,
+    borderColor: hasActLine ? "#94a3b8" : "#64748b",
+    backgroundColor: "rgba(100,116,139,0.06)",
+    fill: !hasActLine,
+    borderWidth: hasActLine ? 1.5 : 2.5,
+    borderDash: hasActLine ? [5, 4] : [],
+    pointRadius: 3,
+    pointHoverRadius: 5,
+    tension: 0.3,
+    spanGaps: true,
+  });
+
+  if (rtfData) {
+    datasets.push({
+      label: "RTF 조정후",
+      data: rtfData,
+      borderColor: "#28278f",
+      backgroundColor: "transparent",
+      fill: false,
+      borderWidth: 2.5,
+      pointRadius: 4,
+      pointHoverRadius: 6,
+      tension: 0.3,
+      spanGaps: true,
+    });
+  }
+
+  if (excessData) {
+    datasets.push({
+      label: "감축후",
+      data: excessData,
+      borderColor: "#15803d",
+      backgroundColor: "transparent",
+      fill: false,
+      borderWidth: 2.5,
+      pointRadius: 4,
+      pointHoverRadius: 6,
+      tension: 0.3,
+      borderDash: [5, 3],
+      spanGaps: true,
+    });
+  }
+
+  // ── 주 시나리오 결정 (가장 최종 조정된 것) ──────────────────────────────────
+  var primaryDsIdx = datasets.length - 1;
+  var primaryColor = datasets[primaryDsIdx].borderColor;
+
+  // ── 주 시나리오 재고일수 계산 ─────────────────────────────────────────────
+  var primaryDays = allMonths.map(function(month) {
+    var ri = rtfMonths.indexOf(month);
+    // 1~5월: actuals
+    if (ri < 0) {
+      var rows = (state.mappedData.actuals_monthly || []).filter(function(r) {
+        return r.month === month && r.plant === "전체";
+      });
+      if (!rows.length) return null;
+      var vals = rows.filter(function(r) { return Number.isFinite(r.invDays); });
+      return vals.length ? Math.round(vals.reduce(function(s, r) { return s + r.invDays; }, 0) / vals.length) : null;
+    }
+    // 6~12월: 시나리오별
+    var tQty = 0, tSales = 0;
+    rtfItemsArr.forEach(function(item) {
+      var ms = item.monthlyStatus[ri]; if (!ms) return;
+      var endQty = ms.endingQty;
+      if (hasExcessAdj) {
+        var ex = computeExcessMonthly(item, matAdjBomMap)[ri];
+        if (ex && Number.isFinite(ex.endingQty)) endQty = ex.endingQty;
+      } else if (hasRtfAdj && matAdjBomMap) {
+        var adj = computeAdjMonthly(item, matAdjBomMap)[ri];
+        if (adj && Number.isFinite(adj.endingQty)) endQty = adj.endingQty;
       }
-      render("inventory-forecast");
+      if (Number.isFinite(endQty)) tQty += endQty;
+      if (ms.salesQty > 0) tSales += ms.salesQty / monthDays(month);
     });
+    return tSales > 0 ? Math.round(tQty / tSales) : null;
   });
 
-  // 회의록 기록
-  root.querySelectorAll(".inv-record-btn").forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      var itemCode = btn.dataset.itemCode;
-      var plant    = btn.dataset.plant || "";
-      var months   = getRtfMonths();
-      var rtfItems = computeRtfItems();
-      var item     = rtfItems.find(function(it) { return it.itemCode === itemCode && it.plantCode === plant; });
-      if (!item) return;
+  // ── 캔버스 플러그인: 억 레이블 + 재고일수 배지 ───────────────────────────
+  var INV_FONT = '"Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 
-      var matAdjBomMap2 = Object.keys(state.matSimAdj || {}).length > 0
-        ? buildBomMaxProducibleMap(state.matSimAdj) : null;
-      var adjMonthly = computeAdjMonthly(item, matAdjBomMap2);
-      var adjEntries = adjMonthly.filter(function(d) { return d.isAdjusted; }).map(function(d) {
-        return {
-          month:        d.month,
-          origSupply:   d.origSupply,
-          rtfAdjSupply: d.rtfAdjSupply,
-          adjSupply:    d.adjSupply,
-          delta:        d.adjSupply - d.origSupply,
-        };
-      });
-      if (!adjEntries.length) { alert("조정된 내역이 없습니다."); return; }
+  function drawRoundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
 
-      if (!state.minutesLog) state.minutesLog = [];
-      state.minutesLog.push({
-        id:        Date.now(),
-        timestamp: new Date(),
-        type:      "inv_adjust",
-        title:     (item.itemName || item.itemCode) + " 공급계획 조정",
-        itemCode:  itemCode,
-        entries:   adjEntries.map(function(e) {
-          return {
-            matCode: itemCode,
-            matName: item.itemName || itemCode,
-            month:   e.month,
-            orig:    e.origSupply,
-            adj:     e.adjSupply,
-            delta:   e.delta,
-            addlEA:  0,
-          };
-        }),
-      });
-      alert("회의록에 기록했습니다.");
-      render("minutes");
-    });
-  });
+  var labelsPlugin = {
+    id: "invLabels",
+    afterDraw: function(chart) {
+      var ctx = chart.ctx;
+      var meta = chart.getDatasetMeta(primaryDsIdx);
+      if (!meta || meta.hidden) return;
+      ctx.save();
 
-  // 조정 초기화
-  root.querySelectorAll(".inv-reset-btn").forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      var itemCode = btn.dataset.itemCode;
-      var plant    = btn.dataset.plant || "";
-      var months   = getRtfMonths();
-      months.forEach(function(month) {
-        delete state.invSupplyAdj[itemCode + "|" + plant + "|" + month];
+      allMonths.forEach(function(month, i) {
+        var isFcst = rtfMonths.includes(month);
+        var el = meta.data[i];
+        if (!el) return;
+
+        var val = datasets[primaryDsIdx].data[i];
+        if (val === null || val === undefined) return;
+
+        // 억 레이블 (선 위)
+        ctx.font         = "bold 14px " + INV_FONT;
+        ctx.fillStyle    = isFcst ? primaryColor : "#1e3a8a";
+        ctx.textAlign    = "center";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(val + "억", el.x, el.y - 6);
+
+        // 재고일수 배지 (선 아래) — 전망 구간만
+        if (!isFcst) return;
+        var dv = primaryDays[i];
+        if (dv === null || dv === undefined) return;
+        var text = dv + "일";
+        ctx.font = "bold 13px " + INV_FONT;
+        var tw = ctx.measureText(text).width + 16;
+        var th = 24;
+        var tx = el.x - tw / 2;
+        var ty = el.y + 8;
+        if (ty + th > chart.chartArea.bottom - 2) return;
+
+        ctx.fillStyle = hasExcessAdj
+          ? "rgba(21,128,61,0.10)" : hasRtfAdj
+          ? "rgba(40,39,143,0.10)" : "rgba(15,118,110,0.10)";
+        drawRoundRect(ctx, tx, ty, tw, th, 5);
+        ctx.fill();
+
+        ctx.strokeStyle = hasExcessAdj
+          ? "rgba(21,128,61,0.35)" : hasRtfAdj
+          ? "rgba(40,39,143,0.35)" : "rgba(15,118,110,0.35)";
+        ctx.lineWidth = 1;
+        drawRoundRect(ctx, tx, ty, tw, th, 5);
+        ctx.stroke();
+
+        ctx.fillStyle    = hasExcessAdj ? "#15803d" : hasRtfAdj ? "#28278f" : "#0f766e";
+        ctx.textBaseline = "middle";
+        ctx.fillText(text, el.x, ty + th / 2);
       });
-      render("inventory-forecast");
-    });
+
+      ctx.restore();
+    }
+  };
+
+  // ── 전망시작 수직선 플러그인 ───────────────────────────────────────────────
+  var fcstLinePlugin = {
+    id: "fcstLine",
+    afterDraw: function(chart) {
+      if (todayAnnotation < 0) return;
+      var meta = chart.getDatasetMeta(0);
+      var el = meta && meta.data[todayAnnotation];
+      if (!el) return;
+      var ctx = chart.ctx;
+      var ca  = chart.chartArea;
+      ctx.save();
+      ctx.beginPath();
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = "rgba(100,116,139,0.5)";
+      ctx.lineWidth   = 1.5;
+      ctx.moveTo(el.x, ca.top);
+      ctx.lineTo(el.x, ca.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font      = "bold 11px Pretendard";
+      ctx.fillStyle = "#94a3b8";
+      ctx.textAlign = "center";
+      ctx.fillText("▶ 전망", el.x, ca.top - 4);
+      ctx.restore();
+    }
+  };
+
+  _invChartInst = new Chart(canvas.getContext("2d"), {
+    type: "line",
+    data: { labels: allMonths.map(monthLabel), datasets: datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      layout: { padding: { top: 28, bottom: 6, left: 8, right: 16 } },
+      plugins: {
+        legend: {
+          position: "top",
+          align: "end",
+          labels: {
+            font: { size: 13, family: "Pretendard", weight: "600" },
+            padding: 20,
+            usePointStyle: true,
+            pointStyleWidth: 16,
+          },
+        },
+        tooltip: {
+          backgroundColor: "rgba(15,23,42,0.85)",
+          titleFont: { size: 13, family: "Pretendard" },
+          bodyFont:  { size: 13, family: "Pretendard" },
+          padding: 10,
+          callbacks: {
+            label: function(ctx) {
+              var v = ctx.parsed.y;
+              return "  " + ctx.dataset.label + ": " + (v !== null ? v + "억" : "-");
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: "rgba(0,0,0,0.06)", drawBorder: false },
+          ticks: { font: { size: 13, family: "Pretendard", weight: "600" }, color: "#374151" },
+          border: { display: false },
+        },
+        y: {
+          grid: { color: "rgba(0,0,0,0.06)", drawBorder: false },
+          ticks: {
+            font: { size: 13, family: "Pretendard" },
+            color: "#6b7280",
+            callback: function(v) { return v + "억"; },
+            maxTicksLimit: 6,
+          },
+          border: { display: false },
+          beginAtZero: false,
+        }
+      }
+    },
+    plugins: [labelsPlugin, fcstLinePlugin],
   });
 }

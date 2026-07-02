@@ -1,3 +1,173 @@
+﻿function renderSummary() {
+  var planRows = state.mappedData.plan_monthly;
+  var hasData  = planRows.length > 0;
+
+  // 완제품(9코드) RTF 부족 아이템: supplyQty < salesQty인 월 존재
+  var rtfMap = new Map();
+  if (hasData) {
+    planRows.forEach(function(row) {
+      var code = cleanOptional(row.itemCode);
+      if (!code || !code.startsWith("9")) return;
+      var plant = cleanOptional(row.plant), month = cleanOptional(row.month);
+      if (!plant || !month) return;
+      var key = code + "|" + plant;
+      var sales  = cleanNumber(row.salesQty)  || 0;
+      var supply = cleanNumber(row.supplyQty) || 0;
+      if (!rtfMap.has(key))
+        rtfMap.set(key, { code:code, name:cleanOptional(row.itemName)||code, plant:plant, itemType:cleanOptional(row.itemType)||"완제품", shortageMonths:[] });
+      var e = rtfMap.get(key);
+      if (sales > 0 && supply < sales && !e.shortageMonths.includes(month)) e.shortageMonths.push(month);
+    });
+  }
+  var rtfItems = [];
+  rtfMap.forEach(function(item) { if (item.shortageMonths.length > 0) rtfItems.push(item); });
+  rtfItems.sort(function(a,b) { return b.shortageMonths.length - a.shortageMonths.length; });
+
+  // BOM 공급원인 부족 아이템
+  var bomDone  = state.bomStatus === BOM_STATUS.DONE;
+  var bomItems = bomDone && state.bomResult && state.bomResult.items
+    ? state.bomResult.items.filter(function(i) { return i.hasAnyShortage; })
+    : null;
+
+  // KPI 카드 렌더
+  function kpiVal(n, avail) {
+    if (!avail) return { val:"연결필요", cls:"neutral" };
+    if (n === 0) return { val:"없음", cls:"ok" };
+    return { val:n + "건", cls:n > 0 ? "shortage" : "ok" };
+  }
+  var kpiRtf = kpiVal(rtfItems.length, hasData);
+  var kpiBom = kpiVal(bomItems ? bomItems.length : 0, bomItems !== null);
+  var kpiCards = [
+    { label:"RTF 조정 필요",       val:kpiRtf.val, cls:kpiRtf.cls, screen:"rtf",               desc:"판매계획 대비 공급 부족 품목", link:"RTF판정 화면 바로가기" },
+    { label:"공급원인 확인 필요",   val:kpiBom.val, cls:kpiBom.cls, screen:"constraint",         desc:"BOM 전개 기준 자재 부족 현황", link:"공급원인 화면 바로가기" },
+    { label:"재고초과 조정 필요",   val:"-",        cls:"",         screen:"inventory-forecast", desc:"후속 단계 구현 예정",          link:"재고전망 화면 바로가기" },
+    { label:"최종 영향 확인 필요",  val:"-",        cls:"",         screen:"impact",             desc:"후속 단계 구현 예정",          link:"조정영향 화면 바로가기" },
+  ];
+
+  var kpiHtml = "<div class=\"sum-kpi-grid\">" + kpiCards.map(function(c) {
+    return "<div class=\"sum-kpi-card\" onclick=\"render('" + escapeHtml(c.screen) + "')\" title=\"" + escapeHtml(c.link) + "\">" +
+           "<div class=\"sum-kpi-label\">" + escapeHtml(c.label) + "</div>" +
+           "<div class=\"sum-kpi-value " + escapeHtml(c.cls) + "\">" + escapeHtml(c.val) + "</div>" +
+           "<div class=\"sum-kpi-desc\">" + escapeHtml(c.desc) + "</div>" +
+           "<div class=\"sum-kpi-nav\">→ " + escapeHtml(c.link) + "</div></div>";
+  }).join("") + "</div>";
+
+  // 안건 목록 생성 (실제 데이터만, 가짜 항목 없음)
+  var agendaRows = [];
+
+  if (!hasData) {
+    agendaRows.push({ type:"공통", months:"-", category:"-", items:"데이터 미연결", summary:"데이터점검 화면에서 RAW 파일을 먼저 선택하십시오.", screen:"data-check", status:"확인 필요" });
+  } else {
+    // RTF 조정 안건 (상위 15개)
+    rtfItems.slice(0, 15).forEach(function(item) {
+      var mths = item.shortageMonths.slice().sort().map(monthLabel).join(", ");
+      agendaRows.push({
+        type:     "RTF 조정",
+        months:   mths,
+        category: item.itemType || "완제품",
+        items:    item.name,
+        summary:  "판매계획 대비 공급 부족 (" + item.shortageMonths.length + "개월)",
+        screen:   "rtf",
+        status:   "확인 필요",
+      });
+    });
+
+    // 공급원인 확인 안건
+    if (bomItems && bomItems.length > 0) {
+      bomItems.slice(0, 15).forEach(function(item) {
+        var shMths = item.monthlyData.filter(function(md) { return md.shortageQty > 0; })
+                       .map(function(md) { return monthLabel(md.month); }).join(", ");
+        agendaRows.push({
+          type:     "공급원인 확인",
+          months:   shMths || "-",
+          category: item.displayCategory || "자재",
+          items:    item.componentName || item.componentCode,
+          summary:  item.note || "자재 부족 발생",
+          screen:   "constraint",
+          status:   "조정 필요",
+        });
+      });
+    } else if (state.bomStatus === BOM_STATUS.IDLE) {
+      agendaRows.push({
+        type:"공급원인 확인", months:"-", category:"전체", items:"-",
+        summary:"BOM 전개 전 — 공급원인 화면에서 BOM 전개 실행 필요",
+        screen:"constraint", status:"확인 필요",
+      });
+    }
+
+    if (agendaRows.length === 0) {
+      agendaRows.push({ type:"없음", months:"-", category:"-", items:"-", summary:"현재 계획 기준 조정 필요 안건이 없습니다.", screen:"", status:"완료" });
+    }
+  }
+
+  // 유형별 배지 CSS 클래스
+  function typeCls(t) {
+    if (t === "RTF 조정")      return "sum-type-rtf";
+    if (t === "공급원인 확인") return "sum-type-bom";
+    if (t === "재고초과 조정") return "sum-type-inv";
+    if (t === "최종 영향 검토") return "sum-type-impact";
+    return "sum-type-default";
+  }
+  // 진행상태 배지 CSS 클래스
+  function statusCls(s) {
+    if (s === "확인 필요")     return "sum-s-check";
+    if (s === "조정 필요")     return "sum-s-adjust";
+    if (s === "영향 검토 필요") return "sum-s-review";
+    if (s === "완료")          return "sum-s-done";
+    return "sum-s-default";
+  }
+
+  var agendaThead = "<tr><th>안건유형</th><th>대상월</th><th>대상구분</th><th>주요 품목·자재</th><th>문제 요약</th><th>확인 화면</th><th>진행상태</th></tr>";
+  var agendaTbody = agendaRows.map(function(row) {
+    var navBtn = row.screen
+      ? "<button type=\"button\" class=\"sum-nav-btn\" onclick=\"render('" + escapeHtml(row.screen) + "')\">" + escapeHtml(screenButtonLabel(row.screen)) + "</button>"
+      : "-";
+    return "<tr>" +
+      "<td><span class=\"sum-type-badge " + typeCls(row.type) + "\">" + escapeHtml(row.type) + "</span></td>" +
+      "<td>" + escapeHtml(row.months) + "</td>" +
+      "<td>" + escapeHtml(row.category) + "</td>" +
+      "<td class=\"sum-td-left\" title=\"" + escapeHtml(row.items) + "\">" + escapeHtml(row.items) + "</td>" +
+      "<td class=\"sum-td-left\" title=\"" + escapeHtml(row.summary) + "\">" + escapeHtml(row.summary) + "</td>" +
+      "<td>" + navBtn + "</td>" +
+      "<td><span class=\"sum-status-badge " + statusCls(row.status) + "\">" + escapeHtml(row.status) + "</span></td>" +
+      "</tr>";
+  }).join("");
+
+  var chartSection = hasData
+    ? "<div class=\"sum-card sum-chart-card\">" +
+        "<div class=\"sum-chart-header\">" +
+          "<h3>연간 수급 추이</h3>" +
+          "<div class=\"sum-scenario-btns\">" +
+            "<button class=\"sum-scen-btn\" data-scenario=\"기존\">기존</button>" +
+            "<button class=\"sum-scen-btn\" data-scenario=\"RTF조정\">RTF조정</button>" +
+            "<button class=\"sum-scen-btn\" data-scenario=\"과잉조정\">과잉조정</button>" +
+          "</div>" +
+        "</div>" +
+        "<div class=\"sum-chart-wrap\"><canvas id=\"sumInvChart\"></canvas></div>" +
+        "<div id=\"sumChartLegend\" class=\"sum-chart-legend\"></div>" +
+      "</div>"
+    : "";
+
+  return "<div class=\"sum-screen\">" +
+    "<section class=\"sum-card sum-header\">" +
+    "<h2>회의안건</h2>" +
+    "<p>현재 계획 기준으로 RTF 공급부족 및 재고초과 이슈를 확인하고, RTF 조정과 재고조정 의사결정이 필요한 안건을 요약합니다.</p>" +
+    "</section>" +
+    kpiHtml +
+    chartSection +
+    "<div class=\"sum-card sum-agenda-card\">" +
+    "<div class=\"sum-agenda-header\"><h3>회의 안건 목록</h3><span class=\"sum-agenda-note\">데이터 기준 자동 생성 · 가짜 항목 없음</span></div>" +
+    "<div class=\"sum-h-scroll\"><table class=\"sum-agenda-table\"><thead>" + agendaThead + "</thead><tbody>" + agendaTbody + "</tbody></table></div>" +
+    "</div></div>";
+}
+
+function screenButtonLabel(screenId) {
+  var labels = { rtf:"RTF판정 보기", constraint:"공급원인 보기", "inventory-forecast":"재고전망 보기", "inventory-variance":"재고변동 보기", diagnosis:"수급진단 보기", adjustment:"조정입력 보기", impact:"조정영향 보기", "data-check":"데이터점검 이동", summary:"회의안건 보기" };
+  return labels[screenId] || "화면 이동";
+}
+
+// ── 수급진단 ──────────────────────────────────────────────────────────────────
+
 // ── 종합현황 차트 ─────────────────────────────────────────────────────────────
 
 var _summaryChartInst = null;
@@ -288,7 +458,7 @@ function bindSummary() {
         meta.data.forEach(function(el, i) {
           var val = ds.data[i];
           if (!val || val <= 0) return;
-          ctx.font = "bold 12px " + FONT;
+          ctx.font = "bold 13px " + FONT;
           ctx.fillStyle = "#6b7280";
           ctx.fillText(Math.round(val).toLocaleString(), el.x, el.y - 4);
         });
@@ -305,7 +475,7 @@ function bindSummary() {
       var metaActive = chart.getDatasetMeta(activeInvLineIdx);
 
       ctx.save();
-      ctx.font = "bold 12px " + FONT;
+      ctx.font = "bold 13px " + FONT;
       ctx.textAlign = "center";
 
       allMonths.forEach(function(m, i) {
@@ -318,34 +488,33 @@ function bindSummary() {
         if (!el) return;
 
         // 재고금액 레이블 (선 위)
-        ctx.font         = "bold 12px " + FONT;
+        ctx.font         = "bold 16px " + FONT;
         ctx.fillStyle    = isFcst ? (sc === "기존" ? "#9ca3af" : "#1e3a8a") : "#1e3a8a";
         ctx.textBaseline = "bottom";
-        ctx.fillText(Math.round(lineVal).toLocaleString(), el.x, el.y - 8);
+        ctx.fillText(Math.round(lineVal).toLocaleString() + "억", el.x, el.y - 8);
 
         // 재고일수 태그 (선 아래)
         var dv = activeDaysData ? activeDaysData[i] : null;
         if (dv === null || dv === undefined) return;
         var text = Math.round(dv) + "일";
-        ctx.font = "bold 12px " + FONT;
-        var tw   = ctx.measureText(text).width + 12;
-        var th   = 18;
+        ctx.font = "bold 15px " + FONT;
+        var tw   = ctx.measureText(text).width + 18;
+        var th   = 26;
         var tx   = el.x - tw / 2;
-        var ty   = el.y + 5;
+        var ty   = el.y + 6;
         if (ty + th > chart.chartArea.bottom - 2) return;
 
-        var isFcstColor = isFcst && sc !== "기존";
-        ctx.fillStyle = isFcstColor ? "rgba(30,58,138,0.08)" : "rgba(30,58,138,0.08)";
-        if (sc === "과잉조정" && isFcst) ctx.fillStyle = "rgba(22,163,74,0.08)";
-        _drawRoundRect(ctx, tx, ty, tw, th, 4);
+        var isExcess = sc === "과잉조정" && isFcst;
+        ctx.fillStyle = isExcess ? "rgba(22,163,74,0.10)" : "rgba(15,118,110,0.13)";
+        _drawRoundRect(ctx, tx, ty, tw, th, 5);
         ctx.fill();
 
-        ctx.strokeStyle = sc === "과잉조정" && isFcst ? "rgba(22,163,74,0.3)" : "rgba(30,58,138,0.2)";
-        ctx.lineWidth   = 0.8;
-        _drawRoundRect(ctx, tx, ty, tw, th, 4);
+        ctx.strokeStyle = isExcess ? "rgba(22,163,74,0.35)" : "rgba(15,118,110,0.40)";
+        ctx.lineWidth   = 1.0;
+        _drawRoundRect(ctx, tx, ty, tw, th, 5);
         ctx.stroke();
 
-        ctx.fillStyle    = sc === "과잉조정" && isFcst ? "#16a34a" : (isFcst && sc === "기존" ? "#9ca3af" : "#1e3a8a");
+        ctx.fillStyle    = isExcess ? "#16a34a" : "#0f766e";
         ctx.textBaseline = "middle";
         ctx.fillText(text, el.x, ty + th / 2);
       });
@@ -373,13 +542,14 @@ function bindSummary() {
         },
       },
       scales: {
-        x: { grid: { color: "#f3f4f6" }, ticks: { font: { family: FONT, size: 13 } } },
+        x: { grid: { color: "#f3f4f6" }, ticks: { font: { family: FONT, size: 14 } } },
         y: {
           grid: { color: "#f3f4f6" },
-          ticks: { font: { family: FONT, size: 13 }, callback: function(v) { return Math.round(v).toLocaleString() + "억"; } },
+          ticks: { font: { family: FONT, size: 14 }, callback: function(v) { return Math.round(v).toLocaleString() + "억"; } },
         },
       },
     },
     plugins: [datalabelsPlugin, daysTagsPlugin],
   });
 }
+
