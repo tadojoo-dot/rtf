@@ -1,10 +1,26 @@
 ﻿// ── 탭 렌더 ──────────────────────────────────────────────────────────────────
+// 스토리 탭(번호+그룹 라벨) / 도구 탭(우측, 번호 없음) 분리
 function renderTabs(activeId) {
   var visible = menus.filter(function(m) { return m[3] !== false; });
-  tabNav.innerHTML = visible.map(function(m, idx) {
+  var story   = visible.filter(function(m) { return m[4] !== "util"; });
+  var utils   = visible.filter(function(m) { return m[4] === "util"; });
+
+  var html = "";
+  var lastGroup = null;
+  story.forEach(function(m, idx) {
+    var id = m[0], label = m[1], group = m[4] || "";
+    if (group && group !== lastGroup) {
+      html += `<span class="nav-group-label">${escapeHtml(group)}</span>`;
+      lastGroup = group;
+    }
+    html += `<button type="button" class="tab-btn ${id === activeId ? "active" : ""}" data-menu-id="${escapeHtml(id)}"><span class="tab-num">${idx + 1}</span><span class="tab-label">${escapeHtml(label)}</span></button>`;
+  });
+  utils.forEach(function(m, idx) {
     var id = m[0], label = m[1];
-    return `<button type="button" class="tab-btn ${id === activeId ? "active" : ""}" data-menu-id="${escapeHtml(id)}"><span class="tab-num">${idx + 1}</span><span class="tab-label">${escapeHtml(label)}</span></button>`;
-  }).join("");
+    html += `<button type="button" class="tab-btn tab-util ${idx === 0 ? "tab-util-first " : ""}${id === activeId ? "active" : ""}" data-menu-id="${escapeHtml(id)}"><span class="tab-label">${escapeHtml(label)}</span></button>`;
+  });
+
+  tabNav.innerHTML = html;
   tabNav.querySelectorAll("[data-menu-id]").forEach(function(btn) {
     btn.addEventListener("click", function() { render(btn.dataset.menuId); });
   });

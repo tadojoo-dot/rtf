@@ -11,18 +11,18 @@ const ERROR_TEXTS = new Set(["#REF!","#VALUE!","#DIV/0!","undefined","null","NaN
 const SHORT_TEXT = { [NEED_DATA]:"연결필요", [NEED_MASTER]:"확인필요" };
 
 // 메뉴
-// [id, 탭 짧은명, 화면 본문 제목, nav에 표시 여부]
+// [id, 탭 짧은명, 화면 본문 제목, nav에 표시 여부, 그룹("util"은 우측 도구 영역)]
 const menus = [
-  ["meeting",            "회의체계",  "학습과 소통 회의체계",                        true],
-  ["summary",            "회의안건",  "회의안건",                                   true],
-  ["rtf",                "RTF판정",   "RTF(공급가능성 판정)",                        true],
-  ["constraint",         "공급원인",  "공급제한 원인 분석",                          true],
-  ["inventory-variance", "과잉감축",  "적정재고 초과 품목 감축 계획",               true],
-  ["inventory-forecast", "재고전망",  "조정 반영 품목군별 재고 검증",               true],
-  ["impact",             "조정영향",  "조정 후 영향 분석",                          true],
-  ["minutes",            "회의록",    "회의록 및 결정사항",                         true],
-  ["bom-sim",            "BOM시뮬",   "BOM 전개 시뮬레이션",                         true],
-  ["download",           "다운로드",  "양식 다운로드",                               true],
+  ["meeting",            "회의체계",  "학습과 소통 회의체계",                        true,  "도입"],
+  ["summary",            "회의안건",  "회의안건",                                   true,  "도입"],
+  ["rtf",                "RTF판정",   "RTF(공급가능성 판정)",                        true,  "1부 품절방어"],
+  ["constraint",         "공급원인",  "공급제한 원인 분석",                          true,  "1부 품절방어"],
+  ["inventory-variance", "과잉감축",  "적정재고 초과 품목 감축 계획",               true,  "2부 재고절감"],
+  ["inventory-forecast", "재고전망",  "조정 반영 품목군별 재고 검증",               true,  "2부 재고절감"],
+  ["impact",             "조정영향",  "조정 후 영향 분석",                          true,  "마무리"],
+  ["minutes",            "회의록",    "회의록 및 결정사항",                         true,  "마무리"],
+  ["bom-sim",            "BOM시뮬",   "BOM 전개 시뮬레이션",                         true,  "util"],
+  ["download",           "다운로드",  "양식 다운로드",                               true,  "util"],
   ["data-check",         "데이터점검","데이터 정합성 점검",                         false],
   ["diagnosis",          "수급진단",  "수급진단 및 조정 대상 선별",                 false],
   ["adjustment",         "조정입력",  "조정안 입력",                                false],
