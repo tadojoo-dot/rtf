@@ -1177,7 +1177,8 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
   background: #eef1f5; border-radius: 4px; padding: 2px 5px; margin-bottom: 5px;
 }
 /* 상품 표: 품목명 가운데 정렬 (완제품 표는 그대로) */
-.cst-sa-goods .cst-sa-name { text-align: center; }
+.cst-sa-goods .cst-sa-name,
+.cst-sa-goods .cst-sa-namehd { text-align: center !important; }
 .cst-sa-short-cell { color: #9ca3af; }
 .cst-sa-short-num  { color: #b91c1c; font-weight: 700; font-size: 15px; background: #fef2f2 !important; }
 .cst-sa-resolved   { color: #15803d; font-weight: 700; font-size: 15px; background: #f0fdf4 !important; }
