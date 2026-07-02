@@ -1025,19 +1025,39 @@ function getActualsAnchor() {
   var rows = (state.mappedData.actuals_monthly || []).filter(function(r) { return r.plant === "전체"; });
   var byMonth = {};
   rows.forEach(function(r) {
-    if (!byMonth[r.month]) byMonth[r.month] = { inv: 0, out: 0 };
-    if (Number.isFinite(r.invAmt))   byMonth[r.month].inv += r.invAmt;
-    if (Number.isFinite(r.salesAmt)) byMonth[r.month].out += r.salesAmt;
+    if (!byMonth[r.month]) byMonth[r.month] = { inv: 0, out: 0, outFgSp: 0, outWip: 0 };
+    var b = byMonth[r.month];
+    if (Number.isFinite(r.invAmt))   b.inv += r.invAmt;
+    if (Number.isFinite(r.salesAmt)) {
+      b.out += r.salesAmt;
+      if (r.type === "완제품" || r.type === "상품") b.outFgSp += r.salesAmt;
+      if (r.type === "재공품")                      b.outWip  += r.salesAmt;
+    }
   });
   var ms = Object.keys(byMonth).filter(function(m) { return byMonth[m].inv !== 0; }).sort();
   if (!ms.length) { _actualsAnchorCache = null; return null; }
   var last = ms[ms.length - 1];
+  // 앵커 연도 YTD 출고 누계 (관리기준 누적 분모의 실적 구간)
+  var year = last.slice(0, 4);
+  var cumOut = 0, ytdFgSp = 0, ytdWip = 0;
+  ms.forEach(function(m) {
+    if (m.slice(0, 4) !== year || m > last) return;
+    cumOut += byMonth[m].out; ytdFgSp += byMonth[m].outFgSp; ytdWip += byMonth[m].outWip;
+  });
   // 결산 값은 억 단위 → 원으로 환산
-  _actualsAnchorCache = { month: last, totalInvWon: byMonth[last].inv * 1e8, monthlyOutWon: byMonth[last].out * 1e8 };
+  _actualsAnchorCache = {
+    month:         last,
+    totalInvWon:   byMonth[last].inv * 1e8,
+    monthlyOutWon: byMonth[last].out * 1e8,
+    cumOutAllWon:  cumOut  * 1e8, // 전체출고 YTD (전 유형)
+    ytdOutFgSpWon: ytdFgSp * 1e8, // 완제품+상품 출고 YTD
+    ytdOutWipWon:  ytdWip  * 1e8, // 재공품 출고 YTD (BOM 추정 불가분 → 보정용)
+  };
   return _actualsAnchorCache;
 }
 
 // 전체재고(월) = 결산 총재고 앵커 + 완제품·상품 재고 변동분(장부단가, opening 대비)
+//              + 미착품·평가충당금 전망 변동 (결산 시트에 값 있으면, 없으면 앵커월 유지)
 function totalInvAmountWon(items, mi, anchor) {
   var delta = 0;
   items.forEach(function(it) {
@@ -1049,6 +1069,14 @@ function totalInvAmountWon(items, mi, anchor) {
     var base = Number.isFinite(it.baseQty) ? it.baseQty : 0;
     delta += (ms.endingQty - base) * uv;
   });
+  var meta = getActualsMeta();
+  var am = meta[anchor.month], mm = meta[getRtfMonths()[mi]];
+  if (am && mm) {
+    if (Number.isFinite(mm.michakInv) && Number.isFinite(am.michakInv))
+      delta += (mm.michakInv - am.michakInv) * 1e8;
+    if (Number.isFinite(mm.allowanceInv) && Number.isFinite(am.allowanceInv))
+      delta += (mm.allowanceInv - am.allowanceInv) * 1e8;
+  }
   return anchor.totalInvWon + delta;
 }
 
@@ -1064,7 +1092,11 @@ function getActualsMeta() {
 
 // 월별 매출원가 추정 (원) = 완제품·상품 충족판매수량(rtfQty) × 장부단가
 // RTF 증량·상품입고 조정 시 rtfQty가 변해 매출원가 누적(분모)에도 자동 반영됨
+var _cogsMemo = new WeakMap(); // items 배열별 월 캐시 (같은 렌더 내 반복 호출 절약)
 function estMonthCogsWon(items, mi) {
+  var arr = _cogsMemo.get(items);
+  if (!arr) { arr = []; _cogsMemo.set(items, arr); }
+  if (arr[mi] !== undefined) return arr[mi];
   var sum = 0;
   items.forEach(function(it) {
     if (it.typeGroup !== "완제품" && it.typeGroup !== "상품") return;
@@ -1075,7 +1107,39 @@ function estMonthCogsWon(items, mi) {
     if (!Number.isFinite(qty) || !Number.isFinite(it.unitInvValue)) return;
     sum += qty * it.unitInvValue;
   });
+  arr[mi] = sum;
   return sum;
+}
+
+// 월별 전체출고 추정 (원) — 관리기준 누적 분모용
+// · BOM 전개 완료: 제상품 출고 + 자재류(원료·자재·반제품) 실적 월평균 × BOM 단계투입 월별 패턴
+//                  + 재공품 실적 월평균
+//   (BOM 단가는 기초재고 기반이라 재고 0 자재가 누락 → 절대값 대신 월별 패턴만 쓰고
+//    스케일은 결산 실적 YTD 월평균에 앵커)
+// · BOM 전개 전:   제상품 출고 × 실적 비율(전체출고 YTD ÷ 제상품출고 YTD) 폴백
+function estMonthMgmtOutWon(items, mi, anchor) {
+  var fgSp = estMonthCogsWon(items, mi);
+  var stageMap = (typeof BOM_STATUS !== "undefined" && state.bomStatus === BOM_STATUS.DONE &&
+                  state.bomResult && state.bomResult.stageOutByMonth) ? state.bomResult.stageOutByMonth : null;
+  var anchorMonths = Number(anchor.month.slice(5, 7)); // 앵커 연도 경과 월수
+  var matYtdWon = anchor.cumOutAllWon - anchor.ytdOutFgSpWon - anchor.ytdOutWipWon; // 자재류 출고 YTD
+  if (stageMap && anchorMonths > 0 && matYtdWon > 0) {
+    var months = getRtfMonths();
+    var sum = 0, cnt = 0;
+    months.forEach(function(m2) {
+      var v = stageMap[m2];
+      if (Number.isFinite(v) && v > 0) { sum += v; cnt++; }
+    });
+    if (sum > 0) {
+      var stageAvg  = sum / cnt;
+      var matAvgWon = matYtdWon / anchorMonths;
+      var wipAvgWon = anchor.ytdOutWipWon / anchorMonths;
+      var stage     = stageMap[months[mi]] || 0;
+      return fgSp + matAvgWon * (stage / stageAvg) + wipAvgWon;
+    }
+  }
+  var rs = anchor.ytdOutFgSpWon > 0 ? anchor.cumOutAllWon / anchor.ytdOutFgSpWon : 1;
+  return fgSp * rs;
 }
 
 // ── 재고일수(공시기준) = 재고금액 × 경과일수(월수×30) ÷ 매출원가(누적) ─────────
@@ -1094,13 +1158,8 @@ function rtfDisclosureDays(items, mi) {
   var months = getRtfMonths();
   var m = months[mi];
 
-  // 분자: 재고금액
+  // 분자: 재고금액 (미착품·평가충당금 전망은 totalInvAmountWon에서 공통 반영)
   var amt = totalInvAmountWon(items, mi, anchor);
-  var mm = meta[m] || {};
-  if (Number.isFinite(mm.michakInv) && Number.isFinite(anchorMeta.michakInv))
-    amt += (mm.michakInv - anchorMeta.michakInv) * 1e8;
-  if (Number.isFinite(mm.allowanceInv) && Number.isFinite(anchorMeta.allowanceInv))
-    amt += (mm.allowanceInv - anchorMeta.allowanceInv) * 1e8;
 
   // 분모: 매출원가(누적, 원)
   var mYear = m.slice(0, 4);
@@ -1118,11 +1177,25 @@ function rtfDisclosureDays(items, mi) {
 }
 
 // 헤드라인 재고: 결산 연결 시 전체재고, 미연결 시 완제품·상품(기존)로 폴백
+// 재고일수(관리기준) = 재고금액 × 경과일수(월수×30) ÷ 전체출고 누적
+//   실적월까지는 결산 전체출고 YTD, 이후는 estMonthMgmtOutWon 월별 추정 누적
+//   (연도 바뀌면 누적 리셋 — 공시기준과 동일 사상)
 function rtfHeadlineInv(items, mi) {
   var anchor = getActualsAnchor();
   if (anchor) {
     var amt = totalInvAmountWon(items, mi, anchor);
-    var days = anchor.monthlyOutWon > 0 ? amt * 30 / anchor.monthlyOutWon : null;
+    var days = null;
+    var months = getRtfMonths();
+    var m = months[mi], mYear = m.slice(0, 4);
+    var cum = (mYear === anchor.month.slice(0, 4)) ? anchor.cumOutAllWon : 0;
+    for (var k = 0; k <= mi; k++) {
+      var km = months[k];
+      if (km <= anchor.month) continue;       // 실적월은 결산 누적에 이미 포함
+      if (km.slice(0, 4) !== mYear) continue; // 누적은 해당 연도 내에서만
+      cum += estMonthMgmtOutWon(items, k, anchor);
+    }
+    if (cum > 0)                        days = amt * (Number(m.slice(5, 7)) * 30) / cum;
+    else if (anchor.monthlyOutWon > 0)  days = amt * 30 / anchor.monthlyOutWon; // 폴백(구방식)
     return { amount: amt, days: days, isTotal: true };
   }
   var agg = aggregateMonth(items, mi);

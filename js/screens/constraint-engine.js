@@ -145,7 +145,7 @@ function computeBomExpansion() {
     compSupplyKeys.add(code + "|" + plant);
   });
 
-  // 기초재고: code|plant → { qty, unit }
+  // 기초재고: code|plant → { qty, unit, amt, stdCost } (amt·stdCost는 장부단가용)
   var inventoryMap = new Map();
   inventoryRows.forEach(function(row) {
     var code = cleanOptional(row.itemCode), plant = cleanOptional(row.plant);
@@ -153,9 +153,15 @@ function computeBomExpansion() {
     var key  = code + "|" + plant;
     var unit = cleanOptional(row.unit) || "";
     var qty  = cleanNumber(row.baseQty) || 0;
+    var amt  = cleanNumber(row.baseAmount) || 0;
+    var std  = cleanNumber(row.standardCost);
     var ex   = inventoryMap.get(key);
-    if (ex) { ex.qty += qty; if (!ex.unit && unit) ex.unit = unit; }
-    else inventoryMap.set(key, { qty:qty, unit:unit });
+    if (ex) {
+      ex.qty += qty; ex.amt += amt;
+      if (!ex.unit && unit) ex.unit = unit;
+      if (ex.stdCost === null && std !== null) ex.stdCost = std;
+    }
+    else inventoryMap.set(key, { qty:qty, unit:unit, amt:amt, stdCost:std });
   });
 
   // 기준정보 map
@@ -195,6 +201,27 @@ function computeBomExpansion() {
     _dupInRoot:       new Map(),
   };
   var _seenExact = new Set();
+
+  // ── 월별 단계 투입금액 집계 (관리기준 출고 추정용) ─────────────────────────
+  // 결산 전체출고는 원료→반제품→완제품 각 투입 단계를 단계마다 세므로 (중복 집계),
+  // 여기서도 모든 BOM 구성품 행(원료·자재·반제품)의 투입금액을 단계별로 누적.
+  // 장부단가 = 기초금액/기초수량 (없으면 표준원가). 단가 없는 구성품은 스킵.
+  var stageOutByMonth = {};
+  function _unitVal(code, plant) {
+    var e = inventoryMap.get(code + "|" + plant);
+    if (!e) return null;
+    if (e.amt > 0 && e.qty > 0) return e.amt / e.qty;
+    return Number.isFinite(e.stdCost) && e.stdCost > 0 ? e.stdCost : null;
+  }
+  function _addStage(code, matPlant, parentPlant, rootCode, effRatio) {
+    var uv = _unitVal(code, matPlant);
+    if (uv === null) return;
+    months.forEach(function(month) {
+      var prodQty = prodPlanMap.get(rootCode + "|" + parentPlant + "|" + month) || 0;
+      if (!prodQty) return;
+      stageOutByMonth[month] = (stageOutByMonth[month] || 0) + prodQty * effRatio * uv;
+    });
+  }
 
   // ── 구성품별 소요량 집계 (혼합형 다단계 BOM)
   var compReqs = new Map();
@@ -280,6 +307,9 @@ function computeBomExpansion() {
     if (rootSeen.has(bom.componentCode)) bomStat.dupInRootCount++;
     else rootSeen.add(bom.componentCode);
 
+    // 단계 투입금액: 모든 구성품 행(반제품 경유 포함)을 단계별로 집계
+    _addStage(bom.componentCode, bom.plant, parentPlant, bom.rootItemCode, ratio);
+
     // ── 반제품/재공품 혼합형 다단계 BOM 처리
     if (_isSemi(bom.componentCode, bom.itemCategory)) {
       var semiSubs  = semiBomRowsMap.get(bom.componentCode + "|" + bom.plant);
@@ -307,6 +337,7 @@ function computeBomExpansion() {
           var subR = sub.baseQty > 0 ? sub.componentQty / sub.baseQty : (sub.componentQty || 0);
           _addComp(sub.componentCode, sub.componentName, sub.componentUnit, sub.itemCategory,
                    bom.plant, parentPlant, rootKey, bom.rootItemCode, rootName, rootGroup, ratio * subR);
+          _addStage(sub.componentCode, bom.plant, parentPlant, bom.rootItemCode, ratio * subR);
         });
         return; // 반제품 자체는 집계 제외
       }
@@ -463,9 +494,10 @@ function computeBomExpansion() {
   });
   var sorted = sortConstraintItems(constraintItems);
 
-  result.status      = BOM_STATUS.DONE;
-  result.completedAt = new Date();
-  result.items       = sorted;
+  result.status          = BOM_STATUS.DONE;
+  result.completedAt     = new Date();
+  result.items           = sorted;
+  result.stageOutByMonth = stageOutByMonth; // 월별 단계 투입금액 (원) — 관리기준 출고 추정용
   result.stats = {
     totalConstraints:  sorted.filter(function(i) { return i.hasAnyShortage; }).length,
     sharedConstraints: sorted.filter(function(i) { return i.isShared && i.hasAnyShortage; }).length,
