@@ -7,6 +7,7 @@ function detectRawType(fileName) {
   if (name.includes("사업부") && name.includes("품목 기준정보")) return "itemMaster";
   if (name.includes("BOM"))              return "bom";
   if (name.includes("적정재고"))         return "targetInventory";
+  if (name.includes("매출"))             return "salesActual";
   if (name.includes("결산실적_월별요약") || name.includes("결산_raw") || name.includes("결산_RAW")) return "actualMonthly";
   if (name.includes("RTF_RAW_보조양식")) return "rtfHelper";
   return "unknown";
@@ -120,7 +121,7 @@ function mapTargetInvRows(rows) {
 }
 
 function mapRawData(rawFiles) {
-  const tables = { item_master:[], inventory_base:[], plan_monthly:[], bom_components:[], business_mapping:[], target_inv:[], actuals_monthly:[] };
+  const tables = { item_master:[], inventory_base:[], plan_monthly:[], bom_components:[], business_mapping:[], target_inv:[], actuals_monthly:[], sales_actual:[] };
   Object.values(rawFiles).filter((f) => f.parseSuccess).forEach((file) => {
     const rows = file.sheets?.[0]?.rows ?? [];
     if (file.rawType === "salesSupplyPlan")   tables.plan_monthly.push(...mapPlanRows(rows));
@@ -133,6 +134,7 @@ function mapRawData(rawFiles) {
     }
     if (file.rawType === "bom")             tables.bom_components.push(...mapBomRows(rows));
     if (file.rawType === "targetInventory") tables.target_inv.push(...mapTargetInvRows(rows));
+    if (file.rawType === "salesActual")     tables.sales_actual.push(...mapSalesActualRows(rows));
     if (file.rawType === "actualMonthly")   tables.actuals_monthly.push(...mapActualsRows(rows));
   });
   return tables;
@@ -225,6 +227,24 @@ function mapBomRows(rows) {
     componentName:  get(row, idx("자재 내역", 1)),
     componentQty:   toNumber(get(row, idx("구성요소 수량"))),
     componentUnit:  get(row, idx("구성품목 단위")),
+  }));
+}
+
+// ── 매출_RAW 파싱 ─────────────────────────────────────────────────────────────
+// 판가 = 순매출액(공시) / 총수량(PA). 품목별로 합산 후 나눠 판가 산출(rtf.js buildSalesPriceMap).
+// 매출수량 컬럼은 전 행 0이라 사용 불가 → 총수량(PA)를 판매수량 단위로 사용.
+function mapSalesActualRows(rows) {
+  const headerIndex = findHeaderIndex(rows, ["상품", "순매출액(공시)", "총수량(PA)"]);
+  if (headerIndex < 0) return [];
+  const header = rows[headerIndex];
+  const idx = indexer(header);
+  return rows.slice(headerIndex + 1).filter((row) => get(row, idx("상품"))).map((row) => ({
+    source:   "매출_RAW.xlsx",
+    plant:    normalizePlant(get(row, idx("플랜트"))),
+    itemCode: normalizeCode(get(row, idx("상품"))),
+    itemName: get(row, idx("자재 내역")),
+    netSales: toNumber(get(row, idx("순매출액(공시)"))),
+    paQty:    toNumber(get(row, idx("총수량(PA)"))),
   }));
 }
 

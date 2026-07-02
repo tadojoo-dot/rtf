@@ -150,6 +150,31 @@ function buildSharedAlertSet() {
   return set;
 }
 
+// ── 판가(매출단가) 맵 ─────────────────────────────────────────────────────────
+// 매출_RAW: 품목별 순매출액(공시) 합계 ÷ 총수량(PA) 합계 = 판가 (반품·복수행 자동 처리).
+// 월 구분이 없는 단일 집계 파일 → 품목별 고정 단가. itemCode 기준 매칭.
+var _salesPriceCache = null;
+function buildSalesPriceMap() {
+  if (_salesPriceCache) return _salesPriceCache;
+  const agg = new Map(); // itemCode → { net, pa }
+  (state.mappedData.sales_actual || []).forEach(function(r) {
+    const code = cleanOptional(r.itemCode);
+    if (!code) return;
+    const e = agg.get(code) || { net: 0, pa: 0 };
+    e.net += (cleanNumber(r.netSales) || 0);
+    e.pa  += (cleanNumber(r.paQty)   || 0);
+    agg.set(code, e);
+  });
+  const map = new Map();
+  agg.forEach(function(v, code) {
+    if (Math.abs(v.pa) < 0.001) return;   // 수량 0 → 판가 산출 불가
+    const price = v.net / v.pa;
+    if (price > 0) map.set(code, price);  // 순매출·수량이 같은 부호여야 양의 판가
+  });
+  _salesPriceCache = map;
+  return map;
+}
+
 // ── RTF 계산 ─────────────────────────────────────────────────────────────────
 function itemTypeGroup(item) {
   const type = cleanOptional(item.itemType);
@@ -182,6 +207,11 @@ function amountWithCost(qty, item) {
   return Number.isFinite(qty) && item.hasCost ? qty * item.standardCost : null;
 }
 
+// 매출(판가 기준) 금액 = 수량 × 판가. 판가 없으면 null.
+function amountWithPrice(qty, item) {
+  return Number.isFinite(qty) && item.hasRevenue ? qty * item.unitPrice : null;
+}
+
 function displayPlantName(plantCode) {
   const code = cleanOptional(plantCode);
   return PLANT_NAME_MAP[code] || code || NEED_MASTER;
@@ -196,12 +226,14 @@ var _rtfItemsBomRef   = null; // 캐시에 사용된 bomMap 레퍼런스 (object
 function _getRtfCacheKey() {
   return state.mappedData.plan_monthly.length + "|" +
          state.mappedData.inventory_base.length + "|" +
-         state.mappedData.item_master.length;
+         state.mappedData.item_master.length + "|" +
+         state.mappedData.sales_actual.length;
 }
 
 function invalidateRtfCache() {
   _rtfItemsCache = null; _rtfItemsCacheKey = "";
   _rtfItemsBomCache = null; _rtfItemsBomRef = null;
+  _salesPriceCache = null;
   if (typeof invalidateRtfMonthsCache === "function") invalidateRtfMonthsCache();
 }
 
@@ -257,13 +289,16 @@ function computeRtfItems(bomMapArg, allTypes) {
 
   const sharedAlertSet = buildSharedAlertSet();
   const altBomSet      = buildAltBomSet();
+  const priceMap       = buildSalesPriceMap();
   const result = [...metaMap.values()].map((meta) => {
     const key = itemPlantKey(meta.itemCode, meta.plant);
     const master = masterMap.get(meta.itemCode), standardCost = costMap.get(key) ?? null;
+    const unitPrice = priceMap.get(meta.itemCode) ?? null;
     const item = { ...meta,
       plantCode: cleanText(meta.plant, NEED_MASTER), plant: displayPlantName(meta.plant), businessUnit: cleanText(master?.businessUnit, NEED_MASTER),
-      itemGroup: cleanText(master?.itemGroup, NEED_MASTER), standardCost,
+      itemGroup: cleanText(master?.itemGroup, NEED_MASTER), standardCost, unitPrice,
       hasCost: standardCost !== null && standardCost > 0,
+      hasRevenue: unitPrice !== null && unitPrice > 0,
       hasInventory: inventorySet.has(key), baseQty: inventorySet.has(key) ? (baseQtyMap.get(key) ?? 0) : null,
       hasSharedAlert:  sharedAlertSet.has(key),
       hasAltBomAlert:  altBomSet.has(key),
@@ -280,8 +315,10 @@ function computeRtfItems(bomMapArg, allTypes) {
       const supplyQty = hasPlanRow ? (cleanNumber(plan.supplyQty) ?? 0) : null;
       const noSalesPlan = hasPlanRow && salesQty === 0;
       const salesPlanAmount = amountWithCost(salesQty, item);
+      const salesRevenue    = amountWithPrice(salesQty, item); // 판매계획 매출(판가)
       let endingQty = null, endingAmount = null, rtfQty = null, rtfAmount = null;
       let shortageQty = null, shortageAmount = null, lostSalesAmount = null, inventoryDays = null;
+      let rtfRevenue = null, shortageRevenue = null;
       let salesAmount = null, status = STATUS.UNKNOWN, reason = "";
       let bomConstrained = false, planShortageQty = null;
 
@@ -306,12 +343,17 @@ function computeRtfItems(bomMapArg, allTypes) {
         rtfAmount = amountWithCost(rtfQty, item);
         shortageAmount = shortageQty > 0 ? amountWithCost(shortageQty, item) : 0;
         endingAmount = amountWithCost(endingQty, item);
+        // 매출(판가) 기준 값 — 판매/RTF/매출차질 컬럼용
+        rtfRevenue      = amountWithPrice(rtfQty, item);
+        shortageRevenue = shortageQty > 0 ? amountWithPrice(shortageQty, item) : (item.hasRevenue ? 0 : null);
+        salesAmount     = salesRevenue;      // "매출" 전용 컬럼 = 판매계획 × 판가
+        lostSalesAmount = shortageRevenue;   // "매출차질예상" 컬럼 = 부족 × 판가
         inventoryDays = salesQty > 0 ? endingQty / (salesQty / monthDays(month)) : null;
         status = shortageQty > 0 ? STATUS.SHORTAGE : STATUS.OK;
         openingQty = endingQty;
         reason = noSalesPlan ? NO_PLAN : "";
       }
-      return { month, salesQty, supplyQty, rtfQty, rtfAmount, endingQty, endingAmount, shortageQty, shortageAmount, lostSalesAmount, inventoryDays, salesAmount, salesPlanAmount, status, reason, noSalesPlan, bomConstrained, planShortageQty };
+      return { month, salesQty, supplyQty, rtfQty, rtfAmount, endingQty, endingAmount, shortageQty, shortageAmount, lostSalesAmount, inventoryDays, salesAmount, salesPlanAmount, salesRevenue, rtfRevenue, shortageRevenue, status, reason, noSalesPlan, bomConstrained, planShortageQty };
     });
     return item;
   }).filter((item) => allTypes || item.typeGroup === "상품" || item.typeGroup === "완제품");
@@ -352,8 +394,11 @@ function aggregateMonth(items, monthIndex) {
     shortageQty:     sumNullable(rows.map((r) => r.shortageQty)),
     salesAmount:     sumNullable(rows.map((r) => r.salesAmount)),
     salesPlanAmount: sumNullable(rows.map((r) => r.salesPlanAmount)),
+    salesRevenue:    sumNullable(rows.map((r) => r.salesRevenue)),
     rtfAmount:       sumNullable(rows.map((r) => r.rtfAmount)),
+    rtfRevenue:      sumNullable(rows.map((r) => r.rtfRevenue)),
     shortageAmount:  sumNullable(rows.map((r) => r.shortageAmount)),
+    shortageRevenue: sumNullable(rows.map((r) => r.shortageRevenue)),
     lostSalesAmount: sumNullable(rows.map((r) => r.lostSalesAmount)),
     endingAmount:    sumNullable(rows.map((r) => r.endingAmount)),
     endingQty,
@@ -564,15 +609,18 @@ function getVisibleMonthColumns() {
   return state.rtfExpanded ? MONTH_COLUMNS : MONTH_COLUMNS.filter((m) => !EXTRA_COLUMNS.includes(m));
 }
 
-function formatDisplayQtyMoney(qtyValue, amountValue, noPlan = false) {
+// 표시 모드: qty(수량) / amount(원가=×표준원가) / revenue(매출=×판가)
+function formatDisplayQtyMoney(qtyValue, costValue, revenueValue, noPlan = false) {
   if (noPlan) return NO_PLAN;
-  if (state.rtfDisplayMode === "amount") return Number.isFinite(amountValue) ? formatMoney(amountValue) : NEED_DATA;
+  if (state.rtfDisplayMode === "amount")  return Number.isFinite(costValue)    ? formatMoney(costValue)    : NEED_DATA;
+  if (state.rtfDisplayMode === "revenue") return Number.isFinite(revenueValue) ? formatMoney(revenueValue) : NEED_DATA;
   return Number.isFinite(qtyValue) ? formatNumber(qtyValue) : NEED_DATA;
 }
 
+// 기말재고는 판가 환산 안 함 → 원가/매출 모드 모두 원가금액(표준원가) 표시
 function formatEnding(row) {
-  if (state.rtfDisplayMode === "amount") return Number.isFinite(row.endingAmount) ? formatMoney(row.endingAmount) : NEED_DATA;
-  return Number.isFinite(row.endingQty) ? formatNumber(row.endingQty) : NEED_DATA;
+  if (state.rtfDisplayMode === "qty") return Number.isFinite(row.endingQty) ? formatNumber(row.endingQty) : NEED_DATA;
+  return Number.isFinite(row.endingAmount) ? formatMoney(row.endingAmount) : NEED_DATA;
 }
 
 function formatBaseForNode(node, compressed) {
@@ -589,9 +637,8 @@ function formatBaseForNode(node, compressed) {
 
 // ── 드릴다운 컨텍스트 빌더 ───────────────────────────────────────────────────
 function buildCellDrillCtx(node, item, month, monthRow) {
-  const isAmt = state.rtfDisplayMode === "amount";
-  const hasS  = isAmt ? (Number.isFinite(monthRow.shortageAmount) && monthRow.shortageAmount > 0)
-                      : (Number.isFinite(monthRow.shortageQty)    && monthRow.shortageQty    > 0);
+  // 부족 존재 여부는 표시 모드와 무관하게 수량 기준으로 판정 (원가 미연결이어도 드릴 가능)
+  const hasS = Number.isFinite(monthRow.shortageQty) && monthRow.shortageQty > 0;
   if (!hasS) return null;
 
   if (node.kind === "item" && item) {
@@ -619,20 +666,20 @@ function renderMetricCell(row, metric, metricIndex, compressed, drillCtx, adjInf
   const mb     = metricIndex === 0 ? " rtf-month-start" : "";
 
   if (metric === "판매계획") {
-    const raw  = formatDisplayQtyMoney(row.salesQty, row.salesPlanAmount, false);
+    const raw  = formatDisplayQtyMoney(row.salesQty, row.salesPlanAmount, row.salesRevenue, false);
     const disp = compressed ? (SHORT_TEXT[raw] || raw) : raw;
     return `<td class="rtf-metric-cell rtf-cell-right${mb}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
   }
   if (metric === "RTF") {
-    const raw  = formatDisplayQtyMoney(row.rtfQty, row.rtfAmount, false);
+    const raw  = formatDisplayQtyMoney(row.rtfQty, row.rtfAmount, row.rtfRevenue, false);
     const disp = compressed ? (SHORT_TEXT[raw] || raw) : raw;
     return `<td class="rtf-metric-cell rtf-rtf-cell rtf-cell-right${mb}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
   }
   if (metric === "Shortage") {
-    const isAmt = state.rtfDisplayMode === "amount";
-    const hasS  = isAmt ? (Number.isFinite(row.shortageAmount) && row.shortageAmount > 0)
-                        : (Number.isFinite(row.shortageQty)    && row.shortageQty    > 0);
-    const raw = hasS ? (isAmt ? formatMoney(row.shortageAmount) : formatNumber(row.shortageQty)) : "-";
+    const mode  = state.rtfDisplayMode;
+    const shVal = mode === "amount" ? row.shortageAmount : mode === "revenue" ? row.shortageRevenue : row.shortageQty;
+    const hasS  = Number.isFinite(shVal) && shVal > 0;
+    const raw = hasS ? (mode === "qty" ? formatNumber(shVal) : formatMoney(shVal)) : "-";
     // BOM 제약 셀: 계획 기준보다 부족이 증가한 경우 별도 표시
     const bomBadge = hasS && row.bomConstrained ? `<span class="rtf-bom-constrained-dot" title="BOM 자재 제약으로 부족 증가">▲</span>` : "";
     // tooltip: BOM 제약 시 계획 기준 원래 부족도 표시
@@ -1108,9 +1155,10 @@ function renderRtf() {
   const verifyHtml = match === null ? "" :
     match ? `<span class="rtf-verify-ok">총합계 일치</span>` : `<span class="rtf-verify-err">총합계 불일치 확인 필요</span>`;
   const firstMonth = aggregateMonth(items, 0);
-  const firstShortage = state.rtfDisplayMode === "amount" ? firstMonth.shortageAmount : firstMonth.shortageQty;
-  const summaryUnit = state.rtfDisplayMode === "amount" ? "" : "개";
-  const summaryLine = `${monthLabel(months[0])} 총 판매계획 <b>${escapeHtml(formatDisplayQtyMoney(firstMonth.salesQty, firstMonth.salesPlanAmount))}${summaryUnit}</b>, RTF <b>${escapeHtml(formatDisplayQtyMoney(firstMonth.rtfQty, firstMonth.rtfAmount))}${summaryUnit}</b>. ${Number.isFinite(firstShortage) && firstShortage > 0 ? `<span class="rtf-alert-text">Shortage ${escapeHtml(state.rtfDisplayMode === "amount" ? formatMoney(firstShortage) : formatNumber(firstShortage) + summaryUnit)}</span>` : `<span class="rtf-ok-text">Shortage 없음</span>`}`;
+  const _dm = state.rtfDisplayMode;
+  const firstShortage = _dm === "amount" ? firstMonth.shortageAmount : _dm === "revenue" ? firstMonth.shortageRevenue : firstMonth.shortageQty;
+  const summaryUnit = _dm === "qty" ? "개" : "";
+  const summaryLine = `${monthLabel(months[0])} 총 판매계획 <b>${escapeHtml(formatDisplayQtyMoney(firstMonth.salesQty, firstMonth.salesPlanAmount, firstMonth.salesRevenue))}${summaryUnit}</b>, RTF <b>${escapeHtml(formatDisplayQtyMoney(firstMonth.rtfQty, firstMonth.rtfAmount, firstMonth.rtfRevenue))}${summaryUnit}</b>. ${Number.isFinite(firstShortage) && firstShortage > 0 ? `<span class="rtf-alert-text">Shortage ${escapeHtml(_dm === "qty" ? formatNumber(firstShortage) + summaryUnit : formatMoney(firstShortage))}</span>` : `<span class="rtf-ok-text">Shortage 없음</span>`}`;
 
   // 4. 전후 토글 UI (항상 표시, 조정 없으면 "조정 후" 비활성)
   const adjCount = Object.keys(state.matSimAdj || {}).length;
@@ -1145,7 +1193,7 @@ function renderRtf() {
     <div class="rtf-ib-left">
       ${statusBadge}${unknownBadge}
       <span class="rtf-ib-sep">|</span>
-      <span class="rtf-ib-meta">기준월: ${escapeHtml(months[0])} &nbsp;·&nbsp; 대상기간: ${escapeHtml(months.map(monthLabel).join(" ~ "))} &nbsp;·&nbsp; 표시: ${state.rtfDisplayMode === "qty" ? "수량" : "금액"}</span>
+      <span class="rtf-ib-meta">기준월: ${escapeHtml(months[0])} &nbsp;·&nbsp; 대상기간: ${escapeHtml(months.map(monthLabel).join(" ~ "))} &nbsp;·&nbsp; 표시: ${state.rtfDisplayMode === "qty" ? "수량" : state.rtfDisplayMode === "revenue" ? "매출" : "원가"}</span>
       <span class="rtf-ib-sep">|</span>
       ${bomBadge}
       ${verifyHtml}
@@ -1171,7 +1219,8 @@ function renderRtf() {
       ${state.rtfExpanded ? `<div class="rtf-section-tabs" aria-label="RTF 보기 기준">${sectionTabs}</div>` : ""}
       <div class="rtf-mode-group" aria-label="표시 단위">
         <button type="button" class="rtf-mode-btn ${state.rtfDisplayMode === "qty" ? "active" : ""}" data-rtf-mode="qty">수량</button>
-        <button type="button" class="rtf-mode-btn ${state.rtfDisplayMode === "amount" ? "active" : ""}" data-rtf-mode="amount">금액</button>
+        <button type="button" class="rtf-mode-btn ${state.rtfDisplayMode === "amount" ? "active" : ""}" data-rtf-mode="amount">원가</button>
+        ${(state.mappedData.sales_actual || []).length ? `<button type="button" class="rtf-mode-btn ${state.rtfDisplayMode === "revenue" ? "active" : ""}" data-rtf-mode="revenue">매출</button>` : ""}
       </div>
       <button type="button" id="rtfExpandToggle" class="rtf-extra-toggle ${state.rtfExpanded ? "active" : ""}">${state.rtfExpanded ? "축소" : "확대"}</button>
       <button type="button" id="rtfGoConstraintBtn" class="rtf-go-constraint-btn">공급원인 분석 →</button>

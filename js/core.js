@@ -13,7 +13,7 @@ const SHORT_TEXT = { [NEED_DATA]:"연결필요", [NEED_MASTER]:"확인필요" };
 // 메뉴
 // [id, 탭 짧은명, 화면 본문 제목, nav에 표시 여부]
 const menus = [
-  ["meeting",            "회의체계",  "수급관리 회의체계",                          true],
+  ["meeting",            "회의체계",  "학습과 소통 회의체계",                        true],
   ["summary",            "회의안건",  "회의안건",                                   true],
   ["rtf",                "RTF판정",   "RTF(공급가능성 판정)",                        true],
   ["constraint",         "공급원인",  "공급제한 원인 분석",                          true],
@@ -21,6 +21,8 @@ const menus = [
   ["inventory-variance", "과잉감축",  "적정재고 초과 품목 감축 계획",               true],
   ["impact",             "조정영향",  "조정 후 영향 분석",                          true],
   ["minutes",            "회의록",    "회의록 및 결정사항",                         true],
+  ["bom-sim",            "BOM시뮬",   "BOM 전개 시뮬레이션",                         true],
+  ["download",           "다운로드",  "양식 다운로드",                               true],
   ["data-check",         "데이터점검","데이터 정합성 점검",                         false],
   ["diagnosis",          "수급진단",  "수급진단 및 조정 대상 선별",                 false],
   ["adjustment",         "조정입력",  "조정안 입력",                                false],
@@ -33,6 +35,8 @@ const requiredFiles = [
   { id:"itemMaster",        label:"사업부 별 품목 기준정보.xlsx" },
   { id:"bom",               label:"BOM_RAW.xlsx" },
   { id:"targetInventory",   label:"적정재고_RAW.xlsx" },
+  { id:"salesActual",       label:"매출_RAW.xlsx" },
+  { id:"actuals",           label:"결산_RAW.xlsx" },
 ];
 
 // 앱 상태
@@ -48,6 +52,7 @@ const state = {
     business_mapping: [],
     target_inv: [],
     actuals_monthly: [],
+    sales_actual: [],
   },
   rtfExpanded: false,
   expandedItemGroups: new Set(),
@@ -61,6 +66,7 @@ const state = {
   expandedConstraintRows: new Set(),
   constraintDetailMode: false,
   constraintImpactSort: 0,
+  constraintShowAll: false,
   validationPanelOpen: false,
   validationTab: 0,
   calcCriteriaOpen: false,
@@ -73,10 +79,23 @@ const state = {
   rtfViewMode: "current",   // "current" | "adjusted"
   invSupplyAdj: {},         // "itemCode|plant|month" → 재고화면 직접조정 공급수량
   excessAdj: {},            // "itemCode|plant|month" → 과잉감축 조정 공급수량
+  excessTab: "fg",          // "fg" | "mat"
+  excessShowOnly: false,    // false=전체품목 true=초과품목만
+  excessDrillTabMap: {},    // rowKey → "psi" | "mat"
+  bomSimTab:     "forward", // "forward" | "reverse"
+  bomSimFgCode:  "",        // "itemCode|plant" (단일, 하위호환)
+  bomSimFgCodes: [],        // ["itemCode|plant", ...] 멀티선택
+  bomSimQty:     1000,      // 정전개 생산수량
+  bomSimMatCode: "",        // 역전개 자재코드
+  matExcessAdj: {},         // "matCode|plant|month" → 자재 입고 취소/조정 수량
   invViewMode: "current",   // "current" | "rtf" | "excess"
   invFilter: "all",         // "all" | "excess"
+  invSectionMode: "business",       // "business" | "plant" | "type"
+  invExpanded: false,               // false=기본(발표용) true=확대(분석용)
+  invExpandedItemGroups: new Set(), // 품목군 [+] 펼침 상태
   invExpandedRows: new Set(), // 드릴다운 펼쳐진 "itemCode|plant" 키
-  excessExpandedRows: new Set(), // 과잉감축 화면 드릴다운 펼쳐진 키
+  excessExpandedRows: new Set(), // 완제품 드릴다운 펼쳐진 키
+  matExcessExpandedRows: new Set(), // 자재 드릴다운 펼쳐진 키
 };
 
 // DOM 참조
