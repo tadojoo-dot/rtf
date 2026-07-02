@@ -1154,7 +1154,8 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
   border-right: 1px solid #f3f4f6; text-align: center;
 }
 .cst-sa-table tbody td:last-child { border-right: none; }
-.cst-sa-row:hover td { background: #f9fafb !important; }
+/* hover는 색 없는 일반 셀만 살짝 강조 — 부족(빨강)·해소(초록)·조정(보라) 셀은 색 유지 */
+.cst-sa-row:hover td:not(.cst-sa-short-num):not(.cst-sa-resolved):not(.cst-sa-adjusted) { background: #f9fafb !important; }
 .cst-sa-code  { font-size: 13px; color: #6b7280; }
 .cst-sa-name  { text-align: left !important; font-weight: 600; font-size: 15px; }
 .cst-sa-plant { color: #374151; }
