@@ -1286,6 +1286,66 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
 .cst-ai-qty { color: #c00000; font-size: 17px; font-weight: 800; }
 .cst-ai-deadline { color: #475569; font-size: 14px; font-weight: 600; }
 
+/* ── AI 수급 분석 패널 (재설계 · 돈 헤드라인 + 원클릭) ── */
+.cst-ai-box {
+  position: relative;
+  display: block;
+  background: linear-gradient(180deg, #f5f3ff 0%, #ffffff 60%);
+  border: 1px solid #c7d2fe;
+  border-radius: 12px;
+  padding: 14px 18px 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 2px 10px rgba(79, 70, 229, 0.08);
+}
+.cst-ai-box.cst-ai-ok { background: #f0fdf4; border-color: #bbf7d0; box-shadow: none; }
+.cst-ai-chip {
+  display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: 0.04em;
+  color: #fff; background: linear-gradient(90deg, #6366f1, #4338ca);
+  border-radius: 6px; padding: 3px 10px; margin-bottom: 10px;
+}
+.cst-ai-ok .cst-ai-chip { background: #15803d; }
+.cst-ai-ok-text { margin-left: 10px; font-size: 16px; font-weight: 700; color: #15803d; }
+
+/* 헤드라인 */
+.cst-ai-head {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 6px 0 12px; border-bottom: 1px dashed #d1d5db; margin-bottom: 10px;
+}
+.cst-ai-head-metric { display: flex; flex-direction: column; line-height: 1.15; }
+.cst-ai-head-lbl { font-size: 12px; color: #6b7280; font-weight: 600; }
+.cst-ai-head-num { font-size: 26px; font-weight: 800; color: #1f2933; letter-spacing: -0.5px; }
+.cst-ai-lost { color: #dc2626; }
+.cst-ai-head-arrow { font-size: 22px; color: #6366f1; font-weight: 800; }
+.cst-ai-head-after { font-size: 16px; color: #334155; font-weight: 600; }
+.cst-ai-good { color: #15803d; font-size: 20px; font-weight: 800; }
+.cst-ai-invnote { color: #64748b; font-size: 13px; font-weight: 600; margin-left: 4px; }
+.cst-ai-planshort { color: #b45309; font-size: 13px; font-weight: 600; }
+.cst-ai-apply-all {
+  margin-left: auto; padding: 10px 20px; font-size: 15px; font-weight: 800;
+  color: #fff; background: linear-gradient(90deg, #4f46e5, #4338ca);
+  border: none; border-radius: 8px; cursor: pointer; white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(67, 56, 202, 0.3);
+}
+.cst-ai-apply-all:hover { filter: brightness(1.08); }
+
+/* 랭킹 리스트 */
+.cst-ai-list { display: flex; flex-direction: column; gap: 2px; }
+.cst-ai-row {
+  display: flex; align-items: center; gap: 14px;
+  padding: 7px 8px; border-radius: 6px;
+}
+.cst-ai-row:nth-child(odd) { background: rgba(99, 102, 241, 0.04); }
+.cst-ai-row-name { font-size: 15px; font-weight: 700; color: #1f2933; min-width: 200px; }
+.cst-ai-row-lost { font-size: 14px; font-weight: 700; color: #dc2626; min-width: 90px; }
+.cst-ai-row-rec  { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.cst-ai-row-mat  { font-size: 13px; color: #4338ca; font-weight: 600; }
+.cst-ai-apply-one {
+  padding: 4px 14px; font-size: 13px; font-weight: 700;
+  color: #4338ca; background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 6px; cursor: pointer;
+}
+.cst-ai-apply-one:hover { background: #e0e7ff; }
+.cst-ai-more { color: #9ca3af; font-size: 13px; padding: 6px 8px 0; }
+
 /* ── Before / After 비교 배너 ── */
 .cst-compare-banner {
   display: flex; align-items: center; gap: 16px;
