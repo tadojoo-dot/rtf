@@ -1,4 +1,62 @@
-﻿function renderSummary() {
+﻿// ── 3단 헤드라인 띠: ①현재 → ②RTF조정후 → ③감축확정후 (연말 기준) ──────────
+// 회의 진행에 따라 점진 공개: 조정 입력 전에는 ②③이 "확정 전" 대기 카드로 표시
+function renderHeadlineStrip() {
+  if (typeof computeHeadlineTriple !== "function") return "";
+  var h = computeHeadlineTriple();
+  if (!h) return "";
+
+  // 재고·일수·품절 모두 감소 = 좋음(초록), 증가 = 나쁨(빨강)
+  function chip(delta, kind) {
+    if (delta === null || !Number.isFinite(delta)) return "";
+    var rounded = kind === "amt" ? Math.round(delta / 1e8) : Math.round(delta);
+    if (rounded === 0) return "";
+    var cls  = delta < 0 ? "dn" : "up";
+    var sign = delta >= 0 ? "+" : "";
+    var txt  = kind === "amt" ? sign + formatMoney(delta) : sign + rounded + (kind === "days" ? "일" : "건");
+    return "<span class='sum-hl-chip " + cls + "'>" + escapeHtml(txt) + "</span>";
+  }
+
+  function card(no, title, s, prev, waitNote, isFinal) {
+    var head = "<div class='sum-hl-title'><span class='sum-hl-no'>" + no + "</span>" + escapeHtml(title) + "</div>";
+    if (!s) {
+      return "<div class='sum-hl-card sum-hl-dim'>" + head +
+        "<div class='sum-hl-wait'>" + escapeHtml(waitNote) + "</div></div>";
+    }
+    var useDisc  = s.disc !== null;
+    var daysVal  = useDisc ? s.disc : s.mgmt;
+    var prevDays = prev ? (useDisc ? prev.disc : prev.mgmt) : null;
+    var mets = [
+      { val: Number.isFinite(s.amt) ? formatMoney(s.amt) : "—", sub: "전체재고",
+        chip: prev && Number.isFinite(s.amt) && Number.isFinite(prev.amt) ? chip(s.amt - prev.amt, "amt") : "" },
+      { val: Number.isFinite(daysVal) ? Math.round(daysVal) + "일" : "—", sub: useDisc ? "재고일수(공시)" : "재고일수(관리)",
+        chip: prev && Number.isFinite(daysVal) && Number.isFinite(prevDays) ? chip(daysVal - prevDays, "days") : "" },
+      { val: s.shortCnt + "건", sub: "품절 품목",
+        chip: prev ? (s.shortCnt === prev.shortCnt
+                        ? "<span class='sum-hl-chip ok'>" + (s.shortCnt === 0 ? "품절 0 유지" : "±0 유지") + "</span>"
+                        : chip(s.shortCnt - prev.shortCnt, "cnt"))
+                   : "" },
+    ];
+    return "<div class='sum-hl-card" + (isFinal ? " sum-hl-final" : "") + "'>" + head +
+      "<div class='sum-hl-metrics'>" + mets.map(function(m) {
+        return "<div class='sum-hl-metric'><div class='sum-hl-val'>" + escapeHtml(m.val) + (m.chip || "") + "</div>" +
+               "<div class='sum-hl-sub'>" + escapeHtml(m.sub) + "</div></div>";
+      }).join("") + "</div></div>";
+  }
+
+  var arrow = "<div class='sum-hl-arrow'>→</div>";
+  return "<div class='sum-card sum-hl-wrap'>" +
+    "<div class='sum-hl-head'><h3>결과 헤드라인</h3>" +
+    "<span class='sum-hl-basis'>" + escapeHtml(monthLabel(h.month)) + "말 기준 · 회의 진행에 따라 ②·③ 확정</span></div>" +
+    "<div class='sum-hl-strip'>" +
+      card("①", "현재 계획", h.base, null, "", false) +
+      arrow +
+      card("②", "RTF 조정 후", h.rtf, h.base, "1부 품절방어 조정 확정 전", false) +
+      arrow +
+      card("③", "감축 확정 후", h.fin, h.rtf || h.base, "2부 재고절감 확정 전", true) +
+    "</div></div>";
+}
+
+function renderSummary() {
   var planRows = state.mappedData.plan_monthly;
   var hasData  = planRows.length > 0;
 
@@ -148,11 +206,14 @@
       "</div>"
     : "";
 
+  var headlineHtml = hasData ? renderHeadlineStrip() : "";
+
   return "<div class=\"sum-screen\">" +
     "<section class=\"sum-card sum-header\">" +
     "<h2>회의안건</h2>" +
     "<p>현재 계획 기준으로 RTF 공급부족 및 재고초과 이슈를 확인하고, RTF 조정과 재고조정 의사결정이 필요한 안건을 요약합니다.</p>" +
     "</section>" +
+    headlineHtml +
     kpiHtml +
     chartSection +
     "<div class=\"sum-card sum-agenda-card\">" +

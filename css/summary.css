@@ -91,6 +91,69 @@
   margin-top: 14px;
 }
 
+/* ── 3단 헤드라인 띠 (①현재 → ②RTF조정후 → ③감축확정후) ── */
+.sum-hl-wrap { border-top: 4px solid #1e3a8a; padding: 14px 18px 16px; }
+
+.sum-hl-head {
+  align-items: baseline;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.sum-hl-head h3 { color: #1f2933; font-size: 19px; font-weight: 800; margin: 0; }
+.sum-hl-basis   { color: #9ca3af; font-size: 13px; }
+
+.sum-hl-strip { align-items: stretch; display: flex; gap: 10px; }
+
+.sum-hl-card {
+  background: #fbfcfe;
+  border: 1px solid #e3e7ef;
+  border-radius: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 12px 16px;
+}
+
+.sum-hl-card.sum-hl-dim   { background: #f8f9fb; border-style: dashed; }
+.sum-hl-card.sum-hl-final { background: #f4fbf6; border-color: #86dcA8; }
+
+.sum-hl-title {
+  align-items: center;
+  color: #374151;
+  display: flex;
+  font-size: 15px;
+  font-weight: 800;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.sum-hl-no   { color: #1e3a8a; }
+.sum-hl-wait { color: #b0b7c3; font-size: 14px; font-weight: 600; padding: 14px 0 10px; }
+
+.sum-hl-metrics { display: flex; gap: 20px; }
+.sum-hl-metric  { min-width: 0; }
+
+.sum-hl-val {
+  align-items: baseline;
+  color: #1f2933;
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 26px;
+  font-weight: 800;
+  gap: 6px;
+  line-height: 1.15;
+}
+
+.sum-hl-sub  { color: #9ca3af; font-size: 12.5px; font-weight: 600; margin-top: 2px; }
+
+.sum-hl-chip    { font-size: 14px; font-weight: 700; white-space: nowrap; }
+.sum-hl-chip.dn { color: #16a34a; }
+.sum-hl-chip.up { color: #dc2626; }
+.sum-hl-chip.ok { color: #117a52; font-size: 13px; }
+
+.sum-hl-arrow { align-self: center; color: #c3c9d4; font-size: 22px; font-weight: 800; }
+
 /* ── 안건 카드 ── */
 .sum-agenda-card {
   overflow: hidden;

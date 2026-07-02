@@ -1195,6 +1195,59 @@ function computeScenarioItemSets() {
   return { base: base, rtfAdj: rtfAdj, final: finalItems, hasRtfAdj: hasRtfAdj, hasExcess: hasExcess };
 }
 
+// ── 3단 헤드라인(현재→RTF조정후→감축후) — 회의안건 상단 띠 공용 계산 ─────────
+// 기준월 = 연말(12월, 없으면 마지막 계획월). 감축후는 원부자재 재고 변동을 금액에
+// 합산하고 일수는 금액 비례 보정 (renderScenarioKpiBanner와 동일 사상).
+// rtf/fin은 해당 조정이 없으면 null → 화면에서 "확정 전" 대기 카드로 점진 공개
+function computeHeadlineTriple() {
+  var months = getRtfMonths();
+  if (!months.length) return null;
+  var mi = months.length - 1;
+  for (var i = months.length - 1; i >= 0; i--) {
+    if (months[i].slice(5, 7) === "12") { mi = i; break; }
+  }
+  var sc = computeScenarioItemSets();
+  var matDeltas = (typeof computeMatScenarioDeltas === "function") ? computeMatScenarioDeltas(months) : null;
+  var matD = matDeltas ? (matDeltas[mi] || 0) : 0;
+
+  // 품절 품목 수 = 계획 구간 내 한 달이라도 공급부족인 품목
+  function shortCount(items) {
+    var n = 0;
+    items.forEach(function(it) {
+      var arr = it.monthlyStatus || [];
+      for (var k = 0; k < arr.length; k++) {
+        if (arr[k] && arr[k].status === STATUS.SHORTAGE) { n++; return; }
+      }
+    });
+    return n;
+  }
+  function pack(items) {
+    var inv  = rtfHeadlineInv(items, mi);
+    var disc = rtfDisclosureDays(items, mi);
+    return {
+      amt:      inv.amount,
+      mgmt:     Number.isFinite(inv.days) ? inv.days : null,
+      disc:     Number.isFinite(disc)     ? disc     : null,
+      shortCnt: shortCount(items),
+    };
+  }
+
+  var base   = pack(sc.base);
+  var rtf    = sc.hasRtfAdj ? pack(sc.rtfAdj) : null;
+  var hasCut = sc.hasExcess || matD !== 0;
+  var fin    = null;
+  if (hasCut) {
+    fin = pack(sc.final);
+    if (matD !== 0 && Number.isFinite(fin.amt) && fin.amt > 0) {
+      var scale = (fin.amt + matD) / fin.amt;
+      fin.amt += matD;
+      if (fin.disc !== null) fin.disc *= scale;
+      if (fin.mgmt !== null) fin.mgmt *= scale;
+    }
+  }
+  return { month: months[mi], base: base, rtf: rtf, fin: fin };
+}
+
 // ── 3시나리오 KPI 배너 — 값은 최종(감축후), delta는 (RTF +x · 감축 -y) 분해 ────
 function renderScenarioKpiBanner() {
   var sc = computeScenarioItemSets();
