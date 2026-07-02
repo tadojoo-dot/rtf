@@ -8,8 +8,8 @@ var rtfSortState = {
 var _rtfItems = []; // 정렬 재빌드용 캐시
 
 // ── 컬럼 공통 메타 ────────────────────────────────────────────────────────────
-var GRID_COL_WIDTH = 82;
-var NAME_COL_WIDTH = 220;
+var GRID_COL_WIDTH = 90;
+var NAME_COL_WIDTH = 230;
 var RTF_SECTION_OPTIONS = [
   { mode:"business", label:"사업부별", title:"01. 사업부별", sectionId:"rtfBusinessMatrix" },
   { mode:"plant",    label:"플랜트별", title:"02. 플랜트별", sectionId:"rtfPlantMatrix" },
@@ -33,8 +33,14 @@ var METRIC_DISPLAY_SHORT = { "판매계획":"판매", "Shortage":"부족" };
 // ── BOM 전개 기준 생산 가능수량 맵 ──────────────────────────────────────────────
 // BOM 완료 시: 자재별(material) 가용수량 ÷ 소요계수 → 완제품 max 생산 가능수량
 // 복수 자재 중 가장 제약이 심한 병목 자재 기준(min)
+var _bomMaxProducibleCache = null; // adj 없는 기본 맵 캐시 (BOM 재전개 시 무효화)
+
 function buildBomMaxProducibleMap(adjOverrides) {
   if (state.bomStatus !== "done" || !state.bomResult || !state.bomResult.items) return null;
+
+  // adj 없는 기본 호출은 캐시 사용 (탭 이동 시마다 재계산 방지)
+  var hasAdj = adjOverrides && Object.keys(adjOverrides).length > 0;
+  if (!hasAdj && _bomMaxProducibleCache) return _bomMaxProducibleCache;
 
   // 조정값 있을 때 원래 입고수량 맵 구축 (delta 계산용)
   var origSupplyMap = null;
@@ -49,19 +55,28 @@ function buildBomMaxProducibleMap(adjOverrides) {
   }
 
   const map = new Map(); // key: "itemCode|plant|month" → 생산 가능수량 (병목 기준)
+  // 조정 시: 자재별 월간 잔여량 이월 (Pull In 후 남은 자재 → 다음 달로 누적)
+  const extraCarryMap = new Map(); // matKey → 이전 달에서 넘어온 추가 잔여량
+
   state.bomResult.items.forEach((bi) => {
     if (!bi.monthlyData || !bi.parentItems) return;
+    const matKey = bi.componentCode + "|" + (bi.plant || "");
 
     bi.monthlyData.forEach((md, j) => {
       if (!md || md.availableQty === null) return; // 판단불가 자재 → skip
 
-      // 조정값 반영 가용수량 (자재+월 기준, 모든 부모에 공통 적용)
-      let availableQty = md.availableQty;
-      if (origSupplyMap && adjOverrides) {
-        const adjKey = bi.componentCode + "|" + (bi.plant || "") + "|" + md.month;
-        if (adjKey in adjOverrides) {
-          const orig = origSupplyMap.get(adjKey) || 0;
-          availableQty = availableQty + (adjOverrides[adjKey] - orig);
+      const origAvailableQty = Math.max(0, md.availableQty);
+
+      // 조정값 반영 가용수량: 원래값 + 이전 달 추가 잔여 + 이번 달 조정 delta
+      let availableQty = origAvailableQty;
+      if (adjOverrides) {
+        availableQty += (extraCarryMap.get(matKey) || 0);
+        if (origSupplyMap) {
+          const adjKey = matKey + "|" + md.month;
+          if (adjKey in adjOverrides) {
+            const orig = origSupplyMap.get(adjKey) || 0;
+            availableQty += (adjOverrides[adjKey] - orig);
+          }
         }
       }
       availableQty = Math.max(0, availableQty);
@@ -80,6 +95,15 @@ function buildBomMaxProducibleMap(adjOverrides) {
         .filter(Boolean)
         .sort((a, b) => b.reqQty - a.reqQty);
 
+      // 원래 시나리오 잔여량 (carry 계산용 — map 업데이트 안 함)
+      let origRemaining = origAvailableQty;
+      if (adjOverrides) {
+        parents.forEach(({ reqQty }) => {
+          origRemaining = Math.max(0, origRemaining - Math.min(reqQty, origRemaining));
+        });
+      }
+
+      // 조정 후 waterfall → map 업데이트
       let remaining = availableQty;
       parents.forEach(({ pi, reqQty, coeff, month }) => {
         const allocated = Math.min(reqQty, remaining);
@@ -90,8 +114,15 @@ function buildBomMaxProducibleMap(adjOverrides) {
         // 복수 자재 중 가장 낮은 값(병목)을 유지
         if (cur === undefined || maxProd < cur) map.set(key, Math.max(0, maxProd));
       });
+
+      // 다음 달로 넘길 추가 잔여량 = 조정 후 잔여 - 원래 잔여
+      if (adjOverrides) {
+        extraCarryMap.set(matKey, Math.max(0, remaining - origRemaining));
+      }
     });
   });
+
+  if (!hasAdj) _bomMaxProducibleCache = map; // adj 없는 결과 캐시 저장
   return map;
 }
 
@@ -156,8 +187,38 @@ function displayPlantName(plantCode) {
   return PLANT_NAME_MAP[code] || code || NEED_MASTER;
 }
 
+// 캐시: 인자 없이 호출(기본 케이스)할 때만 재사용
+var _rtfItemsCache = null;
+var _rtfItemsCacheKey = "";
+var _rtfItemsBomCache = null; // BOM 완료 후 computeRtfItems(bomMap) 결과 캐시
+var _rtfItemsBomRef   = null; // 캐시에 사용된 bomMap 레퍼런스 (object identity 비교)
+
+function _getRtfCacheKey() {
+  return state.mappedData.plan_monthly.length + "|" +
+         state.mappedData.inventory_base.length + "|" +
+         state.mappedData.item_master.length;
+}
+
+function invalidateRtfCache() {
+  _rtfItemsCache = null; _rtfItemsCacheKey = "";
+  _rtfItemsBomCache = null; _rtfItemsBomRef = null;
+  if (typeof invalidateRtfMonthsCache === "function") invalidateRtfMonthsCache();
+}
+
 function computeRtfItems(bomMapArg, allTypes) {
-  const _bomMap = (bomMapArg !== undefined) ? bomMapArg : buildBomMaxProducibleMap(); // BOM 완료 시 자재 제약 맵, 미완료 시 null
+  const _bomMap = (bomMapArg !== undefined) ? bomMapArg : buildBomMaxProducibleMap();
+
+  if (!allTypes) {
+    if (!_bomMap) {
+      // BOM 미완료: 기존 캐시 (데이터 크기 기반)
+      var ck = _getRtfCacheKey();
+      if (_rtfItemsCache && ck === _rtfItemsCacheKey) return _rtfItemsCache;
+    } else if (_bomMap === _rtfItemsBomRef && _rtfItemsBomCache) {
+      // BOM 완료: 동일 bomMap 레퍼런스면 캐시 반환 (탭 이동 시 재계산 방지)
+      return _rtfItemsBomCache;
+    }
+  }
+  // BOM 완료 시 자재 제약 맵, 미완료 시 null
   const planRows      = state.mappedData.plan_monthly;
   const inventoryRows = state.mappedData.inventory_base;
   const masterRows    = state.mappedData.item_master;
@@ -196,7 +257,7 @@ function computeRtfItems(bomMapArg, allTypes) {
 
   const sharedAlertSet = buildSharedAlertSet();
   const altBomSet      = buildAltBomSet();
-  return [...metaMap.values()].map((meta) => {
+  const result = [...metaMap.values()].map((meta) => {
     const key = itemPlantKey(meta.itemCode, meta.plant);
     const master = masterMap.get(meta.itemCode), standardCost = costMap.get(key) ?? null;
     const item = { ...meta,
@@ -254,6 +315,17 @@ function computeRtfItems(bomMapArg, allTypes) {
     });
     return item;
   }).filter((item) => allTypes || item.typeGroup === "상품" || item.typeGroup === "완제품");
+
+  if (!allTypes) {
+    if (!_bomMap) {
+      _rtfItemsCache    = result;
+      _rtfItemsCacheKey = _getRtfCacheKey();
+    } else {
+      _rtfItemsBomRef   = _bomMap;
+      _rtfItemsBomCache = result;
+    }
+  }
+  return result;
 }
 
 // ── 집계 ─────────────────────────────────────────────────────────────────────
@@ -296,6 +368,19 @@ function makeNode(id, parentId, level, kind, label, items, cols = {}) {
 }
 function sortKo(arr) { return [...arr].sort((a, b) => String(a).localeCompare(String(b), "ko-KR")); }
 function uniq(items, key) { return sortKo([...new Set(items.map((i) => i[key]))]); }
+
+// 품목군(및 하위 품목) 정렬용 — 판매계획(전체 기간 합계) 내림차순
+function itemSalesTotal(item) {
+  return item.monthlyStatus.reduce((s, m) => s + (Number.isFinite(m.salesQty) ? m.salesQty : 0), 0);
+}
+function uniqByPlanDesc(items, key) {
+  const totals = new Map();
+  items.forEach((i) => { const k = i[key]; totals.set(k, (totals.get(k) || 0) + itemSalesTotal(i)); });
+  return uniq(items, key).sort((a, b) => (totals.get(b) || 0) - (totals.get(a) || 0));
+}
+function sortItemsByPlanDesc(items) {
+  return items.slice().sort((a, b) => itemSalesTotal(b) - itemSalesTotal(a));
+}
 function itemNodeId(groupId, item, index) {
   return `${groupId}|${item.itemCode}|${item.plant}|${index}`;
 }
@@ -310,8 +395,8 @@ function buildHierarchy(items, mode) {
       uniq(buItems, "typeGroup").forEach((type) => {
         const typeItems = buItems.filter((i) => i.typeGroup === type), typeId = `${buId}|${type}`;
         nodes.push(makeNode(typeId, buId, 1, "group", `${type} 계`, typeItems, { div:"유형", bu, plant:"", type, group:"", code:"" }));
-        uniq(typeItems, "itemGroup").forEach((group) => {
-          const groupItems = typeItems.filter((i) => i.itemGroup === group), groupId = `${typeId}|${group}`;
+        uniqByPlanDesc(typeItems, "itemGroup").forEach((group) => {
+          const groupItems = sortItemsByPlanDesc(typeItems.filter((i) => i.itemGroup === group)), groupId = `${typeId}|${group}`;
           nodes.push(makeNode(groupId, typeId, 2, "itemGroup", `${group} 계`, groupItems, { div:"품목군", bu, plant:"", type, group, code:"" }));
           groupItems.forEach((item, itemIndex) => nodes.push(makeNode(itemNodeId(groupId, item, itemIndex), groupId, 3, "item", item.itemName, [item],
             { div:"자재", bu:item.businessUnit, plant:item.plant, type:item.typeGroup, group:item.itemGroup, code:item.itemCode })));
@@ -326,8 +411,8 @@ function buildHierarchy(items, mode) {
       uniq(plantItems, "typeGroup").forEach((type) => {
         const typeItems = plantItems.filter((i) => i.typeGroup === type), typeId = `${plantId}|${type}`;
         nodes.push(makeNode(typeId, plantId, 1, "group", `${type} 계`, typeItems, { div:"유형", bu:"", plant, type, group:"", code:"" }));
-        uniq(typeItems, "itemGroup").forEach((group) => {
-          const groupItems = typeItems.filter((i) => i.itemGroup === group), groupId = `${typeId}|${group}`;
+        uniqByPlanDesc(typeItems, "itemGroup").forEach((group) => {
+          const groupItems = sortItemsByPlanDesc(typeItems.filter((i) => i.itemGroup === group)), groupId = `${typeId}|${group}`;
           nodes.push(makeNode(groupId, typeId, 2, "itemGroup", `${group} 계`, groupItems, { div:"품목군", bu:"", plant, type, group, code:"" }));
           groupItems.forEach((item, itemIndex) => nodes.push(makeNode(itemNodeId(groupId, item, itemIndex), groupId, 3, "item", item.itemName, [item],
             { div:"자재", bu:item.businessUnit, plant:item.plant, type:item.typeGroup, group:item.itemGroup, code:item.itemCode })));
@@ -345,8 +430,8 @@ function buildHierarchy(items, mode) {
         uniq(buItems, "plant").forEach((plant) => {
           const plantItems = buItems.filter((i) => i.plant === plant), plantId = `${buId}|${plant}`;
           nodes.push(makeNode(plantId, buId, 2, "group", `${plant} 계`, plantItems, { div:"플랜트", bu, plant, type, group:"", code:"" }));
-          uniq(plantItems, "itemGroup").forEach((group) => {
-            const groupItems = plantItems.filter((i) => i.itemGroup === group), groupId = `${plantId}|${group}`;
+          uniqByPlanDesc(plantItems, "itemGroup").forEach((group) => {
+            const groupItems = sortItemsByPlanDesc(plantItems.filter((i) => i.itemGroup === group)), groupId = `${plantId}|${group}`;
             nodes.push(makeNode(groupId, plantId, 3, "itemGroup", `${group} 계`, groupItems, { div:"품목군", bu, plant, type, group, code:"" }));
             groupItems.forEach((item, itemIndex) => nodes.push(makeNode(itemNodeId(groupId, item, itemIndex), groupId, 4, "item", item.itemName, [item],
               { div:"자재", bu:item.businessUnit, plant:item.plant, type:item.typeGroup, group:item.itemGroup, code:item.itemCode })));
@@ -541,7 +626,7 @@ function renderMetricCell(row, metric, metricIndex, compressed, drillCtx, adjInf
   if (metric === "RTF") {
     const raw  = formatDisplayQtyMoney(row.rtfQty, row.rtfAmount, false);
     const disp = compressed ? (SHORT_TEXT[raw] || raw) : raw;
-    return `<td class="rtf-metric-cell rtf-rtf-cell rtf-status-text ${statusClass(row.status)} rtf-cell-right${mb}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
+    return `<td class="rtf-metric-cell rtf-rtf-cell rtf-cell-right${mb}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
   }
   if (metric === "Shortage") {
     const isAmt = state.rtfDisplayMode === "amount";
@@ -860,8 +945,8 @@ function renderRtfAdjPanel() {
 
   return "<div class=\"rtf-adj-panel\">" +
     "<div class=\"rtf-adj-panel-title\" id=\"rtfAdjPanelToggle\">" +
-    "<span>조정내역 (" + keys.length + "건)</span><span id=\"rtfAdjPanelArrow\">▼</span></div>" +
-    "<div class=\"rtf-adj-panel-body\" id=\"rtfAdjPanelBody\">" +
+    "<span>조정내역 (" + keys.length + "건)</span><span id=\"rtfAdjPanelArrow\">▶</span></div>" +
+    "<div class=\"rtf-adj-panel-body\" id=\"rtfAdjPanelBody\" hidden>" +
     "<table class=\"rtf-adj-table\"><thead><tr>" +
     "<th>자재코드</th><th>자재명</th><th>월</th><th>원래입고</th><th>조정후</th><th>변동</th>" +
     "</tr></thead><tbody>" + rows + "</tbody></table>" +
@@ -928,6 +1013,74 @@ function renderRtfInventoryBar(items, baseItemsForDelta) {
     "</tbody></table></div></div>";
 }
 
+// ── 월별 요약 카드 띠 ─────────────────────────────────────────────────────────
+function renderRtfMonthCards(items, baseItemsForDelta) {
+  var months  = getRtfMonths();
+  var hasDelta = !!baseItemsForDelta;
+
+  var monthData = months.map(function(month, mi) {
+    var agg = aggregateMonth(items, mi);
+    var shortageCount = items.filter(function(i) {
+      return i.monthlyStatus[mi] && i.monthlyStatus[mi].status === STATUS.SHORTAGE;
+    }).length;
+    var unknownCount = items.filter(function(i) {
+      var ms = i.monthlyStatus[mi];
+      return ms && ms.status === STATUS.UNKNOWN;
+    }).length;
+
+    var cls, icon, label;
+    if (shortageCount > 0)     { cls = "shortage"; icon = "●"; label = "공급부족 " + shortageCount + "건"; }
+    else if (unknownCount > 0) { cls = "unknown";  icon = "?"; label = "판단불가 " + unknownCount + "건"; }
+    else                       { cls = "ok";        icon = "✓"; label = "대응가능"; }
+
+    var amtRaw  = Number.isFinite(agg.endingAmount)  ? agg.endingAmount              : null;
+    var amtVal  = amtRaw !== null                     ? formatMoney(amtRaw)           : "—";
+    var daysVal = Number.isFinite(agg.inventoryDays)  ? Math.round(agg.inventoryDays) : null;
+
+    var deltaHtml = "";
+    if (hasDelta && baseItemsForDelta) {
+      var baseAgg = aggregateMonth(baseItemsForDelta, mi);
+      if (amtRaw !== null && Number.isFinite(baseAgg.endingAmount)) {
+        var delta = amtRaw - baseAgg.endingAmount;
+        var dCls = delta < 0 ? "rtf-mc-delta-good" : "rtf-mc-delta-bad";
+        deltaHtml = "<span class=\"" + dCls + "\"> (" + (delta >= 0 ? "+" : "") + formatMoney(delta) + ")</span>";
+      }
+    }
+    return { month: month, cls: cls, icon: icon, label: label, amtRaw: amtRaw, amtVal: amtVal, daysVal: daysVal, deltaHtml: deltaHtml };
+  });
+
+  var headerRow = "<tr>" +
+    "<th class=\"rtf-kpi-lbl-hd\"></th>" +
+    monthData.map(function(d) {
+      return "<th class=\"rtf-kpi-month-hd\">" + escapeHtml(monthLabel(d.month)) + "</th>";
+    }).join("") + "</tr>";
+
+  var amtRow = "<tr>" +
+    "<td class=\"rtf-kpi-row-lbl\">재고금액</td>" +
+    monthData.map(function(d) {
+      return "<td class=\"rtf-kpi-val\">" +
+        "<span class=\"rtf-kpi-main\">" + escapeHtml(d.amtVal) + "</span>" +
+        (d.deltaHtml || "") +
+        "</td>";
+    }).join("") + "</tr>";
+
+  var daysRow = "<tr>" +
+    "<td class=\"rtf-kpi-row-lbl\">재고일수</td>" +
+    monthData.map(function(d) {
+      var txt = d.daysVal !== null ? d.daysVal + "일" : "—";
+      var hiCls = d.daysVal !== null && d.daysVal > 120 ? " hi" : "";
+      return "<td class=\"rtf-kpi-val" + hiCls + "\">" +
+        "<span class=\"rtf-kpi-main\">" + escapeHtml(txt) + "</span>" +
+        "</td>";
+    }).join("") + "</tr>";
+
+  return "<div class=\"rtf-kpi-wrap\">" +
+    "<table class=\"rtf-kpi-table\">" +
+    "<thead>" + headerRow + "</thead>" +
+    "<tbody>" + amtRow + daysRow + "</tbody>" +
+    "</table></div>";
+}
+
 // ── RTF 화면 ─────────────────────────────────────────────────────────────────
 function renderRtf() {
   // 1. 현재 계획 기준 items (항상 계산)
@@ -939,6 +1092,8 @@ function renderRtf() {
   const hasAdj = Object.keys(state.matSimAdj || {}).length > 0;
   const adjItems = hasAdj ? computeRtfItems(buildBomMaxProducibleMap(state.matSimAdj)) : null;
   if (!hasAdj && state.rtfViewMode === "adjusted") state.rtfViewMode = "current";
+  if (hasAdj && !state._rtfToggleManual) state.rtfViewMode = "adjusted";
+  state._rtfToggleManual = false;
 
   // 3. 화면에 표시할 items
   const items = (state.rtfViewMode === "adjusted" && adjItems) ? adjItems : baseItems;
@@ -998,9 +1153,7 @@ function renderRtf() {
     <div class="rtf-ib-right">${toggleHtml}</div>
   </div>`;
 
-  // 7. 서브탭 + 패널
-  if (!state.rtfSubTab) state.rtfSubTab = "matrix";
-
+  // 7. 섹션 + 카드 띠
   const activeSection = activeRtfSection();
   const sectionTabs = state.rtfExpanded ? RTF_SECTION_OPTIONS.map((option) =>
     `<button type="button" class="rtf-section-tab ${activeSection.mode === option.mode ? "active" : ""}" data-rtf-section="${escapeHtml(option.mode)}">${escapeHtml(option.label)}</button>`
@@ -1009,20 +1162,13 @@ function renderRtf() {
     ? renderMatrixSection(activeSection.title, activeSection.mode, items, activeSection.sectionId)
     : RTF_SECTION_OPTIONS.map((option) => renderMatrixSection(option.title, option.mode, items, option.sectionId)).join("");
 
-  const isMatrix = state.rtfSubTab === "matrix";
-  const panelHtml = isMatrix
-    ? sectionHtml
-    : `<div class="rtf-inv-panel">${renderRtfInventoryBar(items, state.rtfViewMode === "adjusted" ? baseItems : null)}</div>`;
+  const monthCardsHtml = renderRtfMonthCards(items, state.rtfViewMode === "adjusted" ? baseItems : null);
 
   return `<div class="rtf-screen rtf-excel-layout">
     ${infobarHtml}
+    ${monthCardsHtml}
     <div class="rtf-toolbar">
-      <div class="rtf-subtabs">
-        <button type="button" class="rtf-subtab ${isMatrix ? "active" : ""}" data-rtf-subtab="matrix">RTF 매트릭스</button>
-        <button type="button" class="rtf-subtab ${!isMatrix ? "active" : ""}" data-rtf-subtab="inventory">재고현황</button>
-      </div>
-      ${isMatrix && state.rtfExpanded ? `<div class="rtf-section-tabs" aria-label="RTF 보기 기준">${sectionTabs}</div>` : ""}
-      ${isMatrix ? `
+      ${state.rtfExpanded ? `<div class="rtf-section-tabs" aria-label="RTF 보기 기준">${sectionTabs}</div>` : ""}
       <div class="rtf-mode-group" aria-label="표시 단위">
         <button type="button" class="rtf-mode-btn ${state.rtfDisplayMode === "qty" ? "active" : ""}" data-rtf-mode="qty">수량</button>
         <button type="button" class="rtf-mode-btn ${state.rtfDisplayMode === "amount" ? "active" : ""}" data-rtf-mode="amount">금액</button>
@@ -1030,10 +1176,9 @@ function renderRtf() {
       <button type="button" id="rtfExpandToggle" class="rtf-extra-toggle ${state.rtfExpanded ? "active" : ""}">${state.rtfExpanded ? "축소" : "확대"}</button>
       <button type="button" id="rtfGoConstraintBtn" class="rtf-go-constraint-btn">공급원인 분석 →</button>
       <span class="rtf-toolbar-hint">${state.rtfExpanded ? "분석용 상세 · 보기 기준 탭 선택" : "발표용 기본 · 사업부/플랜트/유형 전체 표시"}</span>
-      ` : ""}
     </div>
     ${adjPanelHtml}
-    ${panelHtml}
+    ${sectionHtml}
   </div>`;
 }
 
@@ -1076,20 +1221,12 @@ function bindRtf() {
     });
   });
 
-  // 서브탭
-  document.querySelectorAll("[data-rtf-subtab]").forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      if (state.rtfSubTab === btn.dataset.rtfSubtab) return;
-      state.rtfSubTab = btn.dataset.rtfSubtab;
-      render("rtf");
-    });
-  });
-
   // 전후 토글
   document.querySelectorAll("[data-rtf-view]").forEach(function(btn) {
     btn.addEventListener("click", function() {
       if (state.rtfViewMode === btn.dataset.rtfView) return;
       state.rtfViewMode = btn.dataset.rtfView;
+      state._rtfToggleManual = true;
       render("rtf");
     });
   });

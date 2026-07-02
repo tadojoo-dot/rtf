@@ -38,12 +38,21 @@ function extractPlanMonths(header) {
   return months.length ? months : MONTHS;
 }
 
+// 판매계획 전체(수만 행)를 매번 map/sort하면 화면 곳곳(품목별 루프 포함)에서
+// 호출될 때마다 비용이 커짐 — 데이터 건수를 캐시 키로 재사용한다.
+var _rtfMonthsCache = null;
+var _rtfMonthsCacheKey = null;
 function getRtfMonths() {
+  const cacheKey = state.mappedData.plan_monthly.length;
+  if (_rtfMonthsCache && _rtfMonthsCacheKey === cacheKey) return _rtfMonthsCache;
   const planMonths = state.mappedData.plan_monthly
     .map((row) => cleanOptional(row.month)).filter(Boolean).sort();
   const baseMonth = planMonths[0] || MONTHS[0];
-  return Array.from({ length: 7 }, (_, i) => addMonths(baseMonth, i));
+  _rtfMonthsCache = Array.from({ length: 7 }, (_, i) => addMonths(baseMonth, i));
+  _rtfMonthsCacheKey = cacheKey;
+  return _rtfMonthsCache;
 }
+function invalidateRtfMonthsCache() { _rtfMonthsCache = null; _rtfMonthsCacheKey = null; }
 
 function monthLabel(month) {
   const [year, monthNo] = month.split("-").map(Number);
@@ -73,6 +82,17 @@ function cleanNumber(value) {
 function normalizeCode(value)   { return String(value ?? "").trim().replace(/\.0$/, ""); }
 function normalizeHeader(value) { return String(value ?? "").replaceAll(" ", "").trim(); }
 function get(row, index)        { return index >= 0 ? String(row[index] ?? "").trim() : ""; }
+
+// ── 플랜트 코드 정규화 ────────────────────────────────────────────────────────
+// RAW 파일마다 플랜트 컬럼이 SAP 코드("1210")로 오거나 한글명("향남")으로 올 수 있음.
+// 전 화면이 SAP 코드를 기준 키로 매칭하므로, 파싱 시점에 코드로 통일한다.
+var PLANT_NAME_TO_CODE = { "향남":"1210", "나보타":"1220", "오송":"1230", "횡성":"1240" };
+var PLANT_CODE_SET = new Set(["1210", "1220", "1230", "1240"]);
+function normalizePlant(value) {
+  const v = cleanOptional(value);
+  if (!v || PLANT_CODE_SET.has(v)) return v;
+  return PLANT_NAME_TO_CODE[v] || v;
+}
 
 function toNumber(value) {
   const number = cleanNumber(value);

@@ -1,4 +1,4 @@
-// ── 탭 렌더 ──────────────────────────────────────────────────────────────────
+﻿// ── 탭 렌더 ──────────────────────────────────────────────────────────────────
 function renderTabs(activeId) {
   var visible = menus.filter(function(m) { return m[3] !== false; });
   tabNav.innerHTML = visible.map(function(m, idx) {
@@ -11,40 +11,6 @@ function renderTabs(activeId) {
 }
 
 // ── 회의체계 ─────────────────────────────────────────────────────────────────
-function renderMeeting() {
-  return `<section class="section-band">
-    <div class="section-header">
-      <div><p class="eyebrow">수급관리 S&amp;OP</p><h2>회의체계 개편 배경 및 목적</h2></div>
-    </div>
-    <div class="notice-no-data" style="font-size:15px;line-height:2;">
-      <strong>이 화면의 내용을 입력해주세요.</strong><br>
-      아래 항목을 직접 작성하면 됩니다:<br><br>
-      ① 기존 회의체계와 무엇이 달라졌는가<br>
-      ② RTF 점검을 도입한 이유<br>
-      ③ 과잉재고 점검을 도입한 이유<br>
-      ④ 이 회의를 통해 달성하려는 목적
-    </div>
-  </section>
-  <section class="section-band">
-    <div class="section-header"><h2>오늘 회의 진행 순서</h2></div>
-    <div class="process-grid">
-      <article class="card process-card">
-        <h3 style="font-size:16px;font-weight:800;margin-bottom:8px;">1부 — 품절 점검</h3>
-        <p style="font-size:14px;line-height:1.7;"><strong>RTF판정:</strong> 어디서 품절이 나는가<br><strong>공급원인:</strong> 왜 품절이 나는가</p>
-      </article>
-      <article class="card process-card">
-        <h3 style="font-size:16px;font-weight:800;margin-bottom:8px;">2부 — 재고 점검</h3>
-        <p style="font-size:14px;line-height:1.7;"><strong>재고전망:</strong> 재고금액이 어떻게 되는가<br><strong>과잉감축:</strong> 어떻게 줄일 것인가</p>
-      </article>
-      <article class="card process-card">
-        <h3 style="font-size:16px;font-weight:800;margin-bottom:8px;">3부 — 의사결정</h3>
-        <p style="font-size:14px;line-height:1.7;"><strong>조정영향:</strong> 조정 시 효과가 얼마인가<br><strong>회의록:</strong> 결정사항 및 액션오너 확정</p>
-      </article>
-    </div>
-  </section>`;
-}
-
-// ── 데이터점검 ────────────────────────────────────────────────────────────────
 function renderDataCheck() {
   const parsedFiles = Object.values(state.rawFiles);
   const uploadRows  = state.uploadedFiles.map((file) => [
@@ -77,12 +43,66 @@ function renderDataCheck() {
     ["기초재고",      formatNumber(counts.inventory_base.length)],
     ["사업부 기준정보", formatNumber(counts.item_master.length)],
     ["BOM",          formatNumber(counts.bom_components.length)],
-  ])}</section>`;
+  ])}</section>
+  ${renderMatReqDownloadSection_inner()}`;
 }
 
 function bindDataCheck() {
   document.querySelector("#rawUpload")?.addEventListener("change", (e) =>
     processFiles(Array.from(e.target.files ?? [])));
+}
+
+// ── 운영 도구: 자재 필요량 다운로드 ─────────────────────────────────────────────
+
+function downloadMatReq() {
+  if (typeof BOM_STATUS === "undefined" || state.bomStatus !== BOM_STATUS.DONE
+      || !state.bomResult || !state.bomResult.items) {
+    alert("공급원인 화면에서 BOM 전개를 먼저 실행하세요.");
+    return;
+  }
+  var months = getRtfMonths();
+  var items  = state.bomResult.items;
+
+  // 헤더
+  var header = ["자재코드", "자재명", "유형", "플랜트", "단위"];
+  months.forEach(function(m) { header.push(monthLabel(m) + "_필요수량"); });
+
+  // 데이터 행
+  var dataRows = items.map(function(bi) {
+    var row = [
+      bi.componentCode  || "",
+      bi.componentName  || "",
+      bi.displayCategory || "",
+      displayPlantName(bi.plant),
+      bi.unit || "",
+    ];
+    months.forEach(function(m) {
+      var md = (bi.monthlyData || []).find(function(d) { return d.month === m; });
+      row.push(md ? Math.round(md.requiredQty || 0) : 0);
+    });
+    return row;
+  });
+
+  // 플랜트 → 유형 → 자재코드 순 정렬
+  dataRows.sort(function(a, b) {
+    if (a[3] < b[3]) return -1; if (a[3] > b[3]) return 1;
+    if (a[2] < b[2]) return -1; if (a[2] > b[2]) return 1;
+    return String(a[0]).localeCompare(String(b[0]), "ko");
+  });
+
+  var allRows = [header].concat(dataRows);
+
+  // 열 너비 설정
+  var colWidths = [{ wch:16 }, { wch:32 }, { wch:12 }, { wch:8 }, { wch:6 }];
+  months.forEach(function() { colWidths.push({ wch:14 }); });
+
+  var wb = XLSX.utils.book_new();
+  var ws = XLSX.utils.aoa_to_sheet(allRows);
+  ws["!cols"] = colWidths;
+  XLSX.utils.book_append_sheet(wb, ws, "자재필요량");
+
+  var today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  XLSX.writeFile(wb, "자재필요량_" + today + ".xlsx");
 }
 
 // ── 플레이스홀더 ──────────────────────────────────────────────────────────────
@@ -91,175 +111,6 @@ function renderPlaceholder(title) {
 }
 
 // ── 회의안건 ──────────────────────────────────────────────────────────────────
-function renderSummary() {
-  var planRows = state.mappedData.plan_monthly;
-  var hasData  = planRows.length > 0;
-
-  // 완제품(9코드) RTF 부족 아이템: supplyQty < salesQty인 월 존재
-  var rtfMap = new Map();
-  if (hasData) {
-    planRows.forEach(function(row) {
-      var code = cleanOptional(row.itemCode);
-      if (!code || !code.startsWith("9")) return;
-      var plant = cleanOptional(row.plant), month = cleanOptional(row.month);
-      if (!plant || !month) return;
-      var key = code + "|" + plant;
-      var sales  = cleanNumber(row.salesQty)  || 0;
-      var supply = cleanNumber(row.supplyQty) || 0;
-      if (!rtfMap.has(key))
-        rtfMap.set(key, { code:code, name:cleanOptional(row.itemName)||code, plant:plant, itemType:cleanOptional(row.itemType)||"완제품", shortageMonths:[] });
-      var e = rtfMap.get(key);
-      if (sales > 0 && supply < sales && !e.shortageMonths.includes(month)) e.shortageMonths.push(month);
-    });
-  }
-  var rtfItems = [];
-  rtfMap.forEach(function(item) { if (item.shortageMonths.length > 0) rtfItems.push(item); });
-  rtfItems.sort(function(a,b) { return b.shortageMonths.length - a.shortageMonths.length; });
-
-  // BOM 공급원인 부족 아이템
-  var bomDone  = state.bomStatus === BOM_STATUS.DONE;
-  var bomItems = bomDone && state.bomResult && state.bomResult.items
-    ? state.bomResult.items.filter(function(i) { return i.hasAnyShortage; })
-    : null;
-
-  // KPI 카드 렌더
-  function kpiVal(n, avail) {
-    if (!avail) return { val:"연결필요", cls:"neutral" };
-    if (n === 0) return { val:"없음", cls:"ok" };
-    return { val:n + "건", cls:n > 0 ? "shortage" : "ok" };
-  }
-  var kpiRtf = kpiVal(rtfItems.length, hasData);
-  var kpiBom = kpiVal(bomItems ? bomItems.length : 0, bomItems !== null);
-  var kpiCards = [
-    { label:"RTF 조정 필요",       val:kpiRtf.val, cls:kpiRtf.cls, screen:"rtf",               desc:"판매계획 대비 공급 부족 품목", link:"RTF판정 화면 바로가기" },
-    { label:"공급원인 확인 필요",   val:kpiBom.val, cls:kpiBom.cls, screen:"constraint",         desc:"BOM 전개 기준 자재 부족 현황", link:"공급원인 화면 바로가기" },
-    { label:"재고초과 조정 필요",   val:"-",        cls:"",         screen:"inventory-forecast", desc:"후속 단계 구현 예정",          link:"재고전망 화면 바로가기" },
-    { label:"최종 영향 확인 필요",  val:"-",        cls:"",         screen:"impact",             desc:"후속 단계 구현 예정",          link:"조정영향 화면 바로가기" },
-  ];
-
-  var kpiHtml = "<div class=\"sum-kpi-grid\">" + kpiCards.map(function(c) {
-    return "<div class=\"sum-kpi-card\" onclick=\"render('" + escapeHtml(c.screen) + "')\" title=\"" + escapeHtml(c.link) + "\">" +
-           "<div class=\"sum-kpi-label\">" + escapeHtml(c.label) + "</div>" +
-           "<div class=\"sum-kpi-value " + escapeHtml(c.cls) + "\">" + escapeHtml(c.val) + "</div>" +
-           "<div class=\"sum-kpi-desc\">" + escapeHtml(c.desc) + "</div>" +
-           "<div class=\"sum-kpi-nav\">→ " + escapeHtml(c.link) + "</div></div>";
-  }).join("") + "</div>";
-
-  // 안건 목록 생성 (실제 데이터만, 가짜 항목 없음)
-  var agendaRows = [];
-
-  if (!hasData) {
-    agendaRows.push({ type:"공통", months:"-", category:"-", items:"데이터 미연결", summary:"데이터점검 화면에서 RAW 파일을 먼저 선택하십시오.", screen:"data-check", status:"확인 필요" });
-  } else {
-    // RTF 조정 안건 (상위 15개)
-    rtfItems.slice(0, 15).forEach(function(item) {
-      var mths = item.shortageMonths.slice().sort().map(monthLabel).join(", ");
-      agendaRows.push({
-        type:     "RTF 조정",
-        months:   mths,
-        category: item.itemType || "완제품",
-        items:    item.name,
-        summary:  "판매계획 대비 공급 부족 (" + item.shortageMonths.length + "개월)",
-        screen:   "rtf",
-        status:   "확인 필요",
-      });
-    });
-
-    // 공급원인 확인 안건
-    if (bomItems && bomItems.length > 0) {
-      bomItems.slice(0, 15).forEach(function(item) {
-        var shMths = item.monthlyData.filter(function(md) { return md.shortageQty > 0; })
-                       .map(function(md) { return monthLabel(md.month); }).join(", ");
-        agendaRows.push({
-          type:     "공급원인 확인",
-          months:   shMths || "-",
-          category: item.displayCategory || "자재",
-          items:    item.componentName || item.componentCode,
-          summary:  item.note || "자재 부족 발생",
-          screen:   "constraint",
-          status:   "조정 필요",
-        });
-      });
-    } else if (state.bomStatus === BOM_STATUS.IDLE) {
-      agendaRows.push({
-        type:"공급원인 확인", months:"-", category:"전체", items:"-",
-        summary:"BOM 전개 전 — 공급원인 화면에서 BOM 전개 실행 필요",
-        screen:"constraint", status:"확인 필요",
-      });
-    }
-
-    if (agendaRows.length === 0) {
-      agendaRows.push({ type:"없음", months:"-", category:"-", items:"-", summary:"현재 계획 기준 조정 필요 안건이 없습니다.", screen:"", status:"완료" });
-    }
-  }
-
-  // 유형별 배지 CSS 클래스
-  function typeCls(t) {
-    if (t === "RTF 조정")      return "sum-type-rtf";
-    if (t === "공급원인 확인") return "sum-type-bom";
-    if (t === "재고초과 조정") return "sum-type-inv";
-    if (t === "최종 영향 검토") return "sum-type-impact";
-    return "sum-type-default";
-  }
-  // 진행상태 배지 CSS 클래스
-  function statusCls(s) {
-    if (s === "확인 필요")     return "sum-s-check";
-    if (s === "조정 필요")     return "sum-s-adjust";
-    if (s === "영향 검토 필요") return "sum-s-review";
-    if (s === "완료")          return "sum-s-done";
-    return "sum-s-default";
-  }
-
-  var agendaThead = "<tr><th>안건유형</th><th>대상월</th><th>대상구분</th><th>주요 품목·자재</th><th>문제 요약</th><th>확인 화면</th><th>진행상태</th></tr>";
-  var agendaTbody = agendaRows.map(function(row) {
-    var navBtn = row.screen
-      ? "<button type=\"button\" class=\"sum-nav-btn\" onclick=\"render('" + escapeHtml(row.screen) + "')\">" + escapeHtml(screenButtonLabel(row.screen)) + "</button>"
-      : "-";
-    return "<tr>" +
-      "<td><span class=\"sum-type-badge " + typeCls(row.type) + "\">" + escapeHtml(row.type) + "</span></td>" +
-      "<td>" + escapeHtml(row.months) + "</td>" +
-      "<td>" + escapeHtml(row.category) + "</td>" +
-      "<td class=\"sum-td-left\" title=\"" + escapeHtml(row.items) + "\">" + escapeHtml(row.items) + "</td>" +
-      "<td class=\"sum-td-left\" title=\"" + escapeHtml(row.summary) + "\">" + escapeHtml(row.summary) + "</td>" +
-      "<td>" + navBtn + "</td>" +
-      "<td><span class=\"sum-status-badge " + statusCls(row.status) + "\">" + escapeHtml(row.status) + "</span></td>" +
-      "</tr>";
-  }).join("");
-
-  var chartSection = hasData
-    ? "<div class=\"sum-card sum-chart-card\">" +
-        "<div class=\"sum-chart-header\">" +
-          "<h3>연간 수급 추이</h3>" +
-          "<div class=\"sum-scenario-btns\">" +
-            "<button class=\"sum-scen-btn\" data-scenario=\"기존\">기존</button>" +
-            "<button class=\"sum-scen-btn\" data-scenario=\"RTF조정\">RTF조정</button>" +
-            "<button class=\"sum-scen-btn\" data-scenario=\"과잉조정\">과잉조정</button>" +
-          "</div>" +
-        "</div>" +
-        "<div class=\"sum-chart-wrap\"><canvas id=\"sumInvChart\"></canvas></div>" +
-        "<div id=\"sumChartLegend\" class=\"sum-chart-legend\"></div>" +
-      "</div>"
-    : "";
-
-  return "<div class=\"sum-screen\">" +
-    "<section class=\"sum-card sum-header\">" +
-    "<h2>회의안건</h2>" +
-    "<p>현재 계획 기준으로 RTF 공급부족 및 재고초과 이슈를 확인하고, RTF 조정과 재고조정 의사결정이 필요한 안건을 요약합니다.</p>" +
-    "</section>" +
-    kpiHtml +
-    chartSection +
-    "<div class=\"sum-card sum-agenda-card\">" +
-    "<div class=\"sum-agenda-header\"><h3>회의 안건 목록</h3><span class=\"sum-agenda-note\">데이터 기준 자동 생성 · 가짜 항목 없음</span></div>" +
-    "<div class=\"sum-h-scroll\"><table class=\"sum-agenda-table\"><thead>" + agendaThead + "</thead><tbody>" + agendaTbody + "</tbody></table></div>" +
-    "</div></div>";
-}
-
-function screenButtonLabel(screenId) {
-  var labels = { rtf:"RTF판정 보기", constraint:"공급원인 보기", "inventory-forecast":"재고전망 보기", "inventory-variance":"재고변동 보기", diagnosis:"수급진단 보기", adjustment:"조정입력 보기", impact:"조정영향 보기", "data-check":"데이터점검 이동", summary:"회의안건 보기" };
-  return labels[screenId] || "화면 이동";
-}
-
-// ── 수급진단 ──────────────────────────────────────────────────────────────────
 function renderDiagnosis() {
   const adjTypes = ["RTF 개선","적정재고 초과 조정","생산 Pull-in","생산 이연","입고 추가","입고 이연","공급계획 감량","공통자재 배분 확인"];
   return `<section class="section-band">
@@ -279,68 +130,362 @@ function renderDiagnosis() {
 }
 
 // ── 회의록 ────────────────────────────────────────────────────────────────────
-function renderMinutes() {
-  var log = state.minutesLog || [];
-  var header = "<div class=\"min-toolbar\">" +
-    "<h2 class=\"min-title\">회의록 · 결정사항</h2>" +
-    (log.length > 0 ? "<button class=\"min-clear-all-btn\">전체 삭제</button>" : "") +
-    "</div>";
-  if (log.length === 0) {
-    return "<div class=\"min-screen\">" + header +
-      "<div class=\"min-empty\">기록된 결정사항이 없습니다.<br>공급원인 화면 → 부족자재 리스트에서 입고계획을 조정하고 기록하세요.</div></div>";
-  }
-  var entries = log.slice().reverse().map(function(entry) {
-    var ts = entry.timestamp instanceof Date
-      ? entry.timestamp.toLocaleString("ko-KR", { month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit" })
-      : "-";
-    var adjRows = entry.entries.map(function(e) {
-      var sign = e.delta > 0 ? "+" : "";
-      return "<tr>" +
-        "<td>" + escapeHtml(e.matCode) + "</td>" +
-        "<td>" + escapeHtml(e.matName) + "</td>" +
-        "<td>" + escapeHtml(e.month) + "</td>" +
-        "<td>" + formatNumber(Math.round(e.orig)) + "</td>" +
-        "<td>" + formatNumber(Math.round(e.adj)) + "</td>" +
-        "<td class=\"" + (e.delta > 0 ? "min-delta-pos" : "min-delta-neg") + "\">" +
-          sign + formatNumber(Math.round(e.delta)) + "</td>" +
-        "<td>" + (e.addlEA > 0 ? "+" + formatNumber(e.addlEA) + " EA" : "-") + "</td>" +
-        "</tr>";
-    }).join("");
-    return "<div class=\"min-entry\" data-entry-id=\"" + entry.id + "\">" +
-      "<div class=\"min-entry-header\">" +
-        "<span class=\"min-ts\">" + escapeHtml(ts) + "</span>" +
-        "<span class=\"min-entry-title\">" + entry.title + "</span>" +
-        "<button class=\"min-delete-btn\" data-id=\"" + entry.id + "\">삭제</button>" +
-      "</div>" +
-      "<div class=\"min-entry-body\">" +
-        "<table class=\"min-table\"><thead><tr>" +
-        "<th>자재코드</th><th>자재명</th><th>월</th><th>원 입고계획</th><th>조정 후</th><th>변동</th><th>추가 생산</th>" +
-        "</tr></thead><tbody>" + adjRows + "</tbody></table>" +
-      "</div></div>";
-  }).join("");
-  return "<div class=\"min-screen\"><div class=\"min-inner\">" + header + entries + "</div></div>";
+// ═══════════════════════════════════════════════════════════════════════════
+// 다운로드 화면
+// ═══════════════════════════════════════════════════════════════════════════
+function renderDownload() {
+  var hasPlan = (state.mappedData.plan_monthly || []).length > 0;
+  var hasBom  = (state.mappedData.bom_components || []).length > 0;
+  var hasInv  = (state.mappedData.inventory_base || []).length > 0;
+  var dataOk  = hasPlan;
+  var hint    = !hasPlan
+    ? "⚠ 판매계획 RAW 파일을 먼저 연결하세요 (필수)"
+    : !hasBom
+      ? "판매계획 연결됨 — BOM 파일 없으면 자재 소요량 섹션이 비어있음"
+      : "판매계획 · BOM · 재고 연결 완료 — 다운로드 가능";
+
+  return `<section class="section-band">
+    <div class="section-header">
+      <div><p class="eyebrow">export</p><h2>생산 · 입고계획 요청서</h2></div>
+      <p>판매계획 기준으로 공장별 필요 생산량·원부자재 소요량을 자동 계산하여 Excel 양식을 생성합니다.<br>
+         담당자에게 배포 후 ★ 표시 칸을 작성 받아 회신받으세요.</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:8px;">
+      <button type="button" class="data-check-btn" onclick="downloadRequestForm()"
+        ${dataOk ? "" : "disabled"}
+        style="font-size:15px;padding:10px 24px;background:#1a3558;color:#fff;border:none;border-radius:8px;cursor:pointer;">
+        ↓ 요청양식 다운로드 (공장별 시트)
+      </button>
+      <span style="font-size:13px;color:${dataOk ? "#15803d" : "#b91c1c"};">${escapeHtml(hint)}</span>
+    </div>
+    <div style="font-size:12px;color:#6b7280;line-height:1.8;padding:12px 0;">
+      <strong>포함 내용:</strong><br>
+      · 공장별 시트 분리 (향남·오송 등 플랜트 코드 기준)<br>
+      · <strong>완제품·상품 생산계획</strong>: 품목별 판매계획 / 기초재고 / 필요생산량 / ★생산계획(입력칸)<br>
+      · <strong>원부자재 입고계획</strong>: 자재별 월별 소요량 / 현재고 / 권장입고량 / ★입고계획(입력칸)<br>
+      · 7개월 롤링 기준 (${hasPlan ? escapeHtml(getRtfMonths().map(monthLabel).join(" · ")) : "파일 연결 후 확인"})
+    </div>
+  </section>
+  <section class="section-band">
+    <div class="section-header">
+      <div><h2>자재 필요량 (단순)</h2></div>
+      <p>BOM 전개 기준 자재 소요량만 단순 추출합니다. 공급원인 화면에서 BOM 전개 후 사용 가능합니다.</p>
+    </div>
+    ${renderMatReqDownloadSection_inner()}
+  </section>`;
 }
 
-function bindMinutes() {
-  var root = document.querySelector("#screenRoot");
-  if (!root) return;
-  root.addEventListener("click", function(e) {
-    var del = e.target.closest(".min-delete-btn");
-    if (del) {
-      var id = parseInt(del.dataset.id, 10);
-      state.minutesLog = (state.minutesLog || []).filter(function(entry) { return entry.id !== id; });
-      render("minutes"); return;
-    }
-    var clearAll = e.target.closest(".min-clear-all-btn");
-    if (clearAll && confirm("전체 결정사항을 삭제하시겠습니까?")) {
-      state.minutesLog = [];
-      render("minutes");
+function renderMatReqDownloadSection_inner() {
+  var bomDone = (typeof BOM_STATUS !== "undefined")
+    && state.bomStatus === BOM_STATUS.DONE
+    && state.bomResult && state.bomResult.items && state.bomResult.items.length > 0;
+  var hint = bomDone
+    ? "자재 " + (state.bomResult.items.length).toLocaleString("ko-KR") + "개 · BOM 전개 완료"
+    : "공급원인 화면에서 BOM 전개 후 사용 가능";
+  return `<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+    <button type="button" class="data-check-btn" onclick="downloadMatReq()" ${bomDone ? "" : "disabled"}
+      style="font-size:14px;padding:8px 18px;">
+      ↓ 자재 필요량 다운로드
+    </button>
+    <span style="font-size:13px;color:#6b7280;">${escapeHtml(hint)}</span>
+  </div>`;
+}
+
+// ── 공장별 생산/입고계획 요청 양식 다운로드 ────────────────────────────────────
+function downloadRequestForm() {
+  var months    = getRtfMonths();
+  var rtfItems  = computeRtfItems();
+  var today     = new Date().toLocaleDateString("ko-KR");
+  var todayFile = new Date().toISOString().slice(0,10).replace(/-/g,"");
+
+  // 완제품 코드 셋 — BOM 자재 목록에서 완제품/상품 제외용
+  // computeRtfItems는 판매계획 있는 품목만 반환하므로, item_master와 BOM parent도 추가
+  var fgCodeSet = new Set(rtfItems.map(function(i){ return i.itemCode; }));
+  (state.mappedData.item_master || []).forEach(function(r) {
+    var ic = cleanOptional(r.itemCode);
+    var t  = cleanOptional(r.itemType) || "";
+    var sc = String(ic || "");
+    if (ic && (t.includes("완제품") || t.includes("상품") || sc.startsWith("9") || sc.startsWith("7")))
+      fgCodeSet.add(ic);
+  });
+  (state.mappedData.bom_components || []).forEach(function(b) {
+    var rc = cleanOptional(b.rootItemCode);
+    if (rc) fgCodeSet.add(rc); // BOM 부모(완제품/반제품) 코드도 제외
+  });
+
+  // 판매계획 맵 "itemCode|plant|month" → qty
+  var salesMap = new Map();
+  (state.mappedData.plan_monthly || []).forEach(function(r) {
+    var ic = cleanOptional(r.itemCode), pl = cleanOptional(r.plant)||"", mo = cleanOptional(r.month);
+    if (!ic || !mo) return;
+    var k = ic+"|"+pl+"|"+mo;
+    salesMap.set(k, (salesMap.get(k)||0) + (cleanNumber(r.salesQty)||cleanNumber(r.supplyQty)||0));
+  });
+
+  // 자재 소요량 맵 "compCode|plant" → [qty×month]
+  var consMap = buildMatConsumptionMap(false);
+
+  // 단위 맵 — item_master 우선, inventory_base 보조
+  var unitMap = new Map();
+  (state.mappedData.inventory_base || []).forEach(function(r) {
+    var ic = cleanOptional(r.itemCode), u = cleanOptional(r.unit)||"";
+    if (ic && u) unitMap.set(ic, u);
+  });
+  (state.mappedData.item_master || []).forEach(function(r) {
+    var ic = cleanOptional(r.itemCode), u = cleanOptional(r.unit)||"";
+    if (ic && u) unitMap.set(ic, u); // item_master 우선 덮어씀
+  });
+
+  // 상품(구매재판매) vs 완제품/반제품 분리
+  var sangItems = rtfItems.filter(function(i){ return (i.typeGroup||"").indexOf("상품") >= 0; });
+  var madeItems = rtfItems.filter(function(i){ return (i.typeGroup||"").indexOf("상품") < 0; });
+
+  // 플랜트별 FG 분류 (완제품/반제품만)
+  var plantFg = {};
+  madeItems.forEach(function(item) {
+    var p = item.plantCode || "기타";
+    if (!plantFg[p]) plantFg[p] = [];
+    plantFg[p].push(item);
+  });
+
+  // 자재 유형 표시명 (BOM itemCategory → 한글)
+  function matCategoryLabel(cat) {
+    var c = (cat || "").trim().toUpperCase();
+    var map = {
+      "ROH":"원료", "ZR":"원료", "ZRM":"원료",
+      "VERP":"포장재", "ZP":"포장재", "ZPM":"포장재",
+      "HALB":"반제품", "ZH":"반제품",
+      "HIBE":"소모품", "NLAG":"비축자재",
+      "FERT":"완제품", "ZF":"완제품",
+    };
+    if (map[c]) return map[c];
+    // 이미 한글이면 그대로 사용
+    if (cat && /[가-힣]/.test(cat)) return cat;
+    return cat || "원부자재";
+  }
+
+  // 플랜트별 자재 분류 — 완제품 코드 제외, unit·category 저장
+  var plantMat = {};
+  (state.mappedData.bom_components || []).forEach(function(b) {
+    var pl  = cleanOptional(b.plant) || "기타";
+    var cc  = cleanOptional(b.componentCode) || "";
+    var cn  = cleanOptional(b.componentName) || cc;
+    var u   = cleanOptional(b.componentUnit) || cleanOptional(b.unit) || "";
+    var cat = matCategoryLabel(cleanOptional(b.itemCategory));
+    if (!cc || fgCodeSet.has(cc)) return; // 완제품 코드 제외
+    if (!plantMat[pl]) plantMat[pl] = {};
+    if (!plantMat[pl][cc]) plantMat[pl][cc] = { code:cc, name:cn, unit:u, category:cat };
+    else {
+      if (!plantMat[pl][cc].unit && u) plantMat[pl][cc].unit = u;
+      if (plantMat[pl][cc].category === "원부자재" && cat !== "원부자재") plantMat[pl][cc].category = cat;
     }
   });
+
+  var wb = XLSX.utils.book_new();
+
+  // ── 안내 시트 ──────────────────────────────────────────────────────────────
+  var plantCodes = Array.from(new Set(
+    Object.keys(plantFg).concat(Object.keys(plantMat))
+  )).sort();
+
+  var coverRows = [
+    ["생산계획 · 원부자재 입고계획 요청서"],
+    [],
+    ["요청일",    today],
+    ["회신기한",  ""],
+    [],
+    ["■ 작성 안내"],
+    ["· 담당 공장 시트를 열어 ★ 열에 계획 수량을 입력 후 회신 부탁드립니다."],
+    ["· 판매계획(출고) / 소요량(출고) 열은 시스템 기준값으로 수정하지 마세요."],
+    ["· ★ 생산계획(입고) / ★ 입고계획(입력) 열만 입력하면 됩니다."],
+    [],
+    ["■ 시트 구성"],
+  ];
+  plantCodes.forEach(function(p) {
+    var pn = displayPlantName ? displayPlantName(p) : p;
+    coverRows.push([
+      "  · " + pn,
+      "완제품 " + (plantFg[p]||[]).length + "개  /  자재 " + Object.keys(plantMat[p]||{}).length + "개",
+    ]);
+  });
+  var coverWs = XLSX.utils.aoa_to_sheet(coverRows);
+  coverWs["!cols"] = [{wch:16},{wch:50}];
+  XLSX.utils.book_append_sheet(wb, coverWs, "안내");
+
+  // ── 헤더 빌더 (공용) ───────────────────────────────────────────────────────
+  function monthCols(outLabel, inLabel) {
+    var hd = [];
+    months.forEach(function(m) {
+      var ml = monthLabel(m);
+      hd.push(ml + " " + outLabel);
+      hd.push("★" + ml + " " + inLabel);
+    });
+    return hd;
+  }
+
+  // ── 공장별 시트 ────────────────────────────────────────────────────────────
+  plantCodes.forEach(function(plantCode) {
+    var plantName = displayPlantName ? displayPlantName(plantCode) : plantCode;
+    var fgItems   = (plantFg[plantCode] || []).slice().sort(function(a,b){
+      return String(a.itemCode).localeCompare(String(b.itemCode),"ko");
+    });
+    var matItems  = Object.values(plantMat[plantCode] || {}).sort(function(a,b){
+      return String(a.code).localeCompare(String(b.code),"ko");
+    });
+
+    var rows = [];
+
+    // 제목
+    rows.push(["※ " + plantName + " 생산·입고계획 요청  (" + months.map(monthLabel).join(", ") + ")"]);
+    rows.push([]);
+
+    // ── ① 완제품 생산계획 ──────────────────────────────────────────────────
+    rows.push(["■ 완제품 · 상품 생산계획"]);
+    rows.push(
+      ["담당자", "유형", "플랜트", "품목코드", "품목명", "단위", "기초재고(수량)"]
+      .concat(monthCols("판매계획(출고)", "생산계획(입고)"))
+    );
+
+    if (!fgItems.length) {
+      rows.push(["", "", "", "(해당 품목 없음)"]);
+    }
+    fgItems.forEach(function(item) {
+      var unit = unitMap.get(item.itemCode) || "";
+      var row  = [
+        "",                           // 담당자 — 공백
+        item.typeGroup || "",
+        plantName,
+        item.itemCode,
+        item.itemName || "",
+        unit,
+        Math.round(item.baseQty || 0),
+      ];
+      months.forEach(function(m, mi) {
+        var ms    = (item.monthlyStatus && item.monthlyStatus[mi]) || {};
+        var sales = Math.round(ms.salesQty || 0);
+        row.push(sales); // 판매계획(출고) — 참고값
+        row.push("");    // ★ 생산계획(입고) — 입력 칸
+      });
+      rows.push(row);
+    });
+
+    rows.push([]);
+    rows.push([]);
+
+    // ── ② 원부자재 입고계획 ────────────────────────────────────────────────
+    rows.push(["■ 원부자재 입고계획"]);
+    rows.push(
+      ["담당자", "유형", "플랜트", "자재코드", "자재명", "단위", "기초재고(수량)"]
+      .concat(monthCols("소요량(출고)", "입고계획(입력)"))
+    );
+
+    if (!matItems.length) {
+      rows.push(["", "", "", "(BOM 데이터 없음)"]);
+    }
+    matItems.forEach(function(mat) {
+      var matInv  = (state.mappedData.inventory_base || []).find(function(r){
+        return cleanOptional(r.itemCode) === mat.code;
+      });
+      var baseQty = matInv ? Math.round(cleanNumber(matInv.baseQty)||0) : 0;
+      var unit    = unitMap.get(mat.code) || mat.unit || "";
+      var ck      = mat.code + "|" + plantCode;
+      var consArr = consMap.get(ck) || [];
+
+      var row = [
+        "",          // 담당자 — 공백
+        mat.category || "원부자재",
+        plantName,
+        mat.code,
+        mat.name,
+        unit,
+        baseQty,
+      ];
+      months.forEach(function(m, mi) {
+        var cons = Math.round(consArr[mi] || 0);
+        row.push(cons); // 소요량(출고) — 참고값
+        row.push("");   // ★ 입고계획(입력) — 입력 칸
+      });
+      rows.push(row);
+    });
+
+    // 시트 생성 + 열 너비
+    var ws   = XLSX.utils.aoa_to_sheet(rows);
+    var cols = [{wch:8},{wch:8},{wch:7},{wch:12},{wch:28},{wch:5},{wch:10}];
+    months.forEach(function(){ cols.push({wch:13},{wch:13}); });
+    ws["!cols"] = cols;
+
+    // ★ 입력 칸 파스텔 음영 (연한 파란색)
+    try {
+      var range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+      for (var R = range.s.r; R <= range.e.r; R++) {
+        months.forEach(function(m, mi) {
+          var C = 8 + mi * 2;
+          var addr = XLSX.utils.encode_cell({r: R, c: C});
+          if (!ws[addr]) ws[addr] = {t: "z", v: ""};
+          ws[addr].s = { fill: { patternType: "solid", fgColor: { rgb: "D6EAF8" } } };
+        });
+      }
+    } catch(e) {}
+
+    var sheetName = plantName.replace(/[\/\\?\*\[\]]/g,"").slice(0,31) || "공장";
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  });
+
+  // ── 상품 시트 (별도) ────────────────────────────────────────────────────────
+  if (sangItems.length > 0) {
+    sangItems.sort(function(a,b){ return String(a.itemCode).localeCompare(String(b.itemCode),"ko"); });
+    var sangRows = [];
+    sangRows.push(["■ 상품 입고계획  (" + months.map(monthLabel).join(", ") + ")"]);
+    sangRows.push([]);
+    sangRows.push(
+      ["담당자","유형","품목코드","품목명","단위","기초재고(수량)"]
+      .concat(monthCols("판매계획(출고)","입고계획(입력)"))
+    );
+    sangItems.forEach(function(item) {
+      var unit = unitMap.get(item.itemCode) || "";
+      var row = [
+        "",
+        item.typeGroup || "상품",
+        item.itemCode,
+        item.itemName || "",
+        unit,
+        Math.round(item.baseQty || 0),
+      ];
+      months.forEach(function(m, mi) {
+        var ms    = (item.monthlyStatus && item.monthlyStatus[mi]) || {};
+        var sales = Math.round(ms.salesQty || 0);
+        row.push(sales);
+        row.push("");
+      });
+      sangRows.push(row);
+    });
+    var sangWs = XLSX.utils.aoa_to_sheet(sangRows);
+    var sangCols = [{wch:8},{wch:8},{wch:12},{wch:28},{wch:5},{wch:10}];
+    months.forEach(function(){ sangCols.push({wch:13},{wch:13}); });
+    sangWs["!cols"] = sangCols;
+    try {
+      var sRange = XLSX.utils.decode_range(sangWs["!ref"] || "A1");
+      for (var sR = sRange.s.r; sR <= sRange.e.r; sR++) {
+        months.forEach(function(m, mi) {
+          var sC = 7 + mi * 2;
+          var sAddr = XLSX.utils.encode_cell({r: sR, c: sC});
+          if (!sangWs[sAddr]) sangWs[sAddr] = {t: "z", v: ""};
+          sangWs[sAddr].s = { fill: { patternType: "solid", fgColor: { rgb: "D6EAF8" } } };
+        });
+      }
+    } catch(e) {}
+    XLSX.utils.book_append_sheet(wb, sangWs, "상품");
+  }
+
+  XLSX.writeFile(wb, "입고출고계획_" + todayFile + ".xlsx", {cellStyles: true});
 }
 
 // ── 화면 전환 ─────────────────────────────────────────────────────────────────
 function render(menuId) {
+  // 같은 화면 안에서의 재렌더(품목군 펼치기, 정렬, 필터 등)는 스크롤 위치 유지.
+  // 실제 탭 전환일 때만 맨 위로 이동.
+  var isSameScreen  = state.currentMenuId === menuId;
+  var savedScrollY  = isSameScreen ? window.scrollY : 0;
   state.currentMenuId = menuId;
   const menu = menus.find(([id]) => id === menuId) || menus[0];
   screenTitle.textContent = menu[2] || menu[1];
@@ -353,20 +498,44 @@ function render(menuId) {
     "constraint":          renderConstraint,
     "inventory-forecast":  renderInventoryForecast,
     "inventory-variance":  () => renderExcessAdjustment(),
+    "bom-sim":             renderBomSim,
+    "download":            renderDownload,
     "diagnosis":           renderDiagnosis,
     "adjustment":          () => renderPlaceholder("조정안 입력"),
     "impact":              renderImpact,
     "minutes":             renderMinutes,
   };
-  screenRoot.innerHTML = (screens[menu[0]] || renderMeeting)();
-  if (menu[0] === "data-check")         bindDataCheck();
-  if (menu[0] === "rtf")                bindRtf();
-  if (menu[0] === "constraint")         bindConstraint();
-  if (menu[0] === "minutes")            bindMinutes();
-  if (menu[0] === "inventory-forecast")  bindInventoryForecast();
-  if (menu[0] === "inventory-variance")  bindExcessAdjustment();
-  if (menu[0] === "impact")              bindImpact();
-  if (menu[0] === "summary")             bindSummary();
+  // 데이터 있는 무거운 화면은 "계산 중..." 표시 후 비동기 렌더 → 탭 클릭 즉시 반응
+  var heavyScreens = new Set(["rtf","summary","constraint","inventory-forecast","inventory-variance","impact"]);
+  var hasPlanData  = (state.mappedData.plan_monthly || []).length > 0;
+
+  function doRender() {
+    try {
+    screenRoot.innerHTML = (screens[menu[0]] || renderMeeting)();
+    if (menu[0] === "data-check")          bindDataCheck();
+    if (menu[0] === "rtf")                 bindRtf();
+    if (menu[0] === "constraint")          bindConstraint();
+    if (menu[0] === "minutes")             bindMinutes();
+    if (menu[0] === "inventory-forecast")  bindInventoryForecast();
+    if (menu[0] === "inventory-variance")  bindExcessAdjustment();
+    if (menu[0] === "bom-sim")             bindBomSim();
+    if (menu[0] === "impact")              bindImpact();
+    if (menu[0] === "summary")             bindSummary();
+    if (isSameScreen) window.scrollTo(0, savedScrollY);
+    } catch(e) {
+      screenRoot.innerHTML = "<div style='padding:40px;color:#b91c1c;font-size:14px;'>" +
+        "⚠ 화면 렌더 오류: " + escapeHtml(String(e && e.message || e)) + "<br>" +
+        "<span style='font-size:12px;color:#6b7280;'>F12 Console에서 상세 확인</span></div>";
+      console.error("[render error]", menu[0], e);
+    }
+  }
+
+  if (heavyScreens.has(menu[0]) && hasPlanData) {
+    screenRoot.innerHTML = "<div style='padding:80px 0;text-align:center;color:#94a3b8;font-size:15px;'>계산 중...</div>";
+    requestAnimationFrame(function() { requestAnimationFrame(doRender); });
+  } else {
+    doRender();
+  }
 }
 
 // ── 시작 ─────────────────────────────────────────────────────────────────────

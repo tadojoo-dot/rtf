@@ -44,6 +44,13 @@ async function processFiles(files) {
   state.rawFiles = rawFiles;
   state.uploadedFiles = Object.values(rawFiles);
   state.mappedData = mapRawData(rawFiles);
+
+  // 매핑 완료 후 원본 시트 데이터 해제 — mappedData로 이미 추출했으므로 메모리 반환
+  Object.values(state.rawFiles).forEach(function(f) { f.sheets = []; });
+
+  // RTF 계산 캐시 무효화
+  if (typeof invalidateRtfCache === "function") invalidateRtfCache();
+
   render(state.currentMenuId);
 }
 
@@ -65,7 +72,6 @@ async function parseWorkbook(file) {
 function mapTargetInvRows(rows) {
   const headerIndex = findHeaderIndex(rows, ["자재코드"]);
   if (headerIndex < 0) {
-    // fallback: treat first row as header
     const header = rows[0] || [];
     const idx = indexer(header);
     return rows.slice(1).map(function(r) {
@@ -76,6 +82,34 @@ function mapTargetInvRows(rows) {
   }
   const header = rows[headerIndex];
   const idx = indexer(header);
+
+  // 적정재고_raw.xlsx 는 3행 멀티헤더: Row 3에 자재코드는 있지만 "적정재고일수" 컬럼명이 없음.
+  // 이 경우 고정 컬럼 인덱스로 직접 읽는다.
+  if (idx("적정재고일수") < 0 && idx("목표재고일수") < 0) {
+    const CODE_COL = 2;   // Col C: 자재코드
+    const DAYS_COL = 51;  // 적정재고 재고일수
+    const MIN_COL  = 54;  // 구간 MIN 일수
+    const MAX_COL  = 57;  // 구간 MAX 일수
+    const SVC_COL  = 41;  // 서비스레벨 (A/B/C)
+    const TYPE_COL = 1;   // Col B: 내역 (완제품/상품)
+    const BU_COL   = 4;   // Col E: 사업부
+    return rows.slice(headerIndex + 1).filter(function(row) {
+      return cleanOptional(row[CODE_COL]);
+    }).map(function(row) {
+      const code = cleanOptional(row[CODE_COL]);
+      const days = cleanNumber(row[DAYS_COL]);
+      return {
+        itemCode:     code ? normalizeCode(String(code)) : null,
+        targetDays:   days,
+        minDays:      cleanNumber(row[MIN_COL]),
+        maxDays:      cleanNumber(row[MAX_COL]),
+        serviceLevel: cleanOptional(row[SVC_COL]),
+        itemType:     cleanOptional(row[TYPE_COL]),
+        businessUnit: cleanOptional(row[BU_COL]),
+      };
+    }).filter(function(r) { return r.itemCode && r.targetDays !== null; });
+  }
+
   return rows.slice(headerIndex + 1).filter(function(row) {
     return get(row, idx("자재코드")) || get(row, idx("품목코드"));
   }).map(function(row) {
@@ -114,7 +148,7 @@ function mapPlanRows(rows) {
     months.map((month) => ({
       month,
       manager:   get(row, idx("담당자")),
-      plant:     get(row, idx("플랜트")),
+      plant:     normalizePlant(get(row, idx("플랜트"))),
       itemType:  get(row, idx("내역")),
       itemCode:  normalizeCode(get(row, idx("자재"))),
       itemName:  get(row, idx("자재 내역")),
@@ -132,7 +166,7 @@ function mapMaterialInventoryRows(rows) {
   const idx = indexer(header);
   return rows.slice(headerIndex + 1).filter((row) => get(row, idx("자재"))).map((row) => ({
     source:       "기초재고_자재_RAW.xlsx",
-    plant:        get(row, idx("플랜트")),
+    plant:        normalizePlant(get(row, idx("플랜트"))),
     itemType:     get(row, idx("내역")),
     itemCode:     normalizeCode(get(row, idx("자재"))),
     itemName:     get(row, idx("자재 내역")),
@@ -150,7 +184,7 @@ function mapWipInventoryRows(rows) {
   const idx = indexer(header);
   return rows.slice(headerIndex + 1).filter((row) => get(row, idx("자재코드"))).map((row) => ({
     source:       "기초재고_재공품_RAW.xlsx",
-    plant:        get(row, idx("플랜트")),
+    plant:        normalizePlant(get(row, idx("플랜트"))),
     itemType:     "재공품",
     itemCode:     normalizeCode(get(row, idx("자재코드"))),
     itemName:     get(row, idx("자재내역")),
@@ -180,7 +214,7 @@ function mapBomRows(rows) {
   const header = rows[headerIndex];
   const idx = indexer(header);
   return rows.slice(headerIndex + 1).filter((row) => get(row, idx("자재번호(Root)"))).map((row) => ({
-    plant:          get(row, idx("플랜트")),
+    plant:          normalizePlant(get(row, idx("플랜트"))),
     rootItemCode:   normalizeCode(get(row, idx("자재번호(Root)"))),
     rootItemName:   get(row, idx("자재 내역")),
     alternativeBom: get(row, idx("대체 BOM")),
