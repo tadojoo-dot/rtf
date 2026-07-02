@@ -1154,8 +1154,13 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
   border-right: 1px solid #f3f4f6; text-align: center;
 }
 .cst-sa-table tbody td:last-child { border-right: none; }
+/* 품목(행) 구분: 굵은 진한 하단선 + 좌측 컬럼 밴드 (색 데이터 셀은 안 건드림) */
+.cst-sa-table tbody .cst-sa-row td { border-bottom: 2px solid #94a3b8; }
+.cst-sa-row .cst-sa-code,
+.cst-sa-row .cst-sa-name,
+.cst-sa-row .cst-sa-unit { background: #f1f5f9; }
 /* hover는 색 없는 일반 셀만 살짝 강조 — 부족(빨강)·해소(초록)·조정(보라) 셀은 색 유지 */
-.cst-sa-row:hover td:not(.cst-sa-short-num):not(.cst-sa-resolved):not(.cst-sa-adjusted) { background: #f9fafb !important; }
+.cst-sa-row:hover td:not(.cst-sa-short-num):not(.cst-sa-resolved):not(.cst-sa-adjusted) { background: #eef2f7 !important; }
 .cst-sa-code  { font-size: 13px; color: #6b7280; }
 .cst-sa-name  { text-align: left !important; font-weight: 600; font-size: 15px; }
 .cst-sa-plant { color: #374151; }
