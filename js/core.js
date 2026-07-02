@@ -73,6 +73,7 @@ const state = {
   cstDrilldown: null,   // RTF 화면에서 넘어온 드릴다운 컨텍스트
   matSimAdj: {},        // "compCode|plant|month" → 조정된 입고수량(number)
   goodsSupplyAdj: {},   // "itemCode|plant|month" → 상품 조정 공급(입고)수량 (RTF 조정후에 반영)
+  aiAppliedKeys: {},    // AI 권장안으로 적용한 matSimAdj 키 추적 (해제용)
   cstAnalysisOpen: false,    // 상세 분석 섹션 펼침 여부
   cstRtfExpanded: new Set(), // 펼쳐진 완제품 "itemCode|plantCode" 키
   minutesLog: [],       // 회의록 결정사항 배열

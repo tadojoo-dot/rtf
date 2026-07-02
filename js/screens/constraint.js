@@ -2312,12 +2312,17 @@ function renderCstAiSuggestion(months) {
   _cstAiPlan = plan;
   if (!plan) return "";
   var hasAdj = Object.keys(state.matSimAdj || {}).length > 0;
+  var hasApplied = state.aiAppliedKeys && Object.keys(state.aiAppliedKeys).length > 0;
+  var clearBtn = hasApplied
+    ? "<button type=\"button\" class=\"cst-ai-clear-all\" id=\"cstAiClearAll\">✕ 권장안 해제</button>"
+    : "";
 
   // 부족 없음
   if (plan.shortageCount === 0) {
     return "<div class=\"cst-ai-box cst-ai-ok\">" +
       "<span class=\"cst-ai-chip\">AI 분석</span>" +
       "<span class=\"cst-ai-ok-text\">✓ " + (hasAdj ? "조정 반영 시 " : "현재 계획 기준 ") + "공급부족 없음 — 전 품목 대응 가능</span>" +
+      clearBtn +
       "</div>";
   }
 
@@ -2335,7 +2340,7 @@ function renderCstAiSuggestion(months) {
     "<div class=\"cst-ai-head-arrow\">➜</div>" +
     "<div class=\"cst-ai-head-after\">권장 증량 적용 시 " + afterTxt +
       (plan.hasRecommendation ? " <span class=\"cst-ai-invnote\">재고 +" + escapeHtml(formatMoney(plan.invIncrease)) + "</span>" : "") + "</div>" +
-    applyBtn +
+    applyBtn + clearBtn +
     "</div>";
 
   var top = plan.fgRows.slice(0, 5);
@@ -3003,6 +3008,7 @@ function bindConstraint() {
   var resetBtn = document.querySelector(".mat-sim-reset-btn");
   if (resetBtn) resetBtn.addEventListener("click", function() {
     state.matSimAdj = {};
+    state.aiAppliedKeys = {};
     render("constraint");
   });
 
@@ -3049,7 +3055,11 @@ function bindConstraint() {
   if (aiApplyAll) aiApplyAll.addEventListener("click", function() {
     if (!_cstAiPlan || !_cstAiPlan.overrides) return;
     if (!state.matSimAdj) state.matSimAdj = {};
-    Object.keys(_cstAiPlan.overrides).forEach(function(k) { state.matSimAdj[k] = _cstAiPlan.overrides[k]; });
+    if (!state.aiAppliedKeys) state.aiAppliedKeys = {};
+    Object.keys(_cstAiPlan.overrides).forEach(function(k) {
+      state.matSimAdj[k] = _cstAiPlan.overrides[k];
+      state.aiAppliedKeys[k] = true;
+    });
     render("constraint");
     if (state.currentMenuId === "rtf") render("rtf");
   });
@@ -3057,11 +3067,24 @@ function bindConstraint() {
     btn.addEventListener("click", function() {
       if (!_cstAiPlan || !_cstAiPlan.overrides) return;
       if (!state.matSimAdj) state.matSimAdj = {};
+      if (!state.aiAppliedKeys) state.aiAppliedKeys = {};
       (btn.dataset.fgkeys || "").split(",").filter(Boolean).forEach(function(k) {
-        if (k in _cstAiPlan.overrides) state.matSimAdj[k] = _cstAiPlan.overrides[k];
+        if (k in _cstAiPlan.overrides) { state.matSimAdj[k] = _cstAiPlan.overrides[k]; state.aiAppliedKeys[k] = true; }
       });
       render("constraint");
+      if (state.currentMenuId === "rtf") render("rtf");
     });
+  });
+  // ── AI 권장안 해제 (적용했던 것만 되돌림) ──
+  var aiClearAll = document.querySelector("#cstAiClearAll");
+  if (aiClearAll) aiClearAll.addEventListener("click", function() {
+    if (state.matSimAdj && state.aiAppliedKeys) {
+      Object.keys(state.aiAppliedKeys).forEach(function(k) { delete state.matSimAdj[k]; });
+    }
+    state.aiAppliedKeys = {};
+    if (typeof invalidateRtfCache === "function") invalidateRtfCache();
+    render("constraint");
+    if (state.currentMenuId === "rtf") render("rtf");
   });
 
   // ── 상세 분석 접기/펼치기 ──
@@ -3075,6 +3098,7 @@ function bindConstraint() {
   var saResetAll = document.querySelector("#cstSaResetAll");
   if (saResetAll) saResetAll.addEventListener("click", function() {
     state.matSimAdj = {};
+    state.aiAppliedKeys = {};
     render("constraint");
   });
 
