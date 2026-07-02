@@ -227,9 +227,15 @@ function renderCstGoodsPanel(d) {
   var items = adjItems.filter(function(i) {
     return i.typeGroup === "상품" && codes.has(i.itemCode) && (!d.plant || i.plantCode === d.plant);
   });
+  // 정렬은 "조정 전(베이스라인) 부족" 기준 → 조정해도 순서가 안 바뀜 (동률은 코드순 고정)
   items.sort(function(a, b) {
-    function ts(it) { return it.monthlyStatus.reduce(function(s, ms) { return s + (ms.shortageQty || 0); }, 0); }
-    return ts(b) - ts(a);
+    function baseShort(it) {
+      var src = baseMap[it.itemCode + "|" + it.plantCode] || it;
+      return src.monthlyStatus.reduce(function(s, ms) { return s + (ms.shortageQty || 0); }, 0);
+    }
+    var d2 = baseShort(b) - baseShort(a);
+    if (Math.abs(d2) > 0.001) return d2;
+    return String(a.itemCode).localeCompare(String(b.itemCode));
   });
 
   // 원래 공급 · 단위 맵
