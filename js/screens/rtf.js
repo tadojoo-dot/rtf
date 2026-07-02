@@ -238,10 +238,12 @@ function invalidateRtfCache() {
   if (typeof invalidateRtfMonthsCache === "function") invalidateRtfMonthsCache();
 }
 
-function computeRtfItems(bomMapArg, allTypes) {
+function computeRtfItems(bomMapArg, allTypes, goodsAdj) {
   const _bomMap = (bomMapArg !== undefined) ? bomMapArg : buildBomMaxProducibleMap();
+  // 상품 공급(입고) 조정 override — 있으면 캐시 우회(베이스라인 오염 방지)
+  const _goodsAdj = (goodsAdj && Object.keys(goodsAdj).length) ? goodsAdj : null;
 
-  if (!allTypes) {
+  if (!allTypes && !_goodsAdj) {
     if (!_bomMap) {
       // BOM 미완료: 기존 캐시 (데이터 크기 기반)
       var ck = _getRtfCacheKey();
@@ -318,7 +320,12 @@ function computeRtfItems(bomMapArg, allTypes) {
       const plan = planLookup.get(`${key}|${month}`);
       const hasPlanRow = Boolean(plan);
       const salesQty = hasPlanRow ? (cleanNumber(plan.salesQty) ?? 0) : null;
-      const supplyQty = hasPlanRow ? (cleanNumber(plan.supplyQty) ?? 0) : null;
+      let supplyQty = hasPlanRow ? (cleanNumber(plan.supplyQty) ?? 0) : null;
+      // 상품 입고(공급) 조정 override 반영 (조정 후 시나리오)
+      if (hasPlanRow && _goodsAdj) {
+        const gk = `${meta.itemCode}|${meta.plant}|${month}`;
+        if (gk in _goodsAdj) supplyQty = _goodsAdj[gk];
+      }
       const noSalesPlan = hasPlanRow && salesQty === 0;
       const salesPlanAmount = amountWithCost(salesQty, item);
       const salesRevenue    = amountWithPrice(salesQty, item); // 판매계획 매출(판가)
@@ -364,7 +371,7 @@ function computeRtfItems(bomMapArg, allTypes) {
     return item;
   }).filter((item) => allTypes || item.typeGroup === "상품" || item.typeGroup === "완제품");
 
-  if (!allTypes) {
+  if (!allTypes && !_goodsAdj) {
     if (!_bomMap) {
       _rtfItemsCache    = result;
       _rtfItemsCacheKey = _getRtfCacheKey();
@@ -1193,9 +1200,11 @@ function renderRtf() {
   _rtfBaseItemMap.clear();
   baseItems.forEach(function(item) { _rtfBaseItemMap.set(item.itemCode + "|" + item.plantCode, item); });
 
-  // 2. 조정후 items (matSimAdj 있을 때만)
-  const hasAdj = Object.keys(state.matSimAdj || {}).length > 0;
-  const adjItems = hasAdj ? computeRtfItems(buildBomMaxProducibleMap(state.matSimAdj)) : null;
+  // 2. 조정후 items (matSimAdj[자재 증량] 또는 goodsSupplyAdj[상품 입고] 있을 때)
+  const hasMatAdj   = Object.keys(state.matSimAdj || {}).length > 0;
+  const hasGoodsAdj = Object.keys(state.goodsSupplyAdj || {}).length > 0;
+  const hasAdj = hasMatAdj || hasGoodsAdj;
+  const adjItems = hasAdj ? computeRtfItems(buildBomMaxProducibleMap(state.matSimAdj), false, state.goodsSupplyAdj) : null;
   if (!hasAdj && state.rtfViewMode === "adjusted") state.rtfViewMode = "current";
   if (hasAdj && !state._rtfToggleManual) state.rtfViewMode = "adjusted";
   state._rtfToggleManual = false;
@@ -1219,7 +1228,7 @@ function renderRtf() {
   const summaryLine = `${monthLabel(months[0])} 총 판매계획 <b>${escapeHtml(formatDisplayQtyMoney(firstMonth.salesQty, firstMonth.salesPlanAmount, firstMonth.salesRevenue))}${summaryUnit}</b>, RTF <b>${escapeHtml(formatDisplayQtyMoney(firstMonth.rtfQty, firstMonth.rtfAmount, firstMonth.rtfRevenue))}${summaryUnit}</b>. ${Number.isFinite(firstShortage) && firstShortage > 0 ? `<span class="rtf-alert-text">Shortage ${escapeHtml(_dm === "qty" ? formatNumber(firstShortage) + summaryUnit : formatMoney(firstShortage))}</span>` : `<span class="rtf-ok-text">Shortage 없음</span>`}`;
 
   // 4. 전후 토글 UI (항상 표시, 조정 없으면 "조정 후" 비활성)
-  const adjCount = Object.keys(state.matSimAdj || {}).length;
+  const adjCount = Object.keys(state.matSimAdj || {}).length + Object.keys(state.goodsSupplyAdj || {}).length;
   const toggleHtml = `<div class="rtf-view-toggle" aria-label="RTF 보기 기준">
     <button type="button" class="rtf-view-btn ${state.rtfViewMode === "current" ? "active" : ""}" data-rtf-view="current">현재 계획</button>
     <button type="button" class="rtf-view-btn ${state.rtfViewMode === "adjusted" ? "active" : ""}${!hasAdj ? " disabled" : ""}" data-rtf-view="adjusted"${!hasAdj ? ' disabled title="공급원인 화면에서 자재 입고계획을 조정한 후 사용 가능합니다"' : ""}>조정 후${hasAdj ? ` ●${adjCount}건` : ""}</button>

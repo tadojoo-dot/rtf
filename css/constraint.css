@@ -1642,3 +1642,36 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
   padding: 8px 20px;
   text-align: right;
 }
+
+/* ── 상품 공급(입고) 조정 매트릭스 (편집 가능 · 큰 글씨) ── */
+.cst-gs-section { margin: 12px 0; }
+.cst-gs-table { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; }
+.cst-gs-corner {
+  background: #4b5563; color: #f9fafb; font-size: 15px; font-weight: 700;
+  padding: 10px 14px; text-align: left; position: sticky; left: 0; z-index: 2; min-width: 240px;
+}
+.cst-gs-mhd {
+  background: #4b5563; color: #f9fafb; font-size: 15px; font-weight: 700;
+  padding: 10px 14px; text-align: center; white-space: nowrap;
+}
+.cst-gs-mborder { border-left: 2px solid #d1d5db; }
+.cst-gs-name {
+  position: sticky; left: 0; z-index: 1; background: #fff;
+  padding: 12px 14px; font-size: 16px; font-weight: 700; color: #1f2933;
+  border-top: 1px solid #e5e7eb; border-right: 2px solid #d1d5db; white-space: nowrap;
+}
+.cst-gs-table tbody tr:nth-child(even) .cst-gs-name { background: #f9fafb; }
+.cst-gs-cell {
+  padding: 8px 12px; text-align: center; border-top: 1px solid #e5e7eb; vertical-align: middle; background: #fff;
+}
+.cst-gs-table tbody tr:nth-child(even) .cst-gs-cell { background: #f9fafb; }
+.cst-gs-sales { font-size: 13px; color: #6b7280; margin-bottom: 3px; }
+.cst-goods-input {
+  width: 88px; padding: 6px 8px; font-size: 16px; font-weight: 700; text-align: right;
+  border: 1px solid #cbd5e1; border-radius: 6px; color: #1f2933; background: #fff;
+}
+.cst-goods-input:focus { outline: none; border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,0.15); }
+.cst-goods-input.is-adj { border-color: #f59e0b; background: #fffbeb; color: #b45309; }
+.cst-gs-short { font-size: 13px; font-weight: 700; color: #9ca3af; margin-top: 3px; }
+.cst-gs-short.on { color: #dc2626; }
+.cst-gs-orig { font-size: 11px; color: #b45309; margin-top: 2px; }
