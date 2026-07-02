@@ -217,8 +217,109 @@ function renderCstDrilldownBanner(d) {
 
 // ── 상품 드릴다운 상세 ────────────────────────────────────────────────────────
 function renderCstGoodsPanel(d) {
-  var body = d.isAggregate ? _renderCstGoodsAggPanel(d) : _renderCstGoodsSinglePanel(d);
-  return _cstGoodsKpiStrip() + body;
+  var months = getRtfMonths();
+  var bomMap = (typeof buildBomMaxProducibleMap === "function") ? buildBomMaxProducibleMap(state.matSimAdj || {}) : null;
+  var baseItems = computeRtfItems(bomMap, false, {});                          // 상품 조정 전
+  var adjItems  = computeRtfItems(bomMap, false, state.goodsSupplyAdj || {});  // 조정 후 (부족 계산 = RTF와 동일)
+  var baseMap = {}; baseItems.forEach(function(i) { baseMap[i.itemCode + "|" + i.plantCode] = i; });
+
+  var codes = d.isAggregate ? new Set(d.itemCodes || []) : new Set([d.itemCode]);
+  var items = adjItems.filter(function(i) {
+    return i.typeGroup === "상품" && codes.has(i.itemCode) && (!d.plant || i.plantCode === d.plant);
+  });
+  items.sort(function(a, b) {
+    function ts(it) { return it.monthlyStatus.reduce(function(s, ms) { return s + (ms.shortageQty || 0); }, 0); }
+    return ts(b) - ts(a);
+  });
+
+  // 원래 공급 · 단위 맵
+  var origSupply = new Map(), unitMap = {};
+  state.mappedData.plan_monthly.forEach(function(r) {
+    var c = cleanOptional(r.itemCode), p = cleanOptional(r.plant) || "", m = cleanOptional(r.month);
+    if (!c || !m) return;
+    var k = c + "|" + p + "|" + m;
+    origSupply.set(k, (origSupply.get(k) || 0) + (cleanNumber(r.supplyQty) || 0));
+    if (!unitMap[c] && cleanOptional(r.unit)) unitMap[c] = cleanOptional(r.unit);
+  });
+
+  var titleLabel = d.isAggregate ? (d.itemGroup || (d.label ? d.label.replace(/ 계$/, "") : "품목군")) : (d.itemName || d.itemCode || "상품");
+  var hasGoodsAdj = state.goodsSupplyAdj && Object.keys(state.goodsSupplyAdj).length > 0;
+  var resetBtn = hasGoodsAdj ? "<button type=\"button\" class=\"cst-sa-reset-all\" id=\"cstGoodsReset\">전체 초기화</button>" : "";
+
+  var body = items.length
+    ? renderCstGoodsMatTable(items, months, origSupply, unitMap, baseMap)
+    : "<div class=\"cst-fgl-no-mat\">해당 상품의 공급계획 데이터가 없습니다.</div>";
+
+  return _cstGoodsKpiStrip() +
+    "<section class=\"cst-card cst-fgl-section\">" +
+    "<div class=\"cst-sec-title\">상품 공급(입고) 조정 · " + escapeHtml(titleLabel) +
+      " <span class=\"cst-sa-count\">" + items.length + "건</span>" +
+      (hasGoodsAdj ? " <span class=\"mat-sim-badge\">조정 중</span>" : "") + resetBtn + "</div>" +
+    body +
+    "</section>";
+}
+
+// 상품 조정 테이블 — 완제품 자재조정(cst-sa-*)과 동일 양식
+function renderCstGoodsMatTable(items, months, origSupply, unitMap, baseMap) {
+  var monthHeads = months.map(function(m, mi) {
+    return "<th colspan=\"2\" class=\"cst-sa-mhd" + (mi > 0 ? " cst-sa-mborder" : "") + "\">" + escapeHtml(monthLabel(m)) + "</th>";
+  }).join("");
+  var subHeads = months.map(function(_, mi) {
+    return "<th class=\"cst-sa-sub" + (mi > 0 ? " cst-sa-mborder" : "") + "\">공급/조정</th><th class=\"cst-sa-sub\">부족</th>";
+  }).join("");
+
+  var bodyRows = items.map(function(it) {
+    var baseItem = baseMap[it.itemCode + "|" + it.plantCode];
+    var itemHasAdj = months.some(function(m) {
+      var k = it.itemCode + "|" + it.plantCode + "|" + m;
+      return state.goodsSupplyAdj && (k in state.goodsSupplyAdj);
+    });
+    var monthCells = months.map(function(month, mi) {
+      var ms = it.monthlyStatus[mi] || {};
+      var k = it.itemCode + "|" + it.plantCode + "|" + month;
+      var orig = origSupply.get(k) || 0;
+      var isAdj = state.goodsSupplyAdj && (k in state.goodsSupplyAdj) && Math.abs(state.goodsSupplyAdj[k] - orig) > 0.001;
+      var adj = isAdj ? state.goodsSupplyAdj[k] : orig;
+      var delta = adj - orig;
+      var borderCls = mi > 0 ? " cst-sa-mborder" : "";
+      var sales = Number.isFinite(ms.salesQty) ? ms.salesQty : null;
+      var adjShort = Number.isFinite(ms.shortageQty) ? ms.shortageQty : null;
+      var origShort = (baseItem && baseItem.monthlyStatus[mi]) ? (baseItem.monthlyStatus[mi].shortageQty || 0) : 0;
+      var deltaHtml = isAdj
+        ? "<span class=\"mat-sim-delta " + (delta > 0 ? "mat-sim-pos" : "mat-sim-neg") + "\">" + (delta > 0 ? "+" : "") + formatNumber(Math.round(delta)) + "</span>"
+        : "";
+      var salesHtml = sales !== null ? "<div class=\"cst-sa-sales\">판매 " + formatNumber(Math.round(sales)) + "</div>" : "";
+      var inputCell = "<td class=\"cst-sa-input-cell" + borderCls + (isAdj ? " cst-sa-adjusted" : "") + "\">" +
+        salesHtml +
+        "<input type=\"number\" class=\"cst-goods-input\" data-key=\"" + escapeHtml(k) + "\" data-orig=\"" + Math.round(orig) +
+        "\" value=\"" + Math.round(adj) + "\" min=\"0\" step=\"1\" />" + deltaHtml + "</td>";
+      var shortCell = (adjShort === null) ? "<td class=\"cst-sa-short-cell" + borderCls + "\">-</td>"
+        : (adjShort <= 0 && origShort > 0 && isAdj) ? "<td class=\"cst-sa-resolved" + borderCls + "\">✓ 해소</td>"
+        : adjShort > 0 ? "<td class=\"cst-sa-short-num" + borderCls + "\">" + formatNumber(Math.round(adjShort)) + "</td>"
+        : "<td class=\"cst-sa-short-cell" + borderCls + "\">-</td>";
+      return inputCell + shortCell;
+    }).join("");
+    var resetBtn = itemHasAdj
+      ? "<button class=\"cst-goods-row-reset\" data-item-code=\"" + escapeHtml(it.itemCode) + "\" data-plant=\"" + escapeHtml(it.plantCode) + "\">초기화</button>"
+      : "";
+    return "<tr class=\"cst-sa-row\">" +
+      "<td class=\"cst-sa-code\">" + escapeHtml(it.itemCode) + "</td>" +
+      "<td class=\"cst-sa-name\">" + escapeHtml(it.itemName) + "</td>" +
+      "<td class=\"cst-sa-unit\">" + escapeHtml(unitMap[it.itemCode] || "EA") + "</td>" +
+      monthCells +
+      "<td class=\"cst-sa-reset-cell\">" + resetBtn + "</td>" +
+      "</tr>";
+  }).join("");
+
+  return "<div class=\"cst-fgl-mat-wrap\"><div class=\"cst-h-scroll\"><table class=\"cst-sa-table\">" +
+    "<thead><tr>" +
+    "<th rowspan=\"2\" class=\"cst-sa-lhd\">품목코드</th>" +
+    "<th rowspan=\"2\" class=\"cst-sa-lhd cst-sa-namehd\">품목명</th>" +
+    "<th rowspan=\"2\" class=\"cst-sa-lhd\">단위</th>" +
+    monthHeads + "<th rowspan=\"2\" class=\"cst-sa-lhd\"></th>" +
+    "</tr><tr>" + subHeads + "</tr></thead>" +
+    "<tbody>" + bodyRows + "</tbody>" +
+    "</table></div></div>";
 }
 
 // 조정 후 전체재고·재고일수 실시간 스트립 (상품 입고 수정 시 즉시 반영) + 초기화
@@ -247,114 +348,6 @@ function _cstGoodsKpiStrip() {
     "</div>";
 }
 
-// 상품 공급 조정값(있으면) / 원래 공급 반환
-function _cstGoodsSupply(itemCode, plant, month, origSupply) {
-  var key = itemCode + "|" + plant + "|" + month;
-  if (state.goodsSupplyAdj && (key in state.goodsSupplyAdj)) {
-    return { supply: state.goodsSupplyAdj[key], adjusted: Math.abs(state.goodsSupplyAdj[key] - origSupply) > 0.001, key: key };
-  }
-  return { supply: origSupply, adjusted: false, key: key };
-}
-
-// 상품 월별 셀 (판매 / 공급 입력 / 부족) — 큰 글씨 · 편집 가능
-function _cstGoodsCell(itemCode, plant, month, sales, origSupply, mBorder) {
-  var g = _cstGoodsSupply(itemCode, plant, month, origSupply);
-  var shortage = Math.max(0, sales - g.supply);
-  var isShort = shortage > 0;
-  var badge = isShort
-    ? "<span class=\"cst-gs-badge short\">부족 " + formatNumber(Math.round(shortage)) + "</span>"
-    : "<span class=\"cst-gs-badge ok\">✓ 충족</span>";
-  return "<td class=\"cst-gs-cell" + (mBorder ? " cst-gs-mborder" : "") + "\">" +
-    "<div class=\"cst-gs-sales\">판매 " + formatNumber(Math.round(sales)) + "</div>" +
-    "<input type=\"number\" class=\"cst-goods-input" + (g.adjusted ? " is-adj" : "") + "\" value=\"" + Math.round(g.supply) +
-      "\" data-key=\"" + escapeHtml(g.key) + "\" data-orig=\"" + Math.round(origSupply) + "\" title=\"공급(입고)계획 — 수정 가능\" />" +
-    "<div class=\"cst-gs-badge-wrap\">" + badge + "</div>" +
-    (g.adjusted ? "<div class=\"cst-gs-orig\">원 " + formatNumber(Math.round(origSupply)) + "</div>" : "") +
-    "</td>";
-}
-
-// 단일 상품 — 월별 공급계획 (편집 가능)
-function _renderCstGoodsSinglePanel(d) {
-  var months = getRtfMonths();
-  var plant = d.plant || "";
-  var byMonth = {};
-  state.mappedData.plan_monthly.forEach(function(r) {
-    if (cleanOptional(r.itemCode) !== d.itemCode) return;
-    var rp = cleanOptional(r.plant) || "";
-    if (plant && rp !== plant) return;
-    var m = cleanOptional(r.month); if (!m) return;
-    if (!byMonth[m]) byMonth[m] = { sales: 0, supply: 0 };
-    byMonth[m].sales  += cleanNumber(r.salesQty)  || 0;
-    byMonth[m].supply += cleanNumber(r.supplyQty) || 0;
-  });
-
-  var head = "<tr><th class=\"cst-gs-corner\">품목</th>" +
-    months.map(function(m, mi) { return "<th class=\"cst-gs-mhd" + (mi > 0 ? " cst-gs-mborder" : "") + "\">" + escapeHtml(monthLabel(m)) + "</th>"; }).join("") +
-    "</tr>";
-  var cells = months.map(function(month, mi) {
-    var e = byMonth[month];
-    if (!e) return "<td class=\"cst-gs-cell" + (mi > 0 ? " cst-gs-mborder" : "") + "\">-</td>";
-    return _cstGoodsCell(d.itemCode, plant, month, e.sales, e.supply, mi > 0);
-  }).join("");
-  var nameCell = "<td class=\"cst-gs-name\"><span class=\"cst-fgl-code-chip\">" + escapeHtml(d.itemCode || "") + "</span>" +
-    escapeHtml(d.itemName || "상품") + "</td>";
-
-  return "<div class=\"cst-det-section cst-gs-section\">" +
-    "<div class=\"cst-det-section-title\">상품 공급(입고) 조정 — 판매 대비 공급을 수정하면 RTF·전체재고에 반영됩니다</div>" +
-    "<div class=\"cst-det-scroll\"><table class=\"cst-gs-table\"><thead>" + head + "</thead><tbody>" +
-    "<tr>" + nameCell + cells + "</tr></tbody></table></div></div>";
-}
-
-// 품목군 상품 — 품목 × 월별 매트릭스 (편집 가능)
-function _renderCstGoodsAggPanel(d) {
-  var months = getRtfMonths();
-  var codeSet = new Set(d.itemCodes || []);
-  var itemMap = new Map();
-  state.mappedData.plan_monthly.forEach(function(r) {
-    var code = cleanOptional(r.itemCode);
-    if (!code || !codeSet.has(code)) return;
-    var m = cleanOptional(r.month); if (!m) return;
-    var plant = cleanOptional(r.plant) || "";
-    if (!itemMap.has(code)) itemMap.set(code, { code: code, name: cleanOptional(r.itemName) || code, plant: plant, byMonth: {} });
-    var it = itemMap.get(code);
-    if (!it.plant && plant) it.plant = plant;
-    if (!it.byMonth[m]) it.byMonth[m] = { sales: 0, supply: 0 };
-    it.byMonth[m].sales  += cleanNumber(r.salesQty)  || 0;
-    it.byMonth[m].supply += cleanNumber(r.supplyQty) || 0;
-  });
-
-  var entries = Array.from(itemMap.values());
-  if (entries.length === 0) {
-    return "<div class=\"cst-det-section cst-gs-section\"><div class=\"cst-drill-goods-note\">해당 품목군의 공급계획 데이터가 없습니다.</div></div>";
-  }
-  // 총 부족(조정 반영) 내림차순
-  function totalShort(it) {
-    return months.reduce(function(s, m) {
-      var e = it.byMonth[m]; if (!e) return s;
-      var g = _cstGoodsSupply(it.code, it.plant, m, e.supply);
-      return s + Math.max(0, e.sales - g.supply);
-    }, 0);
-  }
-  entries.sort(function(a, b) { return totalShort(b) - totalShort(a); });
-
-  var head = "<tr><th class=\"cst-gs-corner\">품목</th>" +
-    months.map(function(m, mi) { return "<th class=\"cst-gs-mhd" + (mi > 0 ? " cst-gs-mborder" : "") + "\">" + escapeHtml(monthLabel(m)) + "</th>"; }).join("") +
-    "</tr>";
-  var rows = entries.map(function(it) {
-    var nameCell = "<td class=\"cst-gs-name\"><span class=\"cst-fgl-code-chip\">" + escapeHtml(it.code) + "</span>" + escapeHtml(it.name) + "</td>";
-    var cells = months.map(function(month, mi) {
-      var e = it.byMonth[month];
-      if (!e) return "<td class=\"cst-gs-cell" + (mi > 0 ? " cst-gs-mborder" : "") + "\">-</td>";
-      return _cstGoodsCell(it.code, it.plant, month, e.sales, e.supply, mi > 0);
-    }).join("");
-    return "<tr>" + nameCell + cells + "</tr>";
-  }).join("");
-
-  var titleLabel = d.itemGroup || (d.label ? d.label.replace(/ 계$/, "") : "품목군");
-  return "<div class=\"cst-det-section cst-gs-section\">" +
-    "<div class=\"cst-det-section-title\">" + escapeHtml(titleLabel) + " · 품목별 월별 공급(입고) 조정 — 수정 시 RTF·전체재고에 반영</div>" +
-    "<div class=\"cst-det-scroll\"><table class=\"cst-gs-table\"><thead>" + head + "</thead><tbody>" + rows + "</tbody></table></div></div>";
-}
 
 // ── 완제품 드릴다운 공급현황 패널 ─────────────────────────────────────────────
 function renderCstFinishedGoodsPanel(d) {
@@ -3054,6 +3047,20 @@ function bindConstraint() {
       var val  = Math.max(0, parseFloat(inp.value) || 0);
       if (Math.abs(val - orig) < 0.001) { delete state.goodsSupplyAdj[key]; }
       else                              { state.goodsSupplyAdj[key] = val; }
+      if (typeof invalidateRtfCache === "function") invalidateRtfCache();
+      render("constraint");
+      if (state.currentMenuId === "rtf") render("rtf");
+    });
+  });
+  // ── 상품 행 초기화 ──
+  document.querySelectorAll(".cst-goods-row-reset").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      if (!state.goodsSupplyAdj) return;
+      var code = btn.dataset.itemCode, plant = btn.dataset.plant;
+      Object.keys(state.goodsSupplyAdj).forEach(function(k) {
+        var p = k.split("|");
+        if (p[0] === code && p[1] === plant) delete state.goodsSupplyAdj[k];
+      });
       if (typeof invalidateRtfCache === "function") invalidateRtfCache();
       render("constraint");
       if (state.currentMenuId === "rtf") render("rtf");
