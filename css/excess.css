@@ -513,3 +513,12 @@
 /* 3시나리오 배너 delta 칩 세로 배치 (RTF 윗줄 / 감축 아랫줄) */
 .scn-chip-line { line-height: 1.25; }
 .scn-chip-line .cst-kpi-delta { margin-left: 0; }
+
+/* 제·상품 평면 테이블 (원부자재와 동일 양식) */
+.exc-psi-flat {
+  width: 76px; text-align: right; padding: 3px 5px;
+  border: 1px solid #cbd5e1; border-radius: 5px; font-size: 12px;
+}
+.exc-psi-flat.exc-mat-input-edited { background: #fef9c3; border-color: #eab308; font-weight: 700; }
+.exc-fgflat-td { text-align: center; font-weight: 700; color: #475569; white-space: nowrap; }
+.exc-fgflat-notd { color: #cbd5e1; }

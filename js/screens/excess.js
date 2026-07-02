@@ -765,7 +765,7 @@ function _renderExcessAdjustmentInner() {
 
   var bodyHtml = excessTab === "fg"
     ? priorityHtml + controls +
-      "<div class='exc-fg-area'>" + renderExcessFgTable(displayItems, months, globalPlanMap, hasTargetData) + "</div>"
+      "<div class='exc-fg-area'>" + renderExcessFgFlatTable(displayItems, months, globalPlanMap) + "</div>"
     : "<div class='exc-fg-area'>" + renderExcessMatTable(months) + "</div>";
 
   return "<div class='exc-screen'><div class='exc-inner'>" +
@@ -933,6 +933,60 @@ function computeAiMatExcessPlan(fgAdj) {
     if (changed) itemCnt++;
   });
   return { plan: plan, totalCutAmt: totalCutAmt, itemCnt: itemCnt };
+}
+
+// 제·상품 탭 평면 테이블 — 원부자재 탭과 동일 양식 (드릴다운 없이 인라인 조정)
+// 컬럼: 품목 | 적정일수 | ↺ | 월별 [판매 | 공급(입력) | 일수]
+function renderExcessFgFlatTable(displayItems, months, globalPlanMap) {
+  var monthHd = months.map(function(m) {
+    return "<th colspan='3' class='exc-mat-mo-hd'>" + escapeHtml(monthLabel(m)) + "</th>";
+  }).join("");
+  var subHd = months.map(function() {
+    return "<th class='exc-mat-sub'>판매</th><th class='exc-mat-sub'>공급</th><th class='exc-mat-sub'>일수</th>";
+  }).join("");
+
+  var body = displayItems.map(function(item) {
+    var planMap = new Map();
+    months.forEach(function(month) {
+      planMap.set(month, globalPlanMap.get(item.itemCode + "|" + (item.plantCode || "") + "|" + month) || 0);
+    });
+    var psi = calcPsiRows(item, planMap, months);
+    var td = item._td;
+    var rowHasAdj = psi.some(function(r) { return r.hasAdj; });
+    var rowKey = item.itemCode + "|" + (item.plantCode || "");
+
+    var cells = psi.map(function(r) {
+      var dayCls = "", dayTxt = "—";
+      if (r.endingQty < 0) { dayCls = " exc-mat-day-danger"; dayTxt = "부족!"; }
+      else if (r.days !== null) {
+        dayTxt = Math.round(r.days) + "일";
+        dayCls = (td && r.days > td) ? " exc-mat-day-over" : " exc-mat-day-ok";
+      }
+      return "<td class='exc-mat-cons'>" + escapeHtml(Math.round(r.salesQty).toLocaleString("ko-KR")) + "</td>" +
+        "<td class='exc-mat-in'><input type='number' class='exc-psi-input exc-psi-flat" + (r.hasAdj ? " exc-mat-input-edited" : "") + "' " +
+          "value='" + Math.round(r.supplyQty) + "' data-key='" + escapeHtml(r.adjKey) + "' data-orig='" + r.origSupply + "' min='0'>" +
+          (r.hasAdj ? "<div class='exc-mat-orig'>원: " + escapeHtml(Math.round(r.origSupply).toLocaleString("ko-KR")) + "</div>" : "") +
+        "</td>" +
+        "<td class='exc-mat-day" + dayCls + "'>" + escapeHtml(dayTxt) + "</td>";
+    }).join("");
+
+    return "<tr data-row-key='" + escapeHtml(rowKey) + "' class='" + (rowHasAdj ? "exc-mat-row-adj" : "") + "'>" +
+      "<td class='exc-mat-name'><span class='exc-mat-code'>" + escapeHtml(item.itemCode) + "</span> " +
+        escapeHtml(item.itemName || item.itemCode) +
+        "<span class='exc-mat-cat'>" + escapeHtml(item.itemGroup && item.itemGroup !== NEED_MASTER ? item.itemGroup : (item.typeGroup || "")) + " · " + escapeHtml(item.plant || "") +
+        (item._isExcess && item._excessAmt > 0 ? " · 초과 " + formatMoney(item._excessAmt) : "") + "</span></td>" +
+      "<td class='exc-fgflat-td'>" + (td ? Math.round(td) + "일" : "<span class='exc-fgflat-notd'>—</span>") + "</td>" +
+      "<td class='exc-mat-reset-td'><button class='exc-psi-reset' data-item-code='" + escapeHtml(item.itemCode) + "' data-plant='" + escapeHtml(item.plantCode || "") + "' title='행 초기화'>↺</button></td>" +
+      cells + "</tr>";
+  }).join("");
+
+  if (!displayItems.length) {
+    return "<div class='exc-mat-empty'>표시할 품목이 없습니다.</div>";
+  }
+  return "<div class='exc-mat-scroll'><table class='exc-mat-table'>" +
+    "<thead><tr><th rowspan='2' class='exc-mat-name-hd'>품목</th><th rowspan='2'>적정<br>일수</th><th rowspan='2'></th>" + monthHd + "</tr>" +
+    "<tr>" + subHd + "</tr></thead>" +
+    "<tbody>" + body + "</tbody></table></div>";
 }
 
 // 원부자재 탭 테이블
