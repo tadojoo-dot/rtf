@@ -509,3 +509,7 @@
 .exc-mat-reset { border: none; background: none; cursor: pointer; color: #94a3b8; font-size: 14px; }
 .exc-mat-reset:hover { color: #ef4444; }
 .exc-mat-empty { padding: 30px; text-align: center; color: #94a3b8; font-size: 14px; }
+
+/* 3시나리오 배너 delta 칩 세로 배치 (RTF 윗줄 / 감축 아랫줄) */
+.scn-chip-line { line-height: 1.25; }
+.scn-chip-line .cst-kpi-delta { margin-left: 0; }

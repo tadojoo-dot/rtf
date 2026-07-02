@@ -1240,12 +1240,20 @@ function renderScenarioKpiBanner() {
   var headerRow = "<tr><th class='rtf-kpi-lbl-hd'></th>" +
     months.map(function(m) { return "<th class='rtf-kpi-month-hd'>" + escapeHtml(monthLabel(m)) + "</th>"; }).join("") + "</tr>";
 
+  // delta 칩 세로 배치: RTF 윗줄, 감축 아랫줄
+  function chipStack(c1, c2) {
+    var h = "";
+    if (c1) h += "<div class='scn-chip-line'>" + c1 + "</div>";
+    if (c2) h += "<div class='scn-chip-line'>" + c2 + "</div>";
+    return h;
+  }
+
   var _isTotal = getActualsAnchor() != null;
   var amtRow = "<tr class='rtf-kpi-r-amt'><td class='rtf-kpi-row-lbl'>" + (_isTotal ? "전체재고" : "재고금액") + "</td>" +
     data.map(function(x) {
       return "<td class='rtf-kpi-val'><span class='rtf-kpi-main'>" +
         escapeHtml(Number.isFinite(x.amt) ? formatMoney(x.amt) : "—") + "</span>" +
-        chip(x.amtRtf, true, "RTF") + chip(x.amtExc, true, "감축") + "</td>";
+        chipStack(chip(x.amtRtf, true, "RTF"), chip(x.amtExc, true, "감축")) + "</td>";
     }).join("") + "</tr>";
 
   var hasDisc = data.some(function(x) { return Number.isFinite(x.disc); });
@@ -1253,14 +1261,14 @@ function renderScenarioKpiBanner() {
     data.map(function(x) {
       return "<td class='rtf-kpi-val'><span class='rtf-kpi-main'>" +
         escapeHtml(Number.isFinite(x.disc) ? Math.round(x.disc) + "일" : "—") + "</span>" +
-        chip(x.discRtf, false, "RTF") + chip(x.discExc, false, "감축") + "</td>";
+        chipStack(chip(x.discRtf, false, "RTF"), chip(x.discExc, false, "감축")) + "</td>";
     }).join("") + "</tr>" : "";
 
   var mgmtRow = "<tr class='rtf-kpi-r-days'><td class='rtf-kpi-row-lbl'>" + (hasDisc || _isTotal ? "재고일수(관리기준)" : "재고일수") + "</td>" +
     data.map(function(x) {
       return "<td class='rtf-kpi-val'><span class='rtf-kpi-main'>" +
         escapeHtml(Number.isFinite(x.mgmt) ? Math.round(x.mgmt) + "일" : "—") + "</span>" +
-        chip(x.mgmtRtf, false, "RTF") + chip(x.mgmtExc, false, "감축") + "</td>";
+        chipStack(chip(x.mgmtRtf, false, "RTF"), chip(x.mgmtExc, false, "감축")) + "</td>";
     }).join("") + "</tr>";
 
   return "<div class='rtf-kpi-wrap' style='margin-bottom:12px;'>" +
