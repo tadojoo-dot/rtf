@@ -234,6 +234,7 @@ function invalidateRtfCache() {
   _rtfItemsCache = null; _rtfItemsCacheKey = "";
   _rtfItemsBomCache = null; _rtfItemsBomRef = null;
   _salesPriceCache = null;
+  _actualsAnchorCache = null; _actualsAnchorComputed = false;
   if (typeof invalidateRtfMonthsCache === "function") invalidateRtfMonthsCache();
 }
 
@@ -254,7 +255,7 @@ function computeRtfItems(bomMapArg, allTypes) {
   const planRows      = state.mappedData.plan_monthly;
   const inventoryRows = state.mappedData.inventory_base;
   const masterRows    = state.mappedData.item_master;
-  const costMap = new Map(), baseQtyMap = new Map(), inventorySet = new Set();
+  const costMap = new Map(), baseQtyMap = new Map(), baseAmtMap = new Map(), inventorySet = new Set();
   const masterMap = new Map(), planLookup = new Map(), metaMap = new Map();
 
   inventoryRows.forEach((row) => {
@@ -263,9 +264,10 @@ function computeRtfItems(bomMapArg, allTypes) {
     if (!code || !plant) return;
     const key = itemPlantKey(code, plant);
     inventorySet.add(key);
-    const cost = cleanNumber(row.standardCost), baseQty = cleanNumber(row.baseQty);
+    const cost = cleanNumber(row.standardCost), baseQty = cleanNumber(row.baseQty), baseAmt = cleanNumber(row.baseAmount);
     if (cost !== null && cost > 0 && !costMap.has(key)) costMap.set(key, cost);
     baseQtyMap.set(key, (baseQtyMap.get(key) ?? 0) + (baseQty ?? 0));
+    baseAmtMap.set(key, (baseAmtMap.get(key) ?? 0) + (baseAmt ?? 0));
   });
   masterRows.forEach((row) => {
     const code = cleanOptional(row.itemCode);
@@ -294,12 +296,16 @@ function computeRtfItems(bomMapArg, allTypes) {
     const key = itemPlantKey(meta.itemCode, meta.plant);
     const master = masterMap.get(meta.itemCode), standardCost = costMap.get(key) ?? null;
     const unitPrice = priceMap.get(meta.itemCode) ?? null;
+    const baseQtyVal = inventorySet.has(key) ? (baseQtyMap.get(key) ?? 0) : null;
+    const baseAmtVal = inventorySet.has(key) ? (baseAmtMap.get(key) ?? 0) : null;
+    // 장부단가: 기초금액/기초수량 (재고평가 기준) → 없으면 표준원가
+    const unitInvValue = (baseAmtVal && baseQtyVal) ? (baseAmtVal / baseQtyVal) : standardCost;
     const item = { ...meta,
       plantCode: cleanText(meta.plant, NEED_MASTER), plant: displayPlantName(meta.plant), businessUnit: cleanText(master?.businessUnit, NEED_MASTER),
-      itemGroup: cleanText(master?.itemGroup, NEED_MASTER), standardCost, unitPrice,
+      itemGroup: cleanText(master?.itemGroup, NEED_MASTER), standardCost, unitPrice, baseAmount: baseAmtVal, unitInvValue,
       hasCost: standardCost !== null && standardCost > 0,
       hasRevenue: unitPrice !== null && unitPrice > 0,
-      hasInventory: inventorySet.has(key), baseQty: inventorySet.has(key) ? (baseQtyMap.get(key) ?? 0) : null,
+      hasInventory: inventorySet.has(key), baseQty: baseQtyVal,
       hasSharedAlert:  sharedAlertSet.has(key),
       hasAltBomAlert:  altBomSet.has(key),
     };
@@ -1001,6 +1007,55 @@ function renderRtfAdjPanel() {
 }
 
 // ── 하단 재고금액·재고일수 요약 바 ───────────────────────────────────────────
+// ── 전체재고 앵커 (결산 최신 실적월 총재고·월출고, 원 단위) ────────────────────
+// 결산 actuals_monthly(plant="전체") 유형별 행 합계 = 회사 전체재고 (대표 인식 숫자와 일치)
+var _actualsAnchorCache = null;
+var _actualsAnchorComputed = false;
+function getActualsAnchor() {
+  if (_actualsAnchorComputed) return _actualsAnchorCache;
+  _actualsAnchorComputed = true;
+  var rows = (state.mappedData.actuals_monthly || []).filter(function(r) { return r.plant === "전체"; });
+  var byMonth = {};
+  rows.forEach(function(r) {
+    if (!byMonth[r.month]) byMonth[r.month] = { inv: 0, out: 0 };
+    if (Number.isFinite(r.invAmt))   byMonth[r.month].inv += r.invAmt;
+    if (Number.isFinite(r.salesAmt)) byMonth[r.month].out += r.salesAmt;
+  });
+  var ms = Object.keys(byMonth).filter(function(m) { return byMonth[m].inv !== 0; }).sort();
+  if (!ms.length) { _actualsAnchorCache = null; return null; }
+  var last = ms[ms.length - 1];
+  // 결산 값은 억 단위 → 원으로 환산
+  _actualsAnchorCache = { month: last, totalInvWon: byMonth[last].inv * 1e8, monthlyOutWon: byMonth[last].out * 1e8 };
+  return _actualsAnchorCache;
+}
+
+// 전체재고(월) = 결산 총재고 앵커 + 완제품·상품 재고 변동분(장부단가, opening 대비)
+function totalInvAmountWon(items, mi, anchor) {
+  var delta = 0;
+  items.forEach(function(it) {
+    if (it.typeGroup !== "완제품" && it.typeGroup !== "상품") return;
+    var ms = it.monthlyStatus[mi];
+    if (!ms || !Number.isFinite(ms.endingQty)) return;
+    var uv = it.unitInvValue;
+    if (!Number.isFinite(uv)) return;
+    var base = Number.isFinite(it.baseQty) ? it.baseQty : 0;
+    delta += (ms.endingQty - base) * uv;
+  });
+  return anchor.totalInvWon + delta;
+}
+
+// 헤드라인 재고: 결산 연결 시 전체재고, 미연결 시 완제품·상품(기존)로 폴백
+function rtfHeadlineInv(items, mi) {
+  var anchor = getActualsAnchor();
+  if (anchor) {
+    var amt = totalInvAmountWon(items, mi, anchor);
+    var days = anchor.monthlyOutWon > 0 ? amt * 30 / anchor.monthlyOutWon : null;
+    return { amount: amt, days: days, isTotal: true };
+  }
+  var agg = aggregateMonth(items, mi);
+  return { amount: agg.endingAmount, days: agg.inventoryDays, isTotal: false };
+}
+
 function renderRtfInventoryBar(items, baseItemsForDelta) {
   var months = getRtfMonths();
   if (!items || items.length === 0) return "";
@@ -1011,17 +1066,17 @@ function renderRtfInventoryBar(items, baseItemsForDelta) {
   var amtRow = "", daysRow = "", amtDeltaRow = "", daysDeltaRow = "";
 
   months.forEach(function(month, mi) {
-    var agg = aggregateMonth(items, mi);
-    var amtVal = Number.isFinite(agg.endingAmount) ? formatMoney(agg.endingAmount) : "-";
-    var daysVal = Number.isFinite(agg.inventoryDays) ? Math.round(agg.inventoryDays) + "일" : "-";
+    var inv = rtfHeadlineInv(items, mi);
+    var amtVal = Number.isFinite(inv.amount) ? formatMoney(inv.amount) : "-";
+    var daysVal = Number.isFinite(inv.days) ? Math.round(inv.days) + "일" : "-";
     amtRow  += "<td>" + escapeHtml(amtVal)  + "</td>";
     daysRow += "<td>" + escapeHtml(daysVal) + "</td>";
 
     if (hasDelta && baseItems) {
-      var baseAgg = aggregateMonth(baseItems, mi);
+      var baseInv = rtfHeadlineInv(baseItems, mi);
       // 재고금액 delta
-      if (Number.isFinite(agg.endingAmount) && Number.isFinite(baseAgg.endingAmount)) {
-        var amtDelta = agg.endingAmount - baseAgg.endingAmount;
+      if (Number.isFinite(inv.amount) && Number.isFinite(baseInv.amount)) {
+        var amtDelta = inv.amount - baseInv.amount;
         var amtSign = amtDelta >= 0 ? "+" : "";
         var amtCls = amtDelta >= 0 ? "rtf-inv-delta-pos" : "rtf-inv-delta-neg";
         amtDeltaRow += "<td class=\"" + amtCls + "\">" + escapeHtml(amtSign + formatMoney(amtDelta)) + "</td>";
@@ -1029,8 +1084,8 @@ function renderRtfInventoryBar(items, baseItemsForDelta) {
         amtDeltaRow += "<td>-</td>";
       }
       // 재고일수 delta
-      if (Number.isFinite(agg.inventoryDays) && Number.isFinite(baseAgg.inventoryDays)) {
-        var daysDelta = agg.inventoryDays - baseAgg.inventoryDays;
+      if (Number.isFinite(inv.days) && Number.isFinite(baseInv.days)) {
+        var daysDelta = inv.days - baseInv.days;
         var daysSign = daysDelta >= 0 ? "+" : "";
         var daysCls = daysDelta >= 0 ? "rtf-inv-delta-pos" : "rtf-inv-delta-neg";
         daysDeltaRow += "<td class=\"" + daysCls + "\">" + escapeHtml(daysSign + Math.round(daysDelta) + "일") + "</td>";
@@ -1039,6 +1094,7 @@ function renderRtfInventoryBar(items, baseItemsForDelta) {
       }
     }
   });
+  var _invIsTotal = getActualsAnchor() != null;
 
   var monthHeaders = months.map(function(m) {
     return "<th>" + escapeHtml(monthLabel(m)) + "</th>";
@@ -1050,7 +1106,7 @@ function renderRtfInventoryBar(items, baseItemsForDelta) {
   ) : "";
 
   return "<div class=\"rtf-inv-bar rtf-card\" style=\"padding:14px 18px;margin-top:10px;\">" +
-    "<div class=\"rtf-inv-bar-title\">월별 재고금액 · 재고일수</div>" +
+    "<div class=\"rtf-inv-bar-title\">" + (_invIsTotal ? "월별 전체재고 · 재고일수 <span style=\"font-weight:400;color:#94a3b8;font-size:12px;\">(결산 총재고 기준 · 완제품·상품 변동 반영)</span>" : "월별 재고금액 · 재고일수") + "</div>" +
     "<div><table class=\"rtf-inv-table\">" +
     "<thead><tr><th class=\"rtf-inv-row-label\"></th>" + monthHeaders + "</tr></thead>" +
     "<tbody>" +
@@ -1080,15 +1136,16 @@ function renderRtfMonthCards(items, baseItemsForDelta) {
     else if (unknownCount > 0) { cls = "unknown";  icon = "?"; label = "판단불가 " + unknownCount + "건"; }
     else                       { cls = "ok";        icon = "✓"; label = "대응가능"; }
 
-    var amtRaw  = Number.isFinite(agg.endingAmount)  ? agg.endingAmount              : null;
-    var amtVal  = amtRaw !== null                     ? formatMoney(amtRaw)           : "—";
-    var daysVal = Number.isFinite(agg.inventoryDays)  ? Math.round(agg.inventoryDays) : null;
+    var inv     = rtfHeadlineInv(items, mi);
+    var amtRaw  = Number.isFinite(inv.amount)  ? inv.amount              : null;
+    var amtVal  = amtRaw !== null              ? formatMoney(amtRaw)     : "—";
+    var daysVal = Number.isFinite(inv.days)    ? Math.round(inv.days)    : null;
 
     var deltaHtml = "";
     if (hasDelta && baseItemsForDelta) {
-      var baseAgg = aggregateMonth(baseItemsForDelta, mi);
-      if (amtRaw !== null && Number.isFinite(baseAgg.endingAmount)) {
-        var delta = amtRaw - baseAgg.endingAmount;
+      var baseInv = rtfHeadlineInv(baseItemsForDelta, mi);
+      if (amtRaw !== null && Number.isFinite(baseInv.amount)) {
+        var delta = amtRaw - baseInv.amount;
         var dCls = delta < 0 ? "rtf-mc-delta-good" : "rtf-mc-delta-bad";
         deltaHtml = "<span class=\"" + dCls + "\"> (" + (delta >= 0 ? "+" : "") + formatMoney(delta) + ")</span>";
       }
@@ -1102,8 +1159,9 @@ function renderRtfMonthCards(items, baseItemsForDelta) {
       return "<th class=\"rtf-kpi-month-hd\">" + escapeHtml(monthLabel(d.month)) + "</th>";
     }).join("") + "</tr>";
 
+  var _isTotalInv = getActualsAnchor() != null;
   var amtRow = "<tr>" +
-    "<td class=\"rtf-kpi-row-lbl\">재고금액</td>" +
+    "<td class=\"rtf-kpi-row-lbl\">" + (_isTotalInv ? "전체재고" : "재고금액") + "</td>" +
     monthData.map(function(d) {
       return "<td class=\"rtf-kpi-val\">" +
         "<span class=\"rtf-kpi-main\">" + escapeHtml(d.amtVal) + "</span>" +
