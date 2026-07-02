@@ -310,7 +310,7 @@ function renderCstGoodsMatTable(items, months, origSupply, unitMap, baseMap) {
       "</tr>";
   }).join("");
 
-  return "<div class=\"cst-fgl-mat-wrap\"><div class=\"cst-h-scroll\"><table class=\"cst-sa-table\">" +
+  return "<div class=\"cst-fgl-mat-wrap\"><div class=\"cst-h-scroll\"><table class=\"cst-sa-table cst-sa-goods\">" +
     "<thead><tr>" +
     "<th rowspan=\"2\" class=\"cst-sa-lhd\">품목코드</th>" +
     "<th rowspan=\"2\" class=\"cst-sa-lhd cst-sa-namehd\">품목명</th>" +
