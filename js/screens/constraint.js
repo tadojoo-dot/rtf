@@ -2433,6 +2433,13 @@ function renderCstRtfShortList(months) {
     supplyMap.set(k, (supplyMap.get(k) || 0) + (cleanNumber(r.supplyQty) || 0));
   });
 
+  // BOM에 root로 등록된 완제품 코드 집합 (플랜트 무관) — "BOM 미연결" vs "자재 부족 없음" 구분용
+  var bomRootSet = new Set();
+  (state.mappedData.bom_components || []).forEach(function(b) {
+    var rc = cleanOptional(b.rootItemCode);
+    if (rc) bomRootSet.add(rc);
+  });
+
   var rows = shortFgs.map(function(fg) {
     var fgKey  = fg.itemCode + "|" + fg.plantCode;
     var isOpen = expanded.has(fgKey);
@@ -2449,10 +2456,30 @@ function renderCstRtfShortList(months) {
       return (ms.shortageQty || 0) > (mx.shortageQty || 0) ? ms : mx;
     }, fg.monthlyStatus[0] || {});
 
+    // 이 완제품에 연결된 전체 자재(부족 무관) — 부족 자재가 없을 때 원인 구분용
+    var allMats = (state.bomResult.items || []).filter(function(mat) {
+      return mat.parentItems.some(function(p) { return p.code === fg.itemCode && p.plant === fg.plantCode; });
+    });
+    // 생산(BOM) 플랜트가 계획 플랜트와 다른지 — 폴백으로 연결된 경우
+    var prodPlants = {};
+    allMats.forEach(function(m) { if (m.plant && m.plant !== fg.plantCode) prodPlants[m.plant] = true; });
+    var crossPlants = Object.keys(prodPlants);
+
     var sharedCnt = relMats.filter(function(m) { return m.isShared; }).length;
-    var matBadge  = relMats.length > 0
-      ? "원인자재 " + relMats.length + "종" + (sharedCnt > 0 ? " (공용 " + sharedCnt + ")" : "")
-      : "BOM 연결 없음";
+    var matBadge, matBadgeCls;
+    if (relMats.length > 0) {
+      matBadge = "원인자재 " + relMats.length + "종" + (sharedCnt > 0 ? " (공용 " + sharedCnt + ")" : "");
+      matBadgeCls = "";
+    } else if (allMats.length > 0) {
+      matBadge = "자재 부족 없음 (공급계획 요인)";
+      matBadgeCls = " cst-fgl-matbadge-neutral";
+    } else if (bomRootSet.has(fg.itemCode)) {
+      matBadge = "BOM 플랜트 불일치 — 원천 확인";
+      matBadgeCls = " cst-fgl-matbadge-none";
+    } else {
+      matBadge = "BOM 미연결";
+      matBadgeCls = " cst-fgl-matbadge-none";
+    }
     var worstStr = (worst.shortageQty || 0) > 0
       ? monthLabel(worst.month) + " " + formatNumber(Math.round(worst.shortageQty)) + "개 부족"
       : "";
@@ -2461,17 +2488,21 @@ function renderCstRtfShortList(months) {
       ? "<span class=\"cst-fgl-shared-badge\">⚠공용</span>" : "";
     var altBomBadge = fg.hasAltBomAlert
       ? "<span class=\"cst-fgl-altbom-badge\" title=\"대체 BOM 존재 — 공급 부족 시 전환 검토 가능\">대체BOM</span>" : "";
+    // 생산 플랜트 표식 (판매계획 플랜트와 다르게 실제 BOM/자재가 있는 공장)
+    var prodPlantBadge = crossPlants.length > 0
+      ? "<span class=\"cst-fgl-prodplant-badge\" title=\"판매계획 플랜트와 생산(BOM·자재) 플랜트가 다릅니다. 원천 정정 대상.\">생산: " + escapeHtml(crossPlants.map(displayPlantName).join(",")) + " (BOM)</span>"
+      : "";
     var summaryRow = "<tr class=\"cst-fgl-row" + (isOpen ? " cst-fgl-open" : "") +
       "\" data-fgkey=\"" + escapeHtml(fgKey) + "\">" +
       "<td class=\"cst-fgl-icon\">" + (isOpen ? "▼" : "▶") + "</td>" +
       "<td class=\"cst-fgl-name\">" +
         "<span class=\"cst-fgl-code-chip\">" + escapeHtml(fg.itemCode) + "</span>" +
-        escapeHtml(fg.itemName) + sharedAlertBadge + altBomBadge +
+        escapeHtml(fg.itemName) + sharedAlertBadge + altBomBadge + prodPlantBadge +
         "<span class=\"cst-fgl-code-sub\">" +
         (fg.businessUnit && fg.businessUnit !== "기준정보 확인 필요" ? escapeHtml(fg.businessUnit) + " · " : "") +
         escapeHtml(fg.plant) +
         "</span></td>" +
-      "<td class=\"cst-fgl-meta\"><span class=\"cst-fgl-matbadge" + (relMats.length === 0 ? " cst-fgl-matbadge-none" : "") + "\">" +
+      "<td class=\"cst-fgl-meta\"><span class=\"cst-fgl-matbadge" + matBadgeCls + "\">" +
       escapeHtml(matBadge) + "</span></td>" +
       "<td class=\"cst-fgl-shortage\">" +
       (worstStr ? "<span class=\"cst-fgl-short-chip\">" + escapeHtml(worstStr) + "</span>" : "") +
@@ -2480,9 +2511,13 @@ function renderCstRtfShortList(months) {
 
     if (!isOpen) return summaryRow;
 
-    var matContent = relMats.length === 0
-      ? "<div class=\"cst-fgl-no-mat\">BOM 전개 후 재확인 — 연결된 자재가 없습니다.</div>"
-      : renderCstFgMatTable(relMats, months, supplyMap, simAdj);
+    var matContent = relMats.length > 0
+      ? renderCstFgMatTable(relMats, months, supplyMap, simAdj)
+      : allMats.length > 0
+        ? "<div class=\"cst-fgl-no-mat\">연결된 자재는 모두 충분합니다. 이 완제품의 부족은 <b>공급계획(생산계획) 자체 부족</b>이 원인입니다.</div>"
+        : bomRootSet.has(fg.itemCode)
+          ? "<div class=\"cst-fgl-no-mat\">이 완제품은 BOM이 다른 플랜트에 등록돼 있어 자재가 연결되지 않았습니다. <b>판매계획 플랜트 정정(원천)</b>이 필요합니다.</div>"
+          : "<div class=\"cst-fgl-no-mat\">BOM에 이 완제품(Root)이 없습니다. BOM 파일을 확인하세요.</div>";
 
     var detailRow = "<tr class=\"cst-fgl-detail-row\"><td colspan=\"4\" class=\"cst-fgl-detail-cell\">" + matContent + "</td></tr>";
     return summaryRow + detailRow;

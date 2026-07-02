@@ -105,6 +105,57 @@ function downloadMatReq() {
   XLSX.writeFile(wb, "자재필요량_" + today + ".xlsx");
 }
 
+// ── 판매계획-BOM 플랜트 불일치 목록 (원천 정정 요청용) ─────────────────────────
+// 완제품이 판매계획엔 A공장, BOM·자재는 B공장에 등록된 경우를 찾아낸다.
+function computePlantMismatches() {
+  var plan = state.mappedData.plan_monthly || [];
+  var bom  = state.mappedData.bom_components || [];
+  var planByCode = new Map();  // code → { plants:Set, name, supply }
+  plan.forEach(function(r) {
+    var c = cleanOptional(r.itemCode); if (!c || !String(c).startsWith("9")) return;
+    var p = cleanOptional(r.plant);
+    if (!planByCode.has(c)) planByCode.set(c, { plants:new Set(), name:cleanText(r.itemName, c), supply:0 });
+    var e = planByCode.get(c);
+    if (p) e.plants.add(p);
+    e.supply += (cleanNumber(r.supplyQty) || 0);
+  });
+  var bomByCode = new Map();  // code → Set(BOM plant)
+  bom.forEach(function(r) {
+    var c = cleanOptional(r.rootItemCode); if (!c) return;
+    var alt = cleanOptional(r.alternativeBom); if (!(alt === "" || alt === "1")) return;
+    if (!bomByCode.has(c)) bomByCode.set(c, new Set());
+    if (r.plant) bomByCode.get(c).add(r.plant);
+  });
+  var out = [];
+  planByCode.forEach(function(v, code) {
+    var bset = bomByCode.get(code); if (!bset || !bset.size) return;  // BOM 자체 없음은 별도 이슈
+    var pplants = Array.from(v.plants);
+    if (pplants.some(function(p) { return bset.has(p); })) return;    // 정상 매칭
+    var bplants = Array.from(bset);
+    out.push({
+      code: code, name: v.name,
+      planPlant: pplants.map(displayPlantName).join(","),
+      bomPlant:  bplants.map(displayPlantName).join(","),
+      supply:    Math.round(v.supply),
+      fallback:  (bset.size === 1 && pplants.length === 1) ? "예(단일공장→자동전개)" : "아니오(복수/모호)",
+    });
+  });
+  return out.sort(function(a, b) { return String(a.code).localeCompare(String(b.code)); });
+}
+
+function downloadPlantMismatch() {
+  var list = computePlantMismatches();
+  if (!list.length) { alert("판매계획-BOM 플랜트 불일치 완제품이 없습니다."); return; }
+  var header = ["완제품코드", "완제품명", "판매계획 플랜트", "BOM·자재 실제 플랜트", "공급계획 합계", "자동전개 가능"];
+  var rows = list.map(function(m) { return [m.code, m.name, m.planPlant, m.bomPlant, m.supply, m.fallback]; });
+  var wb = XLSX.utils.book_new();
+  var ws = XLSX.utils.aoa_to_sheet([header].concat(rows));
+  ws["!cols"] = [{ wch:14 }, { wch:36 }, { wch:14 }, { wch:18 }, { wch:14 }, { wch:20 }];
+  XLSX.utils.book_append_sheet(wb, ws, "플랜트불일치");
+  var today = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  XLSX.writeFile(wb, "판매계획_BOM_플랜트불일치_" + today + ".xlsx");
+}
+
 // ── 플레이스홀더 ──────────────────────────────────────────────────────────────
 function renderPlaceholder(title) {
   return `<section class="section-band"><div class="section-header"><h2>${escapeHtml(title)}</h2><p>현재 로컬 파일 모드에서는 데이터점검과 RTF 화면을 중심으로 사용합니다.</p></div></section>`;
@@ -172,6 +223,31 @@ function renderDownload() {
       <p>BOM 전개 기준 자재 소요량만 단순 추출합니다. 공급원인 화면에서 BOM 전개 후 사용 가능합니다.</p>
     </div>
     ${renderMatReqDownloadSection_inner()}
+  </section>
+  ${renderPlantMismatchSection_inner()}`;
+}
+
+function renderPlantMismatchSection_inner() {
+  var hasData = (state.mappedData.plan_monthly || []).length > 0 && (state.mappedData.bom_components || []).length > 0;
+  var count = hasData ? computePlantMismatches().length : 0;
+  var hint = !hasData
+    ? "판매계획 · BOM 파일을 먼저 연결하세요"
+    : count > 0
+      ? "불일치 완제품 " + count.toLocaleString("ko-KR") + "건 — 계획 담당자 정정 요청용"
+      : "불일치 없음 — 판매계획과 BOM 플랜트가 모두 일치";
+  return `<section class="section-band">
+    <div class="section-header">
+      <div><h2>판매계획-BOM 플랜트 불일치 (원천 정정용)</h2></div>
+      <p>완제품이 판매계획엔 A공장, BOM·자재는 B공장에 등록된 건을 추출합니다.
+         (대시보드는 단일공장 BOM이면 자동 전개하지만, 원천 데이터 정정을 위해 목록을 제공합니다.)</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+      <button type="button" class="data-check-btn" onclick="downloadPlantMismatch()" ${hasData && count > 0 ? "" : "disabled"}
+        style="font-size:14px;padding:8px 18px;">
+        ↓ 플랜트 불일치 목록 다운로드
+      </button>
+      <span style="font-size:13px;color:${count > 0 ? "#b45309" : "#6b7280"};">${escapeHtml(hint)}</span>
+    </div>
   </section>`;
 }
 
