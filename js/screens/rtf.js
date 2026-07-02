@@ -1160,7 +1160,7 @@ function renderRtfMonthCards(items, baseItemsForDelta) {
     }).join("") + "</tr>";
 
   var _isTotalInv = getActualsAnchor() != null;
-  var amtRow = "<tr>" +
+  var amtRow = "<tr class=\"rtf-kpi-r-amt\">" +
     "<td class=\"rtf-kpi-row-lbl\">" + (_isTotalInv ? "전체재고" : "재고금액") + "</td>" +
     monthData.map(function(d) {
       return "<td class=\"rtf-kpi-val\">" +
@@ -1169,7 +1169,7 @@ function renderRtfMonthCards(items, baseItemsForDelta) {
         "</td>";
     }).join("") + "</tr>";
 
-  var daysRow = "<tr>" +
+  var daysRow = "<tr class=\"rtf-kpi-r-days\">" +
     "<td class=\"rtf-kpi-row-lbl\">재고일수</td>" +
     monthData.map(function(d) {
       var txt = d.daysVal !== null ? d.daysVal + "일" : "—";
