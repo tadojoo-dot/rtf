@@ -2401,13 +2401,19 @@ function renderCstCompareBanner() {
     if (Number.isFinite(a.endingAmount) && a.endingAmount > maxAmt) maxAmt = a.endingAmount;
   });
 
+  // RTF 상단과 동일 기준(전체재고 = 결산 앵커 + 완제품·상품 변동)으로 표시
+  var _useTotal = (typeof rtfHeadlineInv === "function");
   var monthData = months.map(function(month, mi) {
-    var ba = aggregateMonth(beforeItems, mi);
-    var aa = aggregateMonth(afterItems,  mi);
-    var bAmt  = Number.isFinite(ba.endingAmount)  ? ba.endingAmount        : null;
-    var aAmt  = Number.isFinite(aa.endingAmount)  ? aa.endingAmount        : null;
-    var bDays = Number.isFinite(ba.inventoryDays) ? Math.round(ba.inventoryDays) : null;
-    var aDays = Number.isFinite(aa.inventoryDays) ? Math.round(aa.inventoryDays) : null;
+    var ba = _useTotal ? rtfHeadlineInv(beforeItems, mi) : aggregateMonth(beforeItems, mi);
+    var aa = _useTotal ? rtfHeadlineInv(afterItems,  mi) : aggregateMonth(afterItems,  mi);
+    var bAmtRaw = _useTotal ? ba.amount : ba.endingAmount;
+    var aAmtRaw = _useTotal ? aa.amount : aa.endingAmount;
+    var bDaysRaw = _useTotal ? ba.days : ba.inventoryDays;
+    var aDaysRaw = _useTotal ? aa.days : aa.inventoryDays;
+    var bAmt  = Number.isFinite(bAmtRaw)  ? bAmtRaw : null;
+    var aAmt  = Number.isFinite(aAmtRaw)  ? aAmtRaw : null;
+    var bDays = Number.isFinite(bDaysRaw) ? Math.round(bDaysRaw) : null;
+    var aDays = Number.isFinite(aDaysRaw) ? Math.round(aDaysRaw) : null;
     return {
       month:     month,
       amtVal:    aAmt !== null ? formatMoney(aAmt) : "—",
@@ -2433,7 +2439,7 @@ function renderCstCompareBanner() {
     }).join("") + "</tr>";
 
   var amtRow = "<tr class='rtf-kpi-r-amt'>" +
-    "<td class='rtf-kpi-row-lbl'>재고금액</td>" +
+    "<td class='rtf-kpi-row-lbl'>" + (_useTotal && getActualsAnchor && getActualsAnchor() ? "전체재고" : "재고금액") + "</td>" +
     monthData.map(function(d) {
       return "<td class='rtf-kpi-val'>" +
         "<span class='rtf-kpi-main'>" + escapeHtml(d.amtVal) + "</span>" +
