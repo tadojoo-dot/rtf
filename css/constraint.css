@@ -1672,6 +1672,37 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
 }
 .cst-goods-input:focus { outline: none; border-color: #4f46e5; box-shadow: 0 0 0 2px rgba(79,70,229,0.15); }
 .cst-goods-input.is-adj { border-color: #f59e0b; background: #fffbeb; color: #b45309; }
-.cst-gs-short { font-size: 13px; font-weight: 700; color: #9ca3af; margin-top: 3px; }
-.cst-gs-short.on { color: #dc2626; }
-.cst-gs-orig { font-size: 11px; color: #b45309; margin-top: 2px; }
+.cst-gs-badge-wrap { margin-top: 5px; }
+.cst-gs-badge {
+  display: inline-block; font-size: 15px; font-weight: 800; border-radius: 6px; padding: 3px 10px;
+}
+.cst-gs-badge.short { color: #b91c1c; background: #fee2e2; border: 1px solid #fca5a5; }
+.cst-gs-badge.ok    { color: #15803d; background: #dcfce7; border: 1px solid #86efac; }
+.cst-gs-orig { font-size: 11px; color: #b45309; margin-top: 3px; }
+
+/* 조정 후 전체재고·재고일수 실시간 스트립 */
+.cst-gk-strip {
+  position: sticky; top: 0; z-index: 6;
+  background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 10px;
+  padding: 10px 12px; margin: 0 0 12px;
+  box-shadow: 0 2px 8px rgba(79,70,229,0.1);
+}
+.cst-gk-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.cst-gk-title { font-size: 15px; font-weight: 800; color: #3730a3; }
+.cst-gk-live { font-size: 12px; font-weight: 700; color: #16a34a; margin-left: 6px; }
+.cst-gs-reset {
+  padding: 5px 14px; font-size: 13px; font-weight: 700;
+  color: #b45309; background: #fff; border: 1px solid #fdba74; border-radius: 6px; cursor: pointer;
+}
+.cst-gs-reset:hover { background: #fff7ed; }
+.cst-gk-table { border-collapse: separate; border-spacing: 0; width: max-content; min-width: 100%; }
+.cst-gk-corner, .cst-gk-lbl {
+  position: sticky; left: 0; background: #e0e7ff; z-index: 1;
+  padding: 7px 12px; font-size: 13px; font-weight: 800; color: #3730a3; text-align: left; min-width: 90px;
+}
+.cst-gk-mhd { padding: 6px 14px; font-size: 13px; font-weight: 700; color: #4338ca; text-align: center; white-space: nowrap; }
+.cst-gk-val { padding: 6px 14px; text-align: center; white-space: nowrap; }
+.cst-gk-amt .cst-gk-val { font-size: 18px; font-weight: 800; color: #1f2933; }
+.cst-gk-days .cst-gk-val { font-size: 14px; font-weight: 700; color: #475569; }
+.cst-gk-days .cst-gk-val, .cst-gk-days .cst-gk-lbl { background: #e0e7ff; }
+.cst-gk-mborder { border-left: 1px solid #c7d2fe; }

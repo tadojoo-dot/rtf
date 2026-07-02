@@ -217,8 +217,34 @@ function renderCstDrilldownBanner(d) {
 
 // ── 상품 드릴다운 상세 ────────────────────────────────────────────────────────
 function renderCstGoodsPanel(d) {
-  if (d.isAggregate) return _renderCstGoodsAggPanel(d);
-  return _renderCstGoodsSinglePanel(d);
+  var body = d.isAggregate ? _renderCstGoodsAggPanel(d) : _renderCstGoodsSinglePanel(d);
+  return _cstGoodsKpiStrip() + body;
+}
+
+// 조정 후 전체재고·재고일수 실시간 스트립 (상품 입고 수정 시 즉시 반영) + 초기화
+function _cstGoodsKpiStrip() {
+  if (typeof computeRtfItems !== "function" || typeof rtfHeadlineInv !== "function") return "";
+  var months = getRtfMonths();
+  var bomMap = (typeof buildBomMaxProducibleMap === "function") ? buildBomMaxProducibleMap(state.matSimAdj || {}) : null;
+  var adjItems = computeRtfItems(bomMap, false, state.goodsSupplyAdj || {});
+  var hasGoodsAdj = state.goodsSupplyAdj && Object.keys(state.goodsSupplyAdj).length > 0;
+
+  var head = "<tr><th class=\"cst-gk-corner\"></th>" +
+    months.map(function(m, mi) { return "<th class=\"cst-gk-mhd" + (mi > 0 ? " cst-gk-mborder" : "") + "\">" + escapeHtml(monthLabel(m)) + "</th>"; }).join("") + "</tr>";
+  var amtRow = "<tr class=\"cst-gk-amt\"><td class=\"cst-gk-lbl\">전체재고</td>";
+  var dayRow = "<tr class=\"cst-gk-days\"><td class=\"cst-gk-lbl\">재고일수</td>";
+  months.forEach(function(_, mi) {
+    var inv = rtfHeadlineInv(adjItems, mi);
+    amtRow += "<td class=\"cst-gk-val" + (mi > 0 ? " cst-gk-mborder" : "") + "\">" + (Number.isFinite(inv.amount) ? escapeHtml(formatMoney(inv.amount)) : "-") + "</td>";
+    dayRow += "<td class=\"cst-gk-val" + (mi > 0 ? " cst-gk-mborder" : "") + "\">" + (Number.isFinite(inv.days) ? Math.round(inv.days) + "일" : "-") + "</td>";
+  });
+  amtRow += "</tr>"; dayRow += "</tr>";
+
+  var resetBtn = hasGoodsAdj ? "<button type=\"button\" class=\"cst-gs-reset\" id=\"cstGoodsReset\">↺ 상품 조정 초기화</button>" : "";
+  return "<div class=\"cst-gk-strip\">" +
+    "<div class=\"cst-gk-head\"><span class=\"cst-gk-title\">조정 후 전체재고 · 재고일수 <span class=\"cst-gk-live\">● 실시간</span></span>" + resetBtn + "</div>" +
+    "<div class=\"cst-det-scroll\"><table class=\"cst-gk-table\"><thead>" + head + "</thead><tbody>" + amtRow + dayRow + "</tbody></table></div>" +
+    "</div>";
 }
 
 // 상품 공급 조정값(있으면) / 원래 공급 반환
@@ -235,11 +261,14 @@ function _cstGoodsCell(itemCode, plant, month, sales, origSupply, mBorder) {
   var g = _cstGoodsSupply(itemCode, plant, month, origSupply);
   var shortage = Math.max(0, sales - g.supply);
   var isShort = shortage > 0;
+  var badge = isShort
+    ? "<span class=\"cst-gs-badge short\">부족 " + formatNumber(Math.round(shortage)) + "</span>"
+    : "<span class=\"cst-gs-badge ok\">✓ 충족</span>";
   return "<td class=\"cst-gs-cell" + (mBorder ? " cst-gs-mborder" : "") + "\">" +
     "<div class=\"cst-gs-sales\">판매 " + formatNumber(Math.round(sales)) + "</div>" +
     "<input type=\"number\" class=\"cst-goods-input" + (g.adjusted ? " is-adj" : "") + "\" value=\"" + Math.round(g.supply) +
       "\" data-key=\"" + escapeHtml(g.key) + "\" data-orig=\"" + Math.round(origSupply) + "\" title=\"공급(입고)계획 — 수정 가능\" />" +
-    "<div class=\"cst-gs-short" + (isShort ? " on" : "") + "\">" + (isShort ? "부족 " + formatNumber(Math.round(shortage)) : "충족") + "</div>" +
+    "<div class=\"cst-gs-badge-wrap\">" + badge + "</div>" +
     (g.adjusted ? "<div class=\"cst-gs-orig\">원 " + formatNumber(Math.round(origSupply)) + "</div>" : "") +
     "</td>";
 }
@@ -3005,6 +3034,15 @@ function bindConstraint() {
   if (resetBtn) resetBtn.addEventListener("click", function() {
     state.matSimAdj = {};
     render("constraint");
+  });
+
+  // ── 상품 조정 초기화 ──
+  var goodsReset = document.querySelector("#cstGoodsReset");
+  if (goodsReset) goodsReset.addEventListener("click", function() {
+    state.goodsSupplyAdj = {};
+    if (typeof invalidateRtfCache === "function") invalidateRtfCache();
+    render("constraint");
+    if (state.currentMenuId === "rtf") render("rtf");
   });
 
   // ── 상품 공급(입고) 조정 입력 ──
