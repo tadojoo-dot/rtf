@@ -1185,17 +1185,25 @@ function rtfHeadlineInv(items, mi) {
   if (anchor) {
     var amt = totalInvAmountWon(items, mi, anchor);
     var days = null;
-    var months = getRtfMonths();
-    var m = months[mi], mYear = m.slice(0, 4);
-    var cum = (mYear === anchor.month.slice(0, 4)) ? anchor.cumOutAllWon : 0;
-    for (var k = 0; k <= mi; k++) {
-      var km = months[k];
-      if (km <= anchor.month) continue;       // 실적월은 결산 누적에 이미 포함
-      if (km.slice(0, 4) !== mYear) continue; // 누적은 해당 연도 내에서만
-      cum += estMonthMgmtOutWon(items, k, anchor);
+    // 판매계획 없는 달(예측 구간 밖)은 분모 추정 불가 → 일수 미표시
+    var hasPlan = false;
+    for (var i2 = 0; i2 < items.length; i2++) {
+      var msx = items[i2].monthlyStatus[mi];
+      if (msx && msx.salesQty !== null) { hasPlan = true; break; }
     }
-    if (cum > 0)                        days = amt * (Number(m.slice(5, 7)) * 30) / cum;
-    else if (anchor.monthlyOutWon > 0)  days = amt * 30 / anchor.monthlyOutWon; // 폴백(구방식)
+    if (hasPlan) {
+      var months = getRtfMonths();
+      var m = months[mi], mYear = m.slice(0, 4);
+      var cum = (mYear === anchor.month.slice(0, 4)) ? anchor.cumOutAllWon : 0;
+      for (var k = 0; k <= mi; k++) {
+        var km = months[k];
+        if (km <= anchor.month) continue;       // 실적월은 결산 누적에 이미 포함
+        if (km.slice(0, 4) !== mYear) continue; // 누적은 해당 연도 내에서만
+        cum += estMonthMgmtOutWon(items, k, anchor);
+      }
+      if (cum > 0)                        days = amt * (Number(m.slice(5, 7)) * 30) / cum;
+      else if (anchor.monthlyOutWon > 0)  days = amt * 30 / anchor.monthlyOutWon; // 폴백(구방식)
+    }
     return { amount: amt, days: days, isTotal: true };
   }
   var agg = aggregateMonth(items, mi);
