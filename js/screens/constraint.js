@@ -250,8 +250,7 @@ function renderCstGoodsPanel(d) {
     ? renderCstGoodsMatTable(items, months, origSupply, unitMap, baseMap)
     : "<div class=\"cst-fgl-no-mat\">해당 상품의 공급계획 데이터가 없습니다.</div>";
 
-  return _cstGoodsKpiStrip() +
-    "<section class=\"cst-card cst-fgl-section\">" +
+  return "<section class=\"cst-card cst-fgl-section\">" +
     "<div class=\"cst-sec-title\">상품 공급(입고) 조정 · " + escapeHtml(titleLabel) +
       " <span class=\"cst-sa-count\">" + items.length + "건</span>" +
       (hasGoodsAdj ? " <span class=\"mat-sim-badge\">조정 중</span>" : "") + resetBtn + "</div>" +
@@ -265,7 +264,7 @@ function renderCstGoodsMatTable(items, months, origSupply, unitMap, baseMap) {
     return "<th colspan=\"2\" class=\"cst-sa-mhd" + (mi > 0 ? " cst-sa-mborder" : "") + "\">" + escapeHtml(monthLabel(m)) + "</th>";
   }).join("");
   var subHeads = months.map(function(_, mi) {
-    return "<th class=\"cst-sa-sub" + (mi > 0 ? " cst-sa-mborder" : "") + "\">공급/조정</th><th class=\"cst-sa-sub\">부족</th>";
+    return "<th class=\"cst-sa-sub" + (mi > 0 ? " cst-sa-mborder" : "") + "\">입고/조정</th><th class=\"cst-sa-sub\">부족</th>";
   }).join("");
 
   var bodyRows = items.map(function(it) {
@@ -320,32 +319,6 @@ function renderCstGoodsMatTable(items, months, origSupply, unitMap, baseMap) {
     "</tr><tr>" + subHeads + "</tr></thead>" +
     "<tbody>" + bodyRows + "</tbody>" +
     "</table></div></div>";
-}
-
-// 조정 후 전체재고·재고일수 실시간 스트립 (상품 입고 수정 시 즉시 반영) + 초기화
-function _cstGoodsKpiStrip() {
-  if (typeof computeRtfItems !== "function" || typeof rtfHeadlineInv !== "function") return "";
-  var months = getRtfMonths();
-  var bomMap = (typeof buildBomMaxProducibleMap === "function") ? buildBomMaxProducibleMap(state.matSimAdj || {}) : null;
-  var adjItems = computeRtfItems(bomMap, false, state.goodsSupplyAdj || {});
-  var hasGoodsAdj = state.goodsSupplyAdj && Object.keys(state.goodsSupplyAdj).length > 0;
-
-  var head = "<tr><th class=\"cst-gk-corner\"></th>" +
-    months.map(function(m, mi) { return "<th class=\"cst-gk-mhd" + (mi > 0 ? " cst-gk-mborder" : "") + "\">" + escapeHtml(monthLabel(m)) + "</th>"; }).join("") + "</tr>";
-  var amtRow = "<tr class=\"cst-gk-amt\"><td class=\"cst-gk-lbl\">전체재고</td>";
-  var dayRow = "<tr class=\"cst-gk-days\"><td class=\"cst-gk-lbl\">재고일수</td>";
-  months.forEach(function(_, mi) {
-    var inv = rtfHeadlineInv(adjItems, mi);
-    amtRow += "<td class=\"cst-gk-val" + (mi > 0 ? " cst-gk-mborder" : "") + "\">" + (Number.isFinite(inv.amount) ? escapeHtml(formatMoney(inv.amount)) : "-") + "</td>";
-    dayRow += "<td class=\"cst-gk-val" + (mi > 0 ? " cst-gk-mborder" : "") + "\">" + (Number.isFinite(inv.days) ? Math.round(inv.days) + "일" : "-") + "</td>";
-  });
-  amtRow += "</tr>"; dayRow += "</tr>";
-
-  var resetBtn = hasGoodsAdj ? "<button type=\"button\" class=\"cst-gs-reset\" id=\"cstGoodsReset\">↺ 상품 조정 초기화</button>" : "";
-  return "<div class=\"cst-gk-strip\">" +
-    "<div class=\"cst-gk-head\"><span class=\"cst-gk-title\">조정 후 전체재고 · 재고일수 <span class=\"cst-gk-live\">● 실시간</span></span>" + resetBtn + "</div>" +
-    "<div class=\"cst-det-scroll\"><table class=\"cst-gk-table\"><thead>" + head + "</thead><tbody>" + amtRow + dayRow + "</tbody></table></div>" +
-    "</div>";
 }
 
 
@@ -2399,7 +2372,8 @@ function renderCstCompareBanner() {
 
   var months = getRtfMonths();
   var adj = state.matSimAdj || {};
-  var hasAdj = Object.keys(adj).length > 0;
+  var goodsAdj = state.goodsSupplyAdj || {};
+  var hasAdj = Object.keys(adj).length > 0 || Object.keys(goodsAdj).length > 0;
 
   // BOM RTF 캐시: BOM 전개 완료 후 첫 렌더에서만 계산, 이후 렌더에서 재사용
   if (!_cstBomRtfItems && typeof buildBomMaxProducibleMap === "function") {
@@ -2407,7 +2381,7 @@ function renderCstCompareBanner() {
   }
   var beforeItems = _cstBomRtfItems || computeRtfItems(null);
   var afterItems  = hasAdj && typeof buildBomMaxProducibleMap === "function"
-    ? computeRtfItems(buildBomMaxProducibleMap(adj))
+    ? computeRtfItems(buildBomMaxProducibleMap(adj), false, goodsAdj)
     : beforeItems;
 
   var maxAmt = 0;
@@ -2745,11 +2719,12 @@ function renderConstraint() {
   // BOM 전개 완료 후에만 무거운 비교 배너·부족목록 렌더 (미완료 시 연산 불필요)
   var bomDone = bomStatus === BOM_STATUS.DONE;
 
-  // 상품 드릴다운: BOM 전개 불필요 → 상품 조정 패널을 상단에 바로 노출 (접힘 섹션에 묻지 않음)
+  // 상품 드릴다운: BOM 전개 불필요 → 완제품과 동일한 KPI 배너 + 조정 패널을 상단에 바로 노출
   if (isGoods) {
     return "<div class=\"cst-screen\">" +
       (!hasData ? "<div class=\"cst-toolbar-warn-bar\">데이터 연결 필요 — 데이터점검 화면에서 RAW 파일을 먼저 선택하십시오.</div>" : "") +
       renderCstDrilldownBanner(d) +
+      (bomDone ? renderCstCompareBanner() : "") +
       renderCstGoodsPanel(d) +
       "</div>";
   }
