@@ -2448,7 +2448,7 @@ function renderCstCompareBanner() {
     }).join("") + "</tr>";
 
   var daysRow = "<tr class='rtf-kpi-r-days'>" +
-    "<td class='rtf-kpi-row-lbl'>재고일수</td>" +
+    "<td class='rtf-kpi-row-lbl'>" + (_useTotal && typeof getActualsAnchor === "function" && getActualsAnchor() ? "재고일수(관리기준)" : "재고일수") + "</td>" +
     monthData.map(function(d) {
       var txt = d.daysVal !== null ? d.daysVal + "일" : "—";
       var hiCls = d.daysVal !== null && d.daysVal > 120 ? " hi" : "";

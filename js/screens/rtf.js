@@ -235,6 +235,7 @@ function invalidateRtfCache() {
   _rtfItemsBomCache = null; _rtfItemsBomRef = null;
   _salesPriceCache = null;
   _actualsAnchorCache = null; _actualsAnchorComputed = false;
+  _actualsMetaCache = null;
   if (typeof invalidateRtfMonthsCache === "function") invalidateRtfMonthsCache();
 }
 
@@ -1051,6 +1052,71 @@ function totalInvAmountWon(items, mi, anchor) {
   return anchor.totalInvWon + delta;
 }
 
+// ── 결산 메타 (매출원가 누적 + 미착품·평가충당금 전망, 억 단위) ────────────────
+var _actualsMetaCache = null;
+function getActualsMeta() {
+  if (_actualsMetaCache) return _actualsMetaCache;
+  var map = {};
+  (state.mappedData.actuals_meta || []).forEach(function(r) { map[r.month] = r; });
+  _actualsMetaCache = map;
+  return map;
+}
+
+// 월별 매출원가 추정 (원) = 완제품·상품 충족판매수량(rtfQty) × 장부단가
+// RTF 증량·상품입고 조정 시 rtfQty가 변해 매출원가 누적(분모)에도 자동 반영됨
+function estMonthCogsWon(items, mi) {
+  var sum = 0;
+  items.forEach(function(it) {
+    if (it.typeGroup !== "완제품" && it.typeGroup !== "상품") return;
+    var ms = it.monthlyStatus[mi];
+    if (!ms) return;
+    var qty = Number.isFinite(ms.rtfQty) ? ms.rtfQty
+            : (Number.isFinite(ms.salesQty) ? ms.salesQty : null);
+    if (!Number.isFinite(qty) || !Number.isFinite(it.unitInvValue)) return;
+    sum += qty * it.unitInvValue;
+  });
+  return sum;
+}
+
+// ── 재고일수(공시기준) = 재고금액 × 경과일수(월수×30) ÷ 매출원가(누적) ─────────
+// · 재고금액: 전체재고(결산 앵커+완제품·상품 변동) + 미착품·평가충당금 전망 반영
+//   (전망값이 결산 시트에 없으면 앵커월 값 유지)
+// · 매출원가(누적): 결산 실적월까지는 결산값, 이후는 월별 추정 매출원가를 누적
+//   (연도가 바뀌면 누적 리셋 — 회계연도 기준)
+// · 검증: 26.5월 = 2,531억 × 150일 ÷ 2,943.4억 = 129.0일 (결산 정답지 일치)
+function rtfDisclosureDays(items, mi) {
+  var anchor = getActualsAnchor();
+  if (!anchor) return null;
+  var meta = getActualsMeta();
+  var anchorMeta = meta[anchor.month];
+  if (!anchorMeta || !Number.isFinite(anchorMeta.cumCogs)) return null;
+
+  var months = getRtfMonths();
+  var m = months[mi];
+
+  // 분자: 재고금액
+  var amt = totalInvAmountWon(items, mi, anchor);
+  var mm = meta[m] || {};
+  if (Number.isFinite(mm.michakInv) && Number.isFinite(anchorMeta.michakInv))
+    amt += (mm.michakInv - anchorMeta.michakInv) * 1e8;
+  if (Number.isFinite(mm.allowanceInv) && Number.isFinite(anchorMeta.allowanceInv))
+    amt += (mm.allowanceInv - anchorMeta.allowanceInv) * 1e8;
+
+  // 분모: 매출원가(누적, 원)
+  var mYear = m.slice(0, 4);
+  var cum = (mYear === anchor.month.slice(0, 4)) ? anchorMeta.cumCogs * 1e8 : 0;
+  for (var k = 0; k <= mi; k++) {
+    var km = months[k];
+    if (km <= anchor.month) continue;       // 실적월은 결산 누적에 이미 포함
+    if (km.slice(0, 4) !== mYear) continue; // 누적은 해당 연도 내에서만
+    cum += estMonthCogsWon(items, k);
+  }
+  if (!(cum > 0)) return null;
+
+  var elapsed = Number(m.slice(5, 7)) * 30; // 경과일수 = 월수 × 30
+  return amt * elapsed / cum;
+}
+
 // 헤드라인 재고: 결산 연결 시 전체재고, 미연결 시 완제품·상품(기존)로 폴백
 function rtfHeadlineInv(items, mi) {
   var anchor = getActualsAnchor();
@@ -1147,6 +1213,8 @@ function renderRtfMonthCards(items, baseItemsForDelta) {
     var amtRaw  = Number.isFinite(inv.amount)  ? inv.amount              : null;
     var amtVal  = amtRaw !== null              ? formatMoney(amtRaw)     : "—";
     var daysVal = Number.isFinite(inv.days)    ? Math.round(inv.days)    : null;
+    var discRaw = rtfDisclosureDays(items, mi);
+    var discVal = Number.isFinite(discRaw)     ? Math.round(discRaw)     : null;
 
     var deltaHtml = "";
     if (hasDelta && baseItemsForDelta) {
@@ -1157,7 +1225,7 @@ function renderRtfMonthCards(items, baseItemsForDelta) {
         deltaHtml = "<span class=\"" + dCls + "\"> (" + (delta >= 0 ? "+" : "") + formatMoney(delta) + ")</span>";
       }
     }
-    return { month: month, cls: cls, icon: icon, label: label, amtRaw: amtRaw, amtVal: amtVal, daysVal: daysVal, deltaHtml: deltaHtml };
+    return { month: month, cls: cls, icon: icon, label: label, amtRaw: amtRaw, amtVal: amtVal, daysVal: daysVal, discVal: discVal, deltaHtml: deltaHtml };
   });
 
   var headerRow = "<tr>" +
@@ -1176,8 +1244,19 @@ function renderRtfMonthCards(items, baseItemsForDelta) {
         "</td>";
     }).join("") + "</tr>";
 
+  // 공시기준 행: 결산 매출원가(누적) 연결 시에만 표시
+  var hasDisc = monthData.some(function(d) { return d.discVal !== null; });
+  var discRow = hasDisc ? "<tr class=\"rtf-kpi-r-days\">" +
+    "<td class=\"rtf-kpi-row-lbl\">재고일수(공시기준)</td>" +
+    monthData.map(function(d) {
+      var txt = d.discVal !== null ? d.discVal + "일" : "—";
+      return "<td class=\"rtf-kpi-val\">" +
+        "<span class=\"rtf-kpi-main\">" + escapeHtml(txt) + "</span>" +
+        "</td>";
+    }).join("") + "</tr>" : "";
+
   var daysRow = "<tr class=\"rtf-kpi-r-days\">" +
-    "<td class=\"rtf-kpi-row-lbl\">재고일수</td>" +
+    "<td class=\"rtf-kpi-row-lbl\">" + (hasDisc ? "재고일수(관리기준)" : "재고일수") + "</td>" +
     monthData.map(function(d) {
       var txt = d.daysVal !== null ? d.daysVal + "일" : "—";
       var hiCls = d.daysVal !== null && d.daysVal > 120 ? " hi" : "";
@@ -1189,7 +1268,7 @@ function renderRtfMonthCards(items, baseItemsForDelta) {
   return "<div class=\"rtf-kpi-wrap\">" +
     "<table class=\"rtf-kpi-table\">" +
     "<thead>" + headerRow + "</thead>" +
-    "<tbody>" + amtRow + daysRow + "</tbody>" +
+    "<tbody>" + amtRow + discRow + daysRow + "</tbody>" +
     "</table></div>";
 }
 

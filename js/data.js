@@ -121,7 +121,7 @@ function mapTargetInvRows(rows) {
 }
 
 function mapRawData(rawFiles) {
-  const tables = { item_master:[], inventory_base:[], plan_monthly:[], bom_components:[], business_mapping:[], target_inv:[], actuals_monthly:[], sales_actual:[] };
+  const tables = { item_master:[], inventory_base:[], plan_monthly:[], bom_components:[], business_mapping:[], target_inv:[], actuals_monthly:[], actuals_meta:[], sales_actual:[] };
   Object.values(rawFiles).filter((f) => f.parseSuccess).forEach((file) => {
     const rows = file.sheets?.[0]?.rows ?? [];
     if (file.rawType === "salesSupplyPlan")   tables.plan_monthly.push(...mapPlanRows(rows));
@@ -135,7 +135,10 @@ function mapRawData(rawFiles) {
     if (file.rawType === "bom")             tables.bom_components.push(...mapBomRows(rows));
     if (file.rawType === "targetInventory") tables.target_inv.push(...mapTargetInvRows(rows));
     if (file.rawType === "salesActual")     tables.sales_actual.push(...mapSalesActualRows(rows));
-    if (file.rawType === "actualMonthly")   tables.actuals_monthly.push(...mapActualsRows(rows));
+    if (file.rawType === "actualMonthly") {
+      tables.actuals_monthly.push(...mapActualsRows(rows));
+      tables.actuals_meta.push(...mapActualsMetaRows(rows));
+    }
   });
   return tables;
 }
@@ -303,6 +306,7 @@ function mapActualsRows(rows) {
   var result  = [];
 
   // Table 1: 유형별 전체 (row index 3~12, 1-indexed rows 4~13)
+  // (mapActualsMetaRows에서 매출원가(누적)·미착품·평가충당금 전망을 별도 추출)
   for (var r = 3; r <= 12; r++) {
     if (rows[r]) result.push.apply(result, extractRow(rows[r], "전체", months));
   }
@@ -317,4 +321,55 @@ function mapActualsRows(rows) {
   }
 
   return result;
+}
+
+// ── 결산_raw 메타 파싱: 매출원가(누적) + 미착품·평가충당금 (전망월 포함, 억 단위) ──
+// 공시기준 재고일수용. 미착품·평가충당금 전망은 사용자가 시트 하단 행에 직접 입력
+// (미래 월도 값이 있으면 읽음 — 재고금액 없는 월도 스킵하지 않음)
+function mapActualsMetaRows(rows) {
+  var dateRow = rows[1] || [];
+  var monthStart = {};
+  var cur = null;
+  for (var ci = 2; ci < dateRow.length; ci++) {
+    var dv = String(dateRow[ci] || "").trim();
+    if (dv.match(/^\d{4}-\d{2}$/) && dv !== cur) { cur = dv; monthStart[cur] = ci; }
+  }
+
+  function findRow(label, fromEnd) {
+    if (fromEnd) {
+      for (var r = rows.length - 1; r >= 0; r--)
+        if (rows[r] && String(rows[r][0] || "").trim() === label) return rows[r];
+    } else {
+      for (var r2 = 0; r2 < rows.length; r2++)
+        if (rows[r2] && String(rows[r2][0] || "").trim() === label) return rows[r2];
+    }
+    return null;
+  }
+
+  // 월 블록(재고금액/입고금액/출고금액/재고일수 4컬럼) 안의 첫 숫자 셀
+  function blockValue(row, month) {
+    if (!row) return null;
+    var s = monthStart[month];
+    for (var k = s; k < s + 4; k++) {
+      var v = parseFloat(row[k]);
+      if (Number.isFinite(v)) return v;
+    }
+    return null;
+  }
+
+  var cogsRow   = findRow("매출원가(누적)", false);
+  // 미착품·평가충당금 전망은 하단 테이블에 입력 → 마지막 등장 행 우선
+  var michakRow = findRow("미착품", true);
+  var allowRow  = findRow("(평가충당금)", true);
+
+  return Object.keys(monthStart).map(function(month) {
+    return {
+      month:        month,
+      cumCogs:      blockValue(cogsRow, month),   // 매출원가 누적 (억)
+      michakInv:    blockValue(michakRow, month), // 미착품 재고 (억)
+      allowanceInv: blockValue(allowRow, month),  // 평가충당금 (억, 음수)
+    };
+  }).filter(function(r) {
+    return r.cumCogs !== null || r.michakInv !== null || r.allowanceInv !== null;
+  });
 }
