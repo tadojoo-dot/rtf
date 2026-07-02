@@ -71,6 +71,37 @@ async function parseWorkbook(file) {
 
 // ── 데이터 매핑 ───────────────────────────────────────────────────────────────
 function mapTargetInvRows(rows) {
+  // 적정재고_raw.xlsx 레이아웃: 헤더행 = [내역, 자재, 자재 내역, 사업부, ...],
+  // "적정재고" 그룹(수량/금액/재고일수 3컬럼), "적정재고(구간)" MIN/MAX 그룹.
+  // 컬럼 위치는 그룹 헤더 텍스트로 동적 탐색 (서브헤더 행 + 빈 행은 코드 필터로 스킵)
+  for (var hr = 0; hr < Math.min(rows.length, 10); hr++) {
+    var hrow = rows[hr] || [];
+    if (String(hrow[0]).trim() !== "내역" || String(hrow[1]).trim() !== "자재") continue;
+    var optCol = -1, rangeCol = -1, svcCol = -1;
+    for (var hc = 0; hc < hrow.length; hc++) {
+      var hv = String(hrow[hc]).trim();
+      if (hv === "적정재고") optCol = hc;
+      else if (hv.indexOf("적정재고(구간)") === 0) rangeCol = hc;
+      else if (hv.indexOf("서비스") >= 0) svcCol = hc;
+    }
+    if (optCol < 0) break; // 이 레이아웃 아님 → 기존 로직으로
+    var DAYS = optCol + 2; // 그룹 내 [수량, 금액, 재고일수]
+    return rows.slice(hr + 1).map(function(row) {
+      var code = cleanOptional(row[1]);
+      var days = cleanNumber(row[DAYS]);
+      if (!code || days === null) return null;
+      return {
+        itemCode:     normalizeCode(String(code)),
+        targetDays:   days,
+        minDays:      rangeCol >= 0 ? cleanNumber(row[rangeCol + 2]) : null,
+        maxDays:      rangeCol >= 0 ? cleanNumber(row[rangeCol + 5]) : null,
+        serviceLevel: svcCol >= 0 ? cleanOptional(row[svcCol]) : null,
+        itemType:     cleanOptional(row[0]),
+        businessUnit: cleanOptional(row[3]),
+      };
+    }).filter(function(r) { return r !== null; });
+  }
+
   const headerIndex = findHeaderIndex(rows, ["자재코드"]);
   if (headerIndex < 0) {
     const header = rows[0] || [];

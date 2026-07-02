@@ -682,9 +682,6 @@ function _renderExcessAdjustmentInner() {
   var excessFgItems = allFgItems.filter(function(i) { return i._isExcess; });
   var displayItems  = showOnlyExcess ? excessFgItems : allFgItems;
 
-  var hasCostAny = excessFgItems.some(function(i){ return i.standardCost > 0; });
-  var byMonth    = calcExcessScenarios(excessFgItems, months, globalPlanMap, matAdjBomMap);
-
   // 플랜트 목록
   var plantSet  = new Set();
   rtfItems.forEach(function(i){ if (i.plantCode) plantSet.add(i.plantCode); });
@@ -727,8 +724,33 @@ function _renderExcessAdjustmentInner() {
     targetWarn +
   "</div>";
 
+  // 3시나리오 KPI 배너 (RTF·공급원인과 동일 기준: 전체재고·공시·관리, RTF/감축 delta 분해)
+  var bannerHtml = (typeof renderScenarioKpiBanner === "function") ? renderScenarioKpiBanner() : "";
+
+  // AI 감축 선제안 스트립
+  var aiHtml = "";
+  if (hasTargetData) {
+    var aiApplied = Object.keys(state.aiExcessKeys || {}).length > 0;
+    if (aiApplied) {
+      aiHtml = "<div class='exc-ai-strip exc-ai-applied'>" +
+        "<span class='exc-ai-icon'>🤖</span>" +
+        "<span class='exc-ai-text'><strong>AI 권장 감축안 적용됨</strong> — 아래 표에서 품목별 수정 가능</span>" +
+        "<button class='exc-ai-clear'>권장안 해제</button></div>";
+    } else {
+      var ai = computeAiExcessPlan();
+      if (ai.itemCnt > 0) {
+        aiHtml = "<div class='exc-ai-strip'>" +
+          "<span class='exc-ai-icon'>🤖</span>" +
+          "<span class='exc-ai-text'><strong>AI 감축 선제안</strong> — 대상 " + ai.itemCnt + "개 품목, 재고 <strong>" +
+          escapeHtml(formatMoney(ai.totalCutAmt)) + "</strong> 감축 가능 · 품절 0건 유지</span>" +
+          "<button class='exc-ai-apply'>권장안 전체적용</button></div>";
+      }
+    }
+  }
+
   return "<div class='exc-screen'><div class='exc-inner'>" +
-    renderExcessImpactKpi(byMonth, hasCostAny) +
+    bannerHtml +
+    aiHtml +
     priorityHtml +
     controls +
     "<div class='exc-fg-area'>" +
@@ -738,44 +760,91 @@ function _renderExcessAdjustmentInner() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// AI 감축 선제안 — 품목별 재고일수가 적정일수에 수렴하도록 공급계획 자동 차감
+// 제약: 감축 후에도 모든 미래 월 기말재고 ≥ 0 (품절 0건 보장), 해당 월 공급량 한도
+// ═══════════════════════════════════════════════════════════════════════════
+function computeAiExcessPlan() {
+  var months = getRtfMonths();
+  var targetMap = new Map();
+  (state.mappedData.target_inv || []).forEach(function(r) {
+    if (r.itemCode) targetMap.set(r.itemCode, r.targetDays);
+  });
+  if (!targetMap.size) return { plan: {}, totalCutAmt: 0, itemCnt: 0 };
+
+  // 기준 = RTF조정후 시나리오의 실제 재고 흐름 (BOM 제약·상품입고 조정 반영된 endingQty).
+  // 감축 한도를 "이후 모든 월의 실제 기말재고 최솟값"으로 잡으므로 품절이 새로 생길 수 없음
+  // (공급을 줄여도 기말재고는 최대 감축량만큼만 내려가기 때문).
+  var baseItems = (typeof computeScenarioItemSets === "function")
+    ? computeScenarioItemSets().rtfAdj
+    : computeRtfItems();
+
+  var plan = {}, totalCutAmt = 0, itemCnt = 0;
+  baseItems.forEach(function(item) {
+    var td = targetMap.get(item.itemCode);
+    if (!td || !item.hasInventory) return;
+
+    // 유효 구간: 계획·재고가 이어진 앞부분까지만 (이후는 판단 불가 → 감축 제외)
+    var sales = [], supply = [], ending = [], validLen = 0;
+    for (var i = 0; i < months.length; i++) {
+      var ms = item.monthlyStatus && item.monthlyStatus[i];
+      if (!ms || !Number.isFinite(ms.endingQty) || !Number.isFinite(ms.supplyQty)) break;
+      sales.push(ms.salesQty || 0);
+      supply.push(ms.supplyQty);
+      ending.push(ms.endingQty);
+      validLen++;
+    }
+    if (!validLen) return;
+
+    var changed = false;
+    for (var mi = 0; mi < validLen; mi++) {
+      var dailySales = sales[mi] > 0 ? sales[mi] / monthDays(months[mi]) : 0;
+      if (dailySales <= 0) continue;
+      var excess = ending[mi] - td * dailySales; // 적정재고 초과분
+      if (excess <= 0) continue;
+      // 안전 한도: 이 달 공급 감축은 이후 모든 월 기말을 같이 낮춤 → 최소 미래기말까지만
+      var minFuture = Infinity;
+      for (var k2 = mi; k2 < validLen; k2++) minFuture = Math.min(minFuture, ending[k2]);
+      var cut = Math.floor(Math.min(excess, supply[mi], Math.max(0, minFuture)));
+      if (cut <= 0) continue;
+      supply[mi] -= cut;
+      for (var k3 = mi; k3 < validLen; k3++) ending[k3] -= cut;
+      plan[item.itemCode + "|" + (item.plantCode || "") + "|" + months[mi]] = supply[mi];
+      if (Number.isFinite(item.unitInvValue)) totalCutAmt += cut * item.unitInvValue;
+      changed = true;
+    }
+    if (changed) itemCnt++;
+  });
+  return { plan: plan, totalCutAmt: totalCutAmt, itemCnt: itemCnt };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 11. 이벤트 바인딩
 // ═══════════════════════════════════════════════════════════════════════════
 function bindExcessAdjustment() {
   var root = document.querySelector("#screenRoot");
   if (!root) return;
 
-  // Chart.js 초기화
-  var rtfItems  = computeRtfItems();
-  var months    = getRtfMonths();
-  var targetMap = new Map();
-  (state.mappedData.target_inv || []).forEach(function(r){ if(r.itemCode) targetMap.set(r.itemCode, r.targetDays); });
-  var globalPlanMap = new Map();
-  (state.mappedData.plan_monthly || []).forEach(function(r){
-    var ic=cleanOptional(r.itemCode), pl=cleanOptional(r.plant)||"", mo=cleanOptional(r.month);
-    if(!ic||!mo) return;
-    var k=ic+"|"+pl+"|"+mo;
-    globalPlanMap.set(k,(globalPlanMap.get(k)||0)+(cleanNumber(r.supplyQty)||0));
-  });
-  var plantFilter   = state.excessPlant || "all";
-  var hasRtfAdj     = Object.keys(state.matSimAdj || {}).length > 0;
-  var matAdjBomMap  = hasRtfAdj ? buildBomMaxProducibleMap(state.matSimAdj) : null;
-  var excessFgItems = rtfItems.filter(function(item){
-    var td=targetMap.get(item.itemCode), ms0=item.monthlyStatus&&item.monthlyStatus[0];
-    if(!(td&&ms0&&Number.isFinite(ms0.inventoryDays)&&ms0.inventoryDays>td)) return false;
-    if(plantFilter!=="all"&&item.plantCode!==plantFilter) return false;
-    return true;
-  }).map(function(item){
-    var ms0=item.monthlyStatus[0], td=targetMap.get(item.itemCode), excessAmt=0;
-    if(ms0&&item.hasCost&&ms0.salesQty>0){
-      var tgtAmt=(ms0.salesQty/monthDays(months[0]))*td*item.standardCost;
-      excessAmt=Math.max(0,(ms0.endingAmount||0)-tgtAmt);
-    }
-    return Object.assign({},item,{_excessAmt:excessAmt,_td:td});
-  }).sort(function(a,b){ return b._excessAmt-a._excessAmt; });
-
-  var hasCostAny = excessFgItems.some(function(i){ return i.standardCost>0; });
-  var byMonth    = calcExcessScenarios(excessFgItems, months, globalPlanMap, matAdjBomMap);
-  // 차트 제거됨 (v303 심플화)
+  // AI 감축 선제안 적용/해제
+  var aiApplyBtn = root.querySelector(".exc-ai-apply");
+  if (aiApplyBtn) {
+    aiApplyBtn.addEventListener("click", function() {
+      var ai = computeAiExcessPlan();
+      state.aiExcessKeys = {};
+      Object.keys(ai.plan).forEach(function(k) {
+        state.excessAdj[k]   = ai.plan[k];
+        state.aiExcessKeys[k] = true;
+      });
+      render("inventory-variance");
+    });
+  }
+  var aiClearBtn = root.querySelector(".exc-ai-clear");
+  if (aiClearBtn) {
+    aiClearBtn.addEventListener("click", function() {
+      Object.keys(state.aiExcessKeys || {}).forEach(function(k) { delete state.excessAdj[k]; });
+      state.aiExcessKeys = {};
+      render("inventory-variance");
+    });
+  }
 
   // 플랜트 필터
   var plantSel = root.querySelector(".exc-plant-filter");
@@ -791,6 +860,7 @@ function bindExcessAdjustment() {
   if (resetAllBtn) {
     resetAllBtn.addEventListener("click", function() {
       state.excessAdj = {};
+      state.aiExcessKeys = {};
       state.excessExpandedRows = new Set();
       render("inventory-variance");
     });

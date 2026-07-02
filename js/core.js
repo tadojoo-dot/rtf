@@ -81,6 +81,7 @@ const state = {
   rtfViewMode: "current",   // "current" | "adjusted"
   invSupplyAdj: {},         // "itemCode|plant|month" → 재고화면 직접조정 공급수량
   excessAdj: {},            // "itemCode|plant|month" → 과잉감축 조정 공급수량
+  aiExcessKeys: {},         // AI 감축 선제안으로 적용한 excessAdj 키 추적 (해제용)
   excessTab: "fg",          // "fg" | "mat"
   excessShowOnly: false,    // false=전체품목 true=초과품목만
   excessDrillTabMap: {},    // rowKey → "psi" | "mat"

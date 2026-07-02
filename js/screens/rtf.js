@@ -1176,6 +1176,90 @@ function rtfDisclosureDays(items, mi) {
   return amt * elapsed / cum;
 }
 
+// ── 3시나리오 계산 (현재 → RTF조정후 → 감축후) — 과잉감축 배너·3단 띠 공용 ────
+function computeScenarioItemSets() {
+  var hasRtfAdj = Object.keys(state.matSimAdj || {}).length > 0 ||
+                  Object.keys(state.goodsSupplyAdj || {}).length > 0;
+  var hasExcess = Object.keys(state.excessAdj || {}).length > 0;
+  var bomDone   = typeof BOM_STATUS !== "undefined" && state.bomStatus === BOM_STATUS.DONE &&
+                  typeof buildBomMaxProducibleMap === "function";
+  var baseBom   = bomDone ? buildBomMaxProducibleMap({}) : null;
+  var adjBom    = (bomDone && Object.keys(state.matSimAdj || {}).length > 0)
+    ? buildBomMaxProducibleMap(state.matSimAdj) : baseBom;
+  var base   = computeRtfItems(baseBom);
+  var rtfAdj = hasRtfAdj ? computeRtfItems(adjBom, false, state.goodsSupplyAdj) : base;
+  // 감축후 = RTF조정 위에 감축 공급 override (같은 키는 감축이 우선)
+  var finalItems = hasExcess
+    ? computeRtfItems(adjBom, false, Object.assign({}, state.goodsSupplyAdj || {}, state.excessAdj || {}))
+    : rtfAdj;
+  return { base: base, rtfAdj: rtfAdj, final: finalItems, hasRtfAdj: hasRtfAdj, hasExcess: hasExcess };
+}
+
+// ── 3시나리오 KPI 배너 — 값은 최종(감축후), delta는 (RTF +x · 감축 -y) 분해 ────
+function renderScenarioKpiBanner() {
+  var sc = computeScenarioItemSets();
+  var months = getRtfMonths();
+
+  // 재고 관점: 감소 = 좋음(초록), 증가 = 나쁨(빨강)
+  function chip(delta, isAmt, label) {
+    if (delta === null) return "";
+    var rounded = isAmt ? Math.round(delta / 1e8) : Math.round(delta);
+    if (rounded === 0) return "";
+    var cls  = delta < 0 ? "cst-kpi-delta dn" : "cst-kpi-delta up";
+    var sign = delta >= 0 ? "+" : "";
+    var txt  = isAmt ? sign + formatMoney(delta) : sign + Math.round(delta) + "일";
+    return "<span class='" + cls + "'>(" + escapeHtml(label) + " " + escapeHtml(txt) + ")</span>";
+  }
+  function d(a, b) { return (Number.isFinite(a) && Number.isFinite(b)) ? a - b : null; }
+
+  var data = months.map(function(month, mi) {
+    var b = rtfHeadlineInv(sc.base, mi);
+    var r = sc.hasRtfAdj ? rtfHeadlineInv(sc.rtfAdj, mi) : b;
+    var f = sc.hasExcess ? rtfHeadlineInv(sc.final, mi) : r;
+    var bd = rtfDisclosureDays(sc.base, mi);
+    var rd = sc.hasRtfAdj ? rtfDisclosureDays(sc.rtfAdj, mi) : bd;
+    var fd = sc.hasExcess ? rtfDisclosureDays(sc.final, mi) : rd;
+    return {
+      month: month,
+      amt:  f.amount, amtRtf:  sc.hasRtfAdj ? d(r.amount, b.amount) : null, amtExc:  sc.hasExcess ? d(f.amount, r.amount) : null,
+      mgmt: f.days,   mgmtRtf: sc.hasRtfAdj ? d(r.days, b.days)     : null, mgmtExc: sc.hasExcess ? d(f.days, r.days)     : null,
+      disc: fd,       discRtf: sc.hasRtfAdj ? d(rd, bd)             : null, discExc: sc.hasExcess ? d(fd, rd)             : null,
+    };
+  });
+
+  var headerRow = "<tr><th class='rtf-kpi-lbl-hd'></th>" +
+    months.map(function(m) { return "<th class='rtf-kpi-month-hd'>" + escapeHtml(monthLabel(m)) + "</th>"; }).join("") + "</tr>";
+
+  var _isTotal = getActualsAnchor() != null;
+  var amtRow = "<tr class='rtf-kpi-r-amt'><td class='rtf-kpi-row-lbl'>" + (_isTotal ? "전체재고" : "재고금액") + "</td>" +
+    data.map(function(x) {
+      return "<td class='rtf-kpi-val'><span class='rtf-kpi-main'>" +
+        escapeHtml(Number.isFinite(x.amt) ? formatMoney(x.amt) : "—") + "</span>" +
+        chip(x.amtRtf, true, "RTF") + chip(x.amtExc, true, "감축") + "</td>";
+    }).join("") + "</tr>";
+
+  var hasDisc = data.some(function(x) { return Number.isFinite(x.disc); });
+  var discRow = hasDisc ? "<tr class='rtf-kpi-r-days'><td class='rtf-kpi-row-lbl'>재고일수(공시기준)</td>" +
+    data.map(function(x) {
+      return "<td class='rtf-kpi-val'><span class='rtf-kpi-main'>" +
+        escapeHtml(Number.isFinite(x.disc) ? Math.round(x.disc) + "일" : "—") + "</span>" +
+        chip(x.discRtf, false, "RTF") + chip(x.discExc, false, "감축") + "</td>";
+    }).join("") + "</tr>" : "";
+
+  var mgmtRow = "<tr class='rtf-kpi-r-days'><td class='rtf-kpi-row-lbl'>" + (hasDisc || _isTotal ? "재고일수(관리기준)" : "재고일수") + "</td>" +
+    data.map(function(x) {
+      return "<td class='rtf-kpi-val'><span class='rtf-kpi-main'>" +
+        escapeHtml(Number.isFinite(x.mgmt) ? Math.round(x.mgmt) + "일" : "—") + "</span>" +
+        chip(x.mgmtRtf, false, "RTF") + chip(x.mgmtExc, false, "감축") + "</td>";
+    }).join("") + "</tr>";
+
+  return "<div class='rtf-kpi-wrap' style='margin-bottom:12px;'>" +
+    "<table class='rtf-kpi-table'>" +
+    "<thead>" + headerRow + "</thead>" +
+    "<tbody>" + amtRow + discRow + mgmtRow + "</tbody>" +
+    "</table></div>";
+}
+
 // 헤드라인 재고: 결산 연결 시 전체재고, 미연결 시 완제품·상품(기존)로 폴백
 // 재고일수(관리기준) = 재고금액 × 경과일수(월수×30) ÷ 전체출고 누적
 //   실적월까지는 결산 전체출고 YTD, 이후는 estMonthMgmtOutWon 월별 추정 누적

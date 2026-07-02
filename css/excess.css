@@ -442,3 +442,27 @@
   padding: 3px 10px; border-radius: 6px; border: 1px solid #fcd34d;
   font-weight: 600;
 }
+
+/* ── AI 감축 선제안 스트립 ─────────────────────────────────────────────── */
+.exc-ai-strip {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px; margin-bottom: 10px;
+  background: linear-gradient(90deg, #eef2ff 0%, #f8fafc 100%);
+  border: 1px solid #c7d2fe; border-radius: 10px;
+}
+.exc-ai-strip.exc-ai-applied {
+  background: linear-gradient(90deg, #ecfdf5 0%, #f8fafc 100%);
+  border-color: #a7f3d0;
+}
+.exc-ai-icon { font-size: 18px; }
+.exc-ai-text { flex: 1; font-size: 14px; color: #334155; }
+.exc-ai-text strong { color: #1e293b; }
+.exc-ai-apply, .exc-ai-clear {
+  flex-shrink: 0; padding: 7px 16px; border-radius: 8px;
+  font-size: 13px; font-weight: 700; cursor: pointer;
+  border: 1px solid transparent;
+}
+.exc-ai-apply { background: #4f46e5; color: #fff; }
+.exc-ai-apply:hover { background: #4338ca; }
+.exc-ai-clear { background: #fff; color: #64748b; border-color: #cbd5e1; }
+.exc-ai-clear:hover { background: #f1f5f9; color: #334155; }
