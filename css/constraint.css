@@ -1335,7 +1335,13 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
   padding: 7px 8px; border-radius: 6px;
 }
 .cst-ai-row:nth-child(odd) { background: rgba(99, 102, 241, 0.04); }
-.cst-ai-row-name { font-size: 15px; font-weight: 700; color: #1f2933; min-width: 200px; }
+.cst-ai-row-code {
+  display: inline-block; font-family: "SFMono-Regular", Consolas, "D2Coding", monospace;
+  font-size: 13px; font-weight: 700; color: #4338ca; letter-spacing: 0.02em;
+  background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 5px;
+  padding: 1px 7px; margin-right: 8px;
+}
+.cst-ai-row-name { font-size: 15px; font-weight: 700; color: #1f2933; min-width: 180px; }
 .cst-ai-row-lost { font-size: 14px; font-weight: 700; color: #dc2626; min-width: 90px; }
 .cst-ai-row-rec  { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .cst-ai-row-mat  { font-size: 13px; color: #4338ca; font-weight: 600; }

@@ -2327,6 +2327,7 @@ function renderCstAiSuggestion(months) {
       ? "<span class=\"cst-ai-row-mat\">" + escapeHtml(r.matName) + " 증량</span><button type=\"button\" class=\"cst-ai-apply-one\" data-fgkeys=\"" + escapeHtml(r.keys.join(",")) + "\">적용</button>"
       : "<span class=\"cst-ai-planshort\">공급계획 증대 필요</span>";
     return "<div class=\"cst-ai-row\">" +
+      "<span class=\"cst-ai-row-code\">" + escapeHtml(r.code) + "</span>" +
       "<span class=\"cst-ai-row-name\">" + escapeHtml(r.name) + "</span>" +
       "<span class=\"cst-ai-row-lost\">차질 " + escapeHtml(formatMoney(r.lost)) + "</span>" +
       "<span class=\"cst-ai-row-rec\">" + rec + "</span>" +
