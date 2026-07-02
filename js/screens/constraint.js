@@ -2419,6 +2419,19 @@ function renderCstRtfShortList(months) {
       fg.monthlyStatus.some(function(ms) { return (ms.shortageQty || 0) > 0; });
   });
 
+  // RTF에서 특정 완제품 부족 셀을 클릭해 넘어온 경우 → 그 완제품만 표시
+  var d = state.cstDrilldown;
+  if (d && !d.isAggregate && d.itemCode) {
+    shortFgs = shortFgs.filter(function(fg) {
+      return fg.itemCode === d.itemCode && (!d.plant || fg.plantCode === d.plant);
+    });
+  } else if (d && d.isAggregate && d.itemCodes && d.itemCodes.length) {
+    var _codeSet = new Set(d.itemCodes);
+    shortFgs = shortFgs.filter(function(fg) {
+      return _codeSet.has(fg.itemCode) && (!d.plant || fg.plantCode === d.plant);
+    });
+  }
+
   if (shortFgs.length === 0) return "";
 
   var expanded = state.cstRtfExpanded || new Set();
@@ -2527,10 +2540,21 @@ function renderCstRtfShortList(months) {
     ? "<button type=\"button\" class=\"cst-sa-reset-all\" id=\"cstSaResetAll\">전체 초기화</button>"
     : "";
 
+  // RTF에서 특정 완제품으로 드릴다운된 경우 — 필터 상태 표시 + 전체 보기
+  var drillNotice = "";
+  var _dFilter = (d && !d.isAggregate && d.itemCode) ? (d.itemName || d.itemCode)
+    : (d && d.isAggregate && d.itemCodes && d.itemCodes.length) ? (d.label || (d.itemCodes.length + "개 품목"))
+    : null;
+  if (_dFilter) {
+    drillNotice = "<div class=\"cst-fgl-drill-notice\">🔎 <b>" + escapeHtml(_dFilter) + "</b> 기준으로 필터 중" +
+      "<button type=\"button\" class=\"cst-fgl-drill-clear\" id=\"cstClearDrilldownTop\">전체 보기 ✕</button></div>";
+  }
+
   return "<section class=\"cst-card cst-fgl-section\">" +
     "<div class=\"cst-sec-title\">RTF 부족 완제품 · 원인 자재 조정 <span class=\"cst-sa-count\">" +
     shortFgs.length + "건</span>" +
     (hasAdj ? " <span class=\"mat-sim-badge\">조정 중</span>" : "") + resetBtn + "</div>" +
+    drillNotice +
     "<table class=\"cst-fgl-table\"><tbody>" + rows + "</tbody></table>" +
     "</section>";
 }
@@ -2873,11 +2897,13 @@ function bindConstraint() {
     });
   });
 
-  // 드릴다운 해제
-  var clearDrill = document.querySelector("#cstClearDrilldown");
-  if (clearDrill) clearDrill.addEventListener("click", function() {
-    state.cstDrilldown = null;
-    render("constraint");
+  // 드릴다운 해제 (상세 분석 배너 + 부족목록 상단 두 곳)
+  ["#cstClearDrilldown", "#cstClearDrilldownTop"].forEach(function(sel) {
+    var el = document.querySelector(sel);
+    if (el) el.addEventListener("click", function() {
+      state.cstDrilldown = null;
+      render("constraint");
+    });
   });
 
   // ── 완제품 카드 입고 조정 입력 ──

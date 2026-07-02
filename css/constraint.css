@@ -1222,6 +1222,17 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
 }
 .cst-fgl-matbadge-none { background: #f3f4f6; color: #9ca3af; }
 .cst-fgl-matbadge-neutral { background: #f0fdf4; color: #15803d; }
+.cst-fgl-drill-notice {
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 0 10px; padding: 8px 14px;
+  background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px;
+  font-size: 14px; color: #1e40af;
+}
+.cst-fgl-drill-clear {
+  margin-left: auto; padding: 3px 12px; font-size: 13px; font-weight: 600;
+  color: #1d4ed8; background: #fff; border: 1px solid #93c5fd; border-radius: 6px; cursor: pointer;
+}
+.cst-fgl-drill-clear:hover { background: #dbeafe; }
 .cst-fgl-prodplant-badge {
   display: inline-block; font-size: 12px; font-weight: 700;
   color: #9a3412; background: #ffedd5; border: 1px solid #fdba74;
