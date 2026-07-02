@@ -2656,7 +2656,9 @@ function renderCstFgMatTable(mats, months, supplyMap, simAdj) {
           (delta > 0 ? "+" : "") + formatNumber(Math.round(delta)) + "</span>"
         : "";
 
+      var reqHtml = "<div class=\"cst-sa-sales\">소요 " + escapeHtml(_cstFmtVal(md.requiredQty || 0, dec, "")) + "</div>";
       var inputCell = "<td class=\"cst-sa-input-cell" + borderCls + (isAdj ? " cst-sa-adjusted" : "") + "\">" +
+        reqHtml +
         "<input type=\"number\" class=\"cst-adj-month-input\" data-key=\"" + escapeHtml(k) +
         "\" data-orig=\"" + orig + "\" value=\"" + adj + "\" min=\"0\" step=\"1\" />" + deltaHtml + "</td>";
 
