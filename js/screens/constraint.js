@@ -1450,8 +1450,11 @@ function renderConstraintTableSection(result, bomStatus, months) {
   var lastTime  = isDone && result && result.completedAt
     ? result.completedAt.toLocaleTimeString("ko-KR", { hour:"2-digit", minute:"2-digit", second:"2-digit" })
     : null;
-  var statusLabel = { idle:"미실행", running:"진행중", done:"완료", failed:"실패" }[bomStatus] || "-";
-  var statusCls   = isDone ? " cst-status-done" : bomStatus === BOM_STATUS.FAILED ? " cst-status-fail" : "";
+  var stale       = typeof isBomStale === "function" && isBomStale();
+  var statusLabel = stale ? "계획 변경됨 · 재전개 필요"
+    : ({ idle:"미실행", running:"진행중", done:"완료", failed:"실패" }[bomStatus] || "-");
+  var statusCls   = stale ? " cst-status-stale"
+    : isDone ? " cst-status-done" : bomStatus === BOM_STATUS.FAILED ? " cst-status-fail" : "";
 
   var critOpen     = state.calcCriteriaOpen;
   var critBtnLabel = critOpen ? "계산기준 ▲" : "계산기준 ▼";
@@ -2850,6 +2853,24 @@ function openCstImpactPopup(compKey) {
   document.addEventListener("keydown", function esc(e) {
     if (e.key === "Escape") { closePopup(); document.removeEventListener("keydown", esc); }
   });
+}
+
+// ── BOM 조용한 재전개 (파일 로드 시 자동 호출 — 애니메이션·render 없음) ──────────
+// 새 계획/재고 파일이 들어오면 낡은 전개 스냅샷을 새 입력으로 즉시 재계산해서
+// 자재 제약·원부자재 과잉·관리기준 일수 분모가 모두 최신 계획을 반영하게 한다.
+function reexpandBom() {
+  try {
+    var res = computeBomExpansion();
+    state.bomResult = res;
+    state.bomStatus = res.status;
+  } catch (e) {
+    state.bomResult = { status: BOM_STATUS.FAILED, failReasons: ["BOM 재전개 오류: " + (e.message || e)], items: [], stats: {} };
+    state.bomStatus = BOM_STATUS.FAILED;
+  }
+  // 전개 스냅샷 파생 캐시 전부 무효화 (수동 전개 성공 경로와 동일)
+  if (typeof _bomMaxProducibleCache !== "undefined") _bomMaxProducibleCache = null;
+  if (typeof _cstBomRtfItems !== "undefined")        _cstBomRtfItems = null;
+  if (typeof invalidateRtfCache === "function")      invalidateRtfCache();
 }
 
 // ── BOM 전개 실행 (onclick에서 직접 호출 — addEventListener 미사용) ──────────────

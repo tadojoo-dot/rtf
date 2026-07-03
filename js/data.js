@@ -52,6 +52,12 @@ async function processFiles(files) {
   // RTF 계산 캐시 무효화
   if (typeof invalidateRtfCache === "function") invalidateRtfCache();
 
+  // 이전에 BOM 전개를 끝낸 상태라면, 새 계획/재고를 즉시 반영하도록 자동 재전개
+  // (전개 결과는 스냅샷이라 파일만 바꾸면 자재 제약·과잉·관리일수 분모가 낡은 채 남음)
+  if (state.bomStatus === BOM_STATUS.DONE && typeof reexpandBom === "function") {
+    reexpandBom();
+  }
+
   render(state.currentMenuId);
 }
 

@@ -3,6 +3,40 @@ var BOM_STATUS = { IDLE:"idle", RUNNING:"running", DONE:"done", FAILED:"failed" 
 var _bomAnimId = 0;
 var _cstBomRtfItems = null; // renderCstCompareBanner용 computeRtfItems 캐시 (BOM 재전개 시 null 초기화)
 
+// ── BOM 전개 입력 시그니처 (계획·재고·BOM 변경 감지용) ─────────────────────────
+// 전개 결과(bomResult)는 "전개" 시점의 스냅샷이므로, 이후 계획/재고 파일이 바뀌면
+// 낡은 스냅샷이 남는다. 시그니처를 result.inputSig에 심어두고 현재 입력과 비교해
+// staleness(재전개 필요)를 판정한다. 새 파일 로드 시 processFiles가 자동 재전개.
+function computeBomInputSig() {
+  var md = (typeof state !== "undefined" && state.mappedData) || {};
+  function acc(arr, fields) {
+    var out = [arr ? arr.length : 0];
+    (fields || []).forEach(function(f) {
+      var s = 0;
+      if (arr) for (var i = 0; i < arr.length; i++) {
+        var v = arr[i][f];
+        if (typeof v === "number" && isFinite(v)) s += v;
+      }
+      out.push(Math.round(s));
+    });
+    return out.join(":");
+  }
+  return [
+    "p" + acc(md.plan_monthly,   ["salesQty", "supplyQty"]),
+    "i" + acc(md.inventory_base, ["baseQty", "baseAmount"]),
+    "b" + acc(md.bom_components, ["componentQty"]),
+  ].join("|");
+}
+
+// 전개 완료 상태인데 입력 시그니처가 달라졌으면 재전개 필요(stale)
+function isBomStale() {
+  return typeof state !== "undefined" &&
+    state.bomStatus === BOM_STATUS.DONE &&
+    state.bomResult &&
+    typeof state.bomResult.inputSig === "string" &&
+    state.bomResult.inputSig !== computeBomInputSig();
+}
+
 // ── 컬럼 / 메트릭 정의 ───────────────────────────────────────────────────────
 // 기본 표시 컬럼 (영향 품목군·대표 영향품목 제거 → 영향품목수 tooltip/펼침에서 확인)
 var CONSTR_LEFT_COLS = [
@@ -530,6 +564,7 @@ function computeBomExpansion() {
 
   result.status          = BOM_STATUS.DONE;
   result.completedAt     = new Date();
+  result.inputSig        = computeBomInputSig(); // 전개 당시 입력 스냅샷 지문 (staleness 판정용)
   result.items           = sorted;
   result.stageOutByMonth = stageOutByMonth; // 월별 단계 투입금액 (원) — 관리기준 출고 추정용
   result.matFlows        = matFlows;        // 구성품 전체 흐름 — 과잉감축 원부자재 탭용

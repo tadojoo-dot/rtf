@@ -271,9 +271,12 @@ function renderMatReqDownloadSection_inner() {
   var bomDone = (typeof BOM_STATUS !== "undefined")
     && state.bomStatus === BOM_STATUS.DONE
     && state.bomResult && state.bomResult.items && state.bomResult.items.length > 0;
-  var hint = bomDone
-    ? "자재 " + (state.bomResult.items.length).toLocaleString("ko-KR") + "개 · BOM 전개 완료"
-    : "공급원인 화면에서 BOM 전개 후 사용 가능";
+  var stale = typeof isBomStale === "function" && isBomStale();
+  var hint = !bomDone
+    ? "공급원인 화면에서 BOM 전개 후 사용 가능"
+    : stale
+    ? "⚠ 계획 변경됨 · 공급원인 화면에서 재전개 필요"
+    : "자재 " + (state.bomResult.items.length).toLocaleString("ko-KR") + "개 · BOM 전개 완료";
   return `<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
     <button type="button" class="data-check-btn" onclick="downloadMatReq()" ${bomDone ? "" : "disabled"}
       style="font-size:14px;padding:8px 18px;">

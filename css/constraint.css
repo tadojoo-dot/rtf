@@ -197,6 +197,12 @@
 
 .cst-status-badge.cst-status-done { color: #117a52; }
 .cst-status-badge.cst-status-fail { color: #b02a37; }
+.cst-status-badge.cst-status-stale {
+  background: #fef3c7;
+  border-radius: 5px;
+  color: #b45309;
+  padding: 3px 9px;
+}
 
 .cst-status-time {
   color: #9ca3af;
