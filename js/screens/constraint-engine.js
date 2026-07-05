@@ -95,7 +95,10 @@ function shortNoteLabel(note) {
 }
 
 // ── BOM 전개 엔진 ─────────────────────────────────────────────────────────────
-function computeBomExpansion() {
+// demandField: 완제품 수요 기준 컬럼. 기본 "supplyQty"(공급계획=생산계획, 화면 전개용).
+// 요청양식 다운로드는 공급계획 회신 전 단계라 "salesQty"(판매계획)로 소요량을 선전개한다.
+function computeBomExpansion(demandField) {
+  demandField = demandField || "supplyQty";
   var planRows      = state.mappedData.plan_monthly;
   var inventoryRows = state.mappedData.inventory_base;
   var bomRows       = state.mappedData.bom_components;
@@ -155,7 +158,7 @@ function computeBomExpansion() {
     var code = cleanOptional(row.itemCode);
     if (!code || !code.startsWith("9")) return;
     var key = code + "|" + cleanOptional(row.plant) + "|" + cleanOptional(row.month);
-    prodPlanMap.set(key, (prodPlanMap.get(key) || 0) + (cleanNumber(row.supplyQty) || 0));
+    prodPlanMap.set(key, (prodPlanMap.get(key) || 0) + (cleanNumber(row[demandField]) || 0));
   });
 
   // 하위 자재 공급계획: code|plant|month → { qty, unit }

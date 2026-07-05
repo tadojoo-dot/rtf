@@ -200,6 +200,27 @@ function renderDiagnosis() {
 // ═══════════════════════════════════════════════════════════════════════════
 // 다운로드 화면
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ── 요청양식 소요량 산출 기준 (판매계획 / 공급계획 토글) ──────────────────────
+// 워크플로우: ①공급계획 회신 전엔 판매계획으로 소요량 선전개해 공장 발송 →
+// ②공급계획 회신 후엔 공급계획 기준으로 재산출·재확인 가능.
+function hasFgSupplyPlanData() {
+  return (state.mappedData.plan_monthly || []).some(function(r) {
+    var c = cleanOptional(r.itemCode);
+    return c && c.startsWith("9") && (cleanNumber(r.supplyQty) || 0) > 0;
+  });
+}
+function getReqFormBasis() {
+  var hasSupply = hasFgSupplyPlanData();
+  if (state.reqFormBasis === "supply") return hasSupply ? "supply" : "sales";
+  if (state.reqFormBasis === "sales")  return "sales";
+  return hasSupply ? "supply" : "sales"; // 미선택 시 자동: 공급계획 있으면 공급계획
+}
+function setReqFormBasis(b) {
+  state.reqFormBasis = b;
+  render(state.currentMenuId);
+}
+
 function renderDownload() {
   var hasPlan = (state.mappedData.plan_monthly || []).length > 0;
   var hasBom  = (state.mappedData.bom_components || []).length > 0;
@@ -211,11 +232,33 @@ function renderDownload() {
       ? "판매계획 연결됨 — BOM 파일 없으면 자재 소요량 섹션이 비어있음"
       : "판매계획 · BOM · 재고 연결 완료 — 다운로드 가능";
 
+  var hasSupply  = hasPlan && hasFgSupplyPlanData();
+  var basis      = getReqFormBasis();
+  var basisHint  = basis === "supply"
+    ? "공장 회신 공급계획(생산계획) × BOM 으로 소요량 산출"
+    : hasSupply
+      ? "판매계획 × BOM 으로 소요량 산출 (공급계획 회신 전 선전개용)"
+      : "판매계획 × BOM 으로 소요량 산출 — 공급계획 데이터 없음(전부 0)이라 판매계획 기준만 가능";
+  function basisBtn(b, label, disabled) {
+    var active = basis === b;
+    return `<button type="button" onclick="setReqFormBasis('${b}')" ${disabled ? "disabled" : ""}
+      style="font-size:13px;padding:6px 14px;border-radius:6px;cursor:${disabled ? "not-allowed" : "pointer"};
+      border:1px solid ${active ? "#1a3558" : "#d1d5db"};
+      background:${active ? "#1a3558" : "#fff"};color:${disabled ? "#9ca3af" : active ? "#fff" : "#374151"};
+      font-weight:${active ? "600" : "400"};">${label}</button>`;
+  }
+
   return `<section class="section-band">
     <div class="section-header">
       <div><p class="eyebrow">export</p><h2>생산 · 입고계획 요청서</h2></div>
-      <p>판매계획 기준으로 공장별 필요 생산량·원부자재 소요량을 자동 계산하여 Excel 양식을 생성합니다.<br>
+      <p>선택한 기준(판매계획/공급계획)으로 공장별 필요 생산량·원부자재 소요량을 자동 계산하여 Excel 양식을 생성합니다.<br>
          담당자에게 배포 후 ★ 표시 칸을 작성 받아 회신받으세요.</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+      <span style="font-size:13px;color:#374151;font-weight:600;">소요량 산출 기준</span>
+      ${basisBtn("sales", "판매계획 기준", !hasPlan)}
+      ${basisBtn("supply", "공급계획 기준", !hasSupply)}
+      <span style="font-size:12px;color:#6b7280;">${escapeHtml(basisHint)}</span>
     </div>
     <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:8px;">
       <button type="button" class="data-check-btn" onclick="downloadRequestForm()"
@@ -318,7 +361,22 @@ function downloadRequestForm() {
   });
 
   // 자재 소요량 맵 "compCode|plant" → [qty×month]
-  var consMap = buildMatConsumptionMap(false);
+  // 산출 기준은 화면 토글 선택(판매계획/공급계획)을 따른다 — getReqFormBasis().
+  // (기초재고 차감 없음: 재고 감안은 공장이 ★입고계획 입력 시 반영)
+  // 화면 BOM 전개와 동일 엔진 사용 → 대체BOM 필터·중복행 제거·반제품 다단계·
+  // 플랜트 폴백 규칙이 그대로 적용되어 공장 발송값과 화면값의 정합이 보장된다.
+  var basis      = getReqFormBasis();
+  var basisLabel = basis === "supply" ? "공급계획(생산계획) × BOM" : "판매계획 × BOM";
+  var reqExp     = computeBomExpansion(basis === "supply" ? "supplyQty" : "salesQty");
+  if (reqExp.status !== BOM_STATUS.DONE) {
+    alert("소요량 전개 실패:\n" + (reqExp.failReasons || []).join("\n"));
+    return;
+  }
+  var consMap = new Map();
+  (reqExp.matFlows || []).forEach(function(f) {
+    var arr = months.map(function(m) { return (f.reqByMonth && f.reqByMonth[m]) || 0; });
+    consMap.set(f.componentCode + "|" + f.plant, arr);
+  });
 
   // 단위 맵 — item_master 우선, inventory_base 보조
   var unitMap = new Map();
@@ -386,8 +444,9 @@ function downloadRequestForm() {
   var coverRows = [
     ["생산계획 · 원부자재 입고계획 요청서"],
     [],
-    ["요청일",    today],
-    ["회신기한",  ""],
+    ["요청일",         today],
+    ["회신기한",       ""],
+    ["소요량 산출기준", basisLabel + " (기본 BOM 기준 — 대체 BOM 사용 품목은 별도 확인 요)"],
     [],
     ["■ 작성 안내"],
     ["· 담당 공장 시트를 열어 ★ 열에 계획 수량을 입력 후 회신 부탁드립니다."],
@@ -572,7 +631,7 @@ function downloadRequestForm() {
     XLSX.utils.book_append_sheet(wb, sangWs, "상품");
   }
 
-  XLSX.writeFile(wb, "입고출고계획_" + todayFile + ".xlsx", {cellStyles: true});
+  XLSX.writeFile(wb, "입고출고계획_" + (basis === "supply" ? "공급계획기준_" : "판매계획기준_") + todayFile + ".xlsx", {cellStyles: true});
 }
 
 // ── 화면 전환 ─────────────────────────────────────────────────────────────────

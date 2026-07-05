@@ -45,11 +45,24 @@ function buildMatConsumptionMap(useExcessAdj) {
   var bomComponents = state.mappedData.bom_components || [];
 
   var bomByFg = new Map();
+  var _seenBom = new Set();
   bomComponents.forEach(function(b) {
     if (!b.componentCode || !(b.componentQty > 0)) return;
+    // 기본 BOM만 사용 (constraint-engine과 동일) — 대체 BOM 포함 시 중복합산됨
+    var alt = cleanOptional(b.alternativeBom);
+    if (alt !== "" && alt !== "1") return;
+    // 완전 중복행 제거 (constraint-engine과 동일)
+    var dupKey = b.rootItemCode + "|" + b.componentCode + "|" + b.componentQty + "|" + b.baseQty + "|" + b.plant;
+    if (_seenBom.has(dupKey)) return;
+    _seenBom.add(dupKey);
     var k = (cleanOptional(b.rootItemCode) || "") + "|" + (cleanOptional(b.plant) || "");
     if (!bomByFg.has(k)) bomByFg.set(k, []);
-    bomByFg.get(k).push({ compCode: cleanOptional(b.componentCode), compQty: cleanNumber(b.componentQty) || 0 });
+    // 소요계수 = 구성요소수량 ÷ 기준수량 (constraint-engine과 동일). 기준수량이
+    // 1이 아닌 배치단위(예: 80000)일 때 나눠주지 않으면 소요량이 수만배 부풀려진다.
+    var compQty = cleanNumber(b.componentQty) || 0;
+    var baseQty = cleanNumber(b.baseQty);
+    var ratio   = (baseQty && baseQty > 0) ? compQty / baseQty : compQty;
+    bomByFg.get(k).push({ compCode: cleanOptional(b.componentCode), compQty: ratio });
   });
 
   var fgPlan = new Map();
