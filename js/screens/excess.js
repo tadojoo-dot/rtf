@@ -1854,39 +1854,32 @@ function bindExcessAdjustment() {
   var root = document.querySelector("#screenRoot");
   if (!root) return;
 
-  // AI 진단 — 전체적용(공급감축+계획보정, MOQ구조·소진·처분 제외) / 전체해제
+  // AI 진단 — 전체적용(①②, MOQ구조·소진·처분 제외) / 전체해제 (명시 판정은 유지됨)
   var aiApplyBtn = root.querySelector(".exc-ai-apply");
   if (aiApplyBtn) {
     aiApplyBtn.addEventListener("click", function() {
-      var cls = classifyAiExcess();
       state.aiSecApplied = state.aiSecApplied || {};
-      state.aiExcessKeys = state.aiExcessKeys || {};
-      ["supply", "planfix"].forEach(function(secId) {
-        var s = cls.sections[secId];
-        if (!s.items.length && !(secId === "supply")) return;
-        s.items.forEach(function(it) {
-          it.keys.forEach(function(k) {
-            state.excessAdj[k]    = it.planVals[k];
-            state.aiExcessKeys[k] = true;
-          });
-        });
-        state.aiSecApplied[secId] = true;
-      });
-      syncAiMatPlan();
+      state.aiSecApplied.supply  = true;
+      state.aiSecApplied.planfix = true;
+      syncAiFgAdj();
       render("inventory-variance");
     });
   }
   var aiClearBtn = root.querySelector(".exc-ai-clear");
   if (aiClearBtn) {
     aiClearBtn.addEventListener("click", function() {
-      Object.keys(state.aiExcessKeys || {}).forEach(function(k) { delete state.excessAdj[k]; });
-      Object.keys(state.aiMatKeys    || {}).forEach(function(k) { delete state.matExcessAdj[k]; });
-      state.aiExcessKeys = {};
-      state.aiMatKeys    = {};
       state.aiSecApplied = {};
+      syncAiFgAdj(); // 명시 판정(수용·조정)분은 확정사항이라 유지됨
       render("inventory-variance");
     });
   }
+
+  // AI 진단 — 품목 행 클릭 → 진단 카드 팝업 (차트·소견·판정)
+  root.querySelectorAll(".exc-ai-row").forEach(function(tr) {
+    tr.addEventListener("click", function() {
+      openAiDiagPopup(tr.dataset.sec, parseInt(tr.dataset.idx, 10));
+    });
+  });
 
   // AI 진단 — 섹션 아코디언 펼침/접기 (리렌더 없이 DOM 토글)
   root.querySelectorAll(".exc-aisec-head").forEach(function(head) {
@@ -1955,6 +1948,8 @@ function bindExcessAdjustment() {
       state.aiExcessKeys = {};
       state.aiMatKeys = {};
       state.aiSecApplied = {};
+      state.aiDecisions = {};
+      clearAiSession();
       state.excessExpandedRows = new Set();
       render("inventory-variance");
     });
@@ -2038,3 +2033,6 @@ function bindExcessAdjustment() {
     });
   });
 }
+
+// ── 세션 복원 — 판정·조정·회의록을 localStorage에서 복구 (core.js 로드 이후 실행) ──
+loadAiSession();

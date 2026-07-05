@@ -13,6 +13,28 @@ function renderMinutes() {
     var ts = entry.timestamp instanceof Date
       ? entry.timestamp.toLocaleString("ko-KR", { month:"numeric", day:"numeric", hour:"2-digit", minute:"2-digit" })
       : "-";
+    // AI 진단 판정 기록 (과잉감축 진단 카드에서 자동 기록)
+    if (entry.type === "aiDecision" && entry.decision) {
+      var d = entry.decision;
+      return "<div class=\"min-entry\" data-entry-id=\"" + entry.id + "\">" +
+        "<div class=\"min-entry-header\">" +
+          "<span class=\"min-ts\">" + escapeHtml(ts) + "</span>" +
+          "<span class=\"min-entry-title\">" + escapeHtml(entry.title || "AI 진단 판정") + "</span>" +
+          "<button class=\"min-delete-btn\" data-id=\"" + entry.id + "\">삭제</button>" +
+        "</div>" +
+        "<div class=\"min-entry-body\">" +
+          "<table class=\"min-table\"><thead><tr>" +
+          "<th>품목코드</th><th>액션</th><th>판정</th><th>AI 제안량</th><th>확정량</th><th>사유</th>" +
+          "</tr></thead><tbody><tr>" +
+          "<td>" + escapeHtml(d.itemCode || "-") + "</td>" +
+          "<td>" + escapeHtml(d.section || "-") + "</td>" +
+          "<td><strong>" + escapeHtml(d.status || "-") + "</strong></td>" +
+          "<td>" + (d.aiCutQty != null ? "-" + formatNumber(Math.round(d.aiCutQty)) : "-") + "</td>" +
+          "<td>" + (d.finalQty != null ? (d.finalQty > 0 ? "-" + formatNumber(Math.round(d.finalQty)) : "0") : "-") + "</td>" +
+          "<td>" + escapeHtml(d.reason || "-") + "</td>" +
+          "</tr></tbody></table>" +
+        "</div></div>";
+    }
     var adjRows = entry.entries.map(function(e) {
       var sign = e.delta > 0 ? "+" : "";
       return "<tr>" +
