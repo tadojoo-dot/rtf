@@ -1597,6 +1597,11 @@ function renderAiDiagCharts(it, isCut, ov) {
     };
     // 데이터 라벨: 현재계획=점 위(회색), 감축후=점 아래(초록, 값이 같아진 월은 생략),
     // 적정선=우측 끝 1개만 — 라벨 과밀로 화면이 깨지지 않게 하는 규칙
+    // + 감축 적용 후 월별 재고일수 태그 (하단, 적정 초과 빨강/이내 초록)
+    var fgDaysAfter = it.months.map(function(m, i) {
+      var daily = it.salesArr[i] > 0 ? it.salesArr[i] / monthDays(m) : 0;
+      return daily > 0 ? it.cutEndingArr[i] / daily : null;
+    });
     var diagLabelsPlugin = {
       id: "diagLabels",
       afterDatasetsDraw: function(chart) {
@@ -1632,6 +1637,25 @@ function renderAiDiagCharts(it, isCut, ov) {
           c.textBaseline = "bottom";
           c.fillText("적정 " + fmtC(d2[lastIdx]), m2.data[lastIdx].x - 2, m2.data[lastIdx].y - 4);
         }
+        // 월별 재고일수(감축 적용 후) 태그 — 하단
+        c.textAlign = "center";
+        m1.data.forEach(function(el, i) {
+          var dv = fgDaysAfter[i];
+          if (dv === null || !isFinite(dv)) return;
+          var text = Math.round(dv) + "일";
+          c.font = "800 12px Pretendard, sans-serif";
+          var tw = c.measureText(text).width + 14, th = 22;
+          var tx = clampX(el.x) - tw / 2, ty = area.bottom - th - 4;
+          var over = Number.isFinite(it.targetDays) && dv > it.targetDays;
+          c.fillStyle = over ? "rgba(220,38,38,0.10)" : "rgba(22,163,74,0.10)";
+          _excRoundRect(c, tx, ty, tw, th, 5); c.fill();
+          c.strokeStyle = over ? "rgba(220,38,38,0.45)" : "rgba(22,163,74,0.40)";
+          c.lineWidth = 1;
+          _excRoundRect(c, tx, ty, tw, th, 5); c.stroke();
+          c.fillStyle = over ? "#dc2626" : "#15803d";
+          c.textBaseline = "middle";
+          c.fillText(text, clampX(el.x), ty + th / 2);
+        });
         c.restore();
       },
     };
@@ -1897,6 +1921,7 @@ function computeMatUnused() {
 function renderMatDiagPanel() {
   if (!(typeof BOM_STATUS !== "undefined" && state.bomStatus === BOM_STATUS.DONE && state.bomResult)) return "";
   _fgCauseCache = null;
+  _rootsPlanCache = null;
   var aiMat = computeAiMatExcessPlan(Object.assign({}, state.excessAdj || {}));
   var unused = computeMatUnused();
   // 정합 의심(단위) 자재 수 — 각주 표기용
@@ -2006,6 +2031,39 @@ function renderMatDiagPanel() {
     "</div>";
 }
 
+// 진단 차트 라벨용 둥근 사각형
+function _excRoundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// 자재의 "계획 외 완제품 사용처" 수 — 공용자재 감축 오판 방지 경고용
+var _rootsPlanCache = null;
+function _outPlanFgRootCnt(code) {
+  if (!_rootsPlanCache) {
+    var roots = new Map();
+    (state.mappedData.bom_components || []).forEach(function(r) {
+      if (!r.componentCode || !r.rootItemCode) return;
+      var s = roots.get(r.componentCode);
+      if (!s) { s = new Set(); roots.set(r.componentCode, s); }
+      s.add(r.rootItemCode);
+    });
+    var plan = new Set();
+    (state.mappedData.plan_monthly || []).forEach(function(r) { if (r.itemCode) plan.add(r.itemCode); });
+    _rootsPlanCache = { roots: roots, plan: plan };
+  }
+  var s = _rootsPlanCache.roots.get(code);
+  if (!s) return 0;
+  var n = 0;
+  s.forEach(function(rc) { if (String(rc).charAt(0) === "9" && !_rootsPlanCache.plan.has(rc)) n++; });
+  return n;
+}
+
 // 자재 소견 — 부모 완제품 원인 상속 포함
 function buildMatOpinion(it) {
   var tot = 0, best = null;
@@ -2035,6 +2093,11 @@ function buildMatOpinion(it) {
   txt += "입고 " + formatNumber(Math.round(it.cutQty)) + "개(" + formatMoney(it.cutAmt) +
     ")를 취소·연기해 " + MAT_TARGET_DAYS + "일 이내로 수렴시키는 것을 권장합니다. " +
     "감축 후에도 모든 월 기말재고가 0 이상으로 설계되어 생산 차질은 없습니다.";
+  var outCnt = _outPlanFgRootCnt(it.itemCode);
+  if (outCnt > 0) {
+    txt += " ⚠ 이 자재는 이번 계획에 없는 완제품 " + outCnt +
+      "종의 BOM에도 등록되어 있습니다(해당 소요 미반영) — 감축 확정 전 그 제품들의 생산 예정 여부를 확인하세요.";
+  }
   return txt;
 }
 function buildMatUnusedOpinion(a) {
@@ -2161,6 +2224,27 @@ function renderMatDiagCharts(it, isCut, ov) {
   };
   var canvasA = ov.querySelector(".exc-diag-chart-a");
   if (canvasA) {
+    // 막대 값 라벨 — 소요(파랑)·입고(주황), 0은 생략
+    var barLabelsPlugin = {
+      id: "matBarLabels",
+      afterDatasetsDraw: function(chart) {
+        var c = chart.ctx;
+        c.save();
+        c.textAlign = "center";
+        c.textBaseline = "bottom";
+        [0, 1].forEach(function(di) {
+          var meta = chart.getDatasetMeta(di), data = chart.data.datasets[di].data;
+          c.font = "700 12px Pretendard, sans-serif";
+          c.fillStyle = di === 0 ? "#1d4ed8" : "#b45309";
+          meta.data.forEach(function(el, i) {
+            var v = data[i];
+            if (v === null || v === undefined || Math.round(v) === 0) return;
+            c.fillText(fmtC(v), el.x, el.y - 3);
+          });
+        });
+        c.restore();
+      },
+    };
     _aiPopupCharts.push(new Chart(canvasA.getContext("2d"), {
       type: "bar",
       data: {
@@ -2172,6 +2256,7 @@ function renderMatDiagCharts(it, isCut, ov) {
       },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
+        layout: { padding: { top: 16 } },
         plugins: { legend: { display: true, position: "top", labels: { boxWidth: 14, font: { size: 13.5 } } },
           tooltip: { callbacks: { label: function(c) {
             return c.raw === null || c.raw === undefined ? null : c.dataset.label + ": " + Math.round(c.raw).toLocaleString();
@@ -2181,6 +2266,7 @@ function renderMatDiagCharts(it, isCut, ov) {
           y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 13 }, callback: function(v) { return fmtC(v); } } },
         },
       },
+      plugins: [barLabelsPlugin],
     }));
   }
   var canvasB = ov.querySelector(".exc-diag-chart-b");
@@ -2188,6 +2274,11 @@ function renderMatDiagCharts(it, isCut, ov) {
     var tgtLine = it.months.map(function(m, i) {
       var daily = it.consArr[i] > 0 ? it.consArr[i] / monthDays(m) : 0;
       return daily > 0 ? MAT_TARGET_DAYS * daily : null;
+    });
+    // 감축 적용 후 월별 재고일수 — 하단 태그 (기준 초과 빨강 / 이내 초록)
+    var daysAfter = it.months.map(function(m, i) {
+      var daily = it.consArr[i] > 0 ? it.consArr[i] / monthDays(m) : 0;
+      return daily > 0 ? it.cutEndingArr[i] / daily : null;
     });
     var diagLabelsPlugin = {
       id: "matDiagLabels",
@@ -2212,6 +2303,23 @@ function renderMatDiagCharts(it, isCut, ov) {
             c.textBaseline = "top";
             c.fillText(fmtC(v1), clampX(m1.data[i].x), m1.data[i].y + 5);
           }
+        });
+        m1.data.forEach(function(el, i) {
+          var dv = daysAfter[i];
+          if (dv === null || !isFinite(dv)) return;
+          var text = Math.round(dv) + "일";
+          c.font = "800 12px Pretendard, sans-serif";
+          var tw = c.measureText(text).width + 14, th = 22;
+          var tx = clampX(el.x) - tw / 2, ty = area.bottom - th - 4;
+          var over = dv > MAT_TARGET_DAYS;
+          c.fillStyle = over ? "rgba(220,38,38,0.10)" : "rgba(22,163,74,0.10)";
+          _excRoundRect(c, tx, ty, tw, th, 5); c.fill();
+          c.strokeStyle = over ? "rgba(220,38,38,0.45)" : "rgba(22,163,74,0.40)";
+          c.lineWidth = 1;
+          _excRoundRect(c, tx, ty, tw, th, 5); c.stroke();
+          c.fillStyle = over ? "#dc2626" : "#15803d";
+          c.textBaseline = "middle";
+          c.fillText(text, clampX(el.x), ty + th / 2);
         });
         c.restore();
       },
