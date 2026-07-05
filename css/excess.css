@@ -542,6 +542,12 @@
 .exc-ai-row { cursor: pointer; }
 .exc-ai-row:hover td { background: #f8fafc; }
 
+/* 조정 테이블 — 정렬 헤더·품목명 클릭 */
+.exc-sort-th { cursor: pointer; user-select: none; }
+.exc-sort-th:hover { color: #c7d2fe; }
+.exc-nm-click { cursor: pointer; }
+.exc-nm-click:hover { text-decoration: underline; text-decoration-color: #94a3b8; text-underline-offset: 3px; }
+
 /* 그룹 키커 (들어올 것을 줄인다 / 있는 것을 내보낸다) */
 .exc-aisec-group {
   font-size: 12px; font-weight: 800; color: #94a3b8; letter-spacing: 0.08em;

@@ -2354,14 +2354,185 @@ function renderMatDiagCharts(it, isCut, ov) {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 조정 테이블 → 진단 카드 연결 — AI 제안 품목이면 판정 가능한 정식 카드,
+// 아니면 차트·소견만 있는 정보성 카드
+// ═══════════════════════════════════════════════════════════════════════════
+function openFgTableDiag(code, plant) {
+  var cls = _aiDiagCache && _aiDiagCache.cls;
+  if (!cls) {
+    try { cls = classifyAiExcess(); _aiDiagCache = { cls: cls }; } catch (e) { cls = null; }
+  }
+  if (cls) {
+    var found = null;
+    ["supply", "planfix"].forEach(function(sec) {
+      if (found) return;
+      cls.sections[sec].items.forEach(function(x, i) {
+        if (!found && x.itemCode === code && (x.plantCode || "") === (plant || "")) found = { sec: sec, idx: i };
+      });
+    });
+    if (found) return openAiDiagPopup(found.sec, found.idx);
+  }
+  var it = buildFgInfoItem(code, plant);
+  if (it) openInfoDiagPopup(it, false);
+}
+
+function buildFgInfoItem(code, plant) {
+  var months = getRtfMonths();
+  var baseItems = (typeof computeScenarioItemSets === "function")
+    ? computeScenarioItemSets().rtfAdj
+    : computeRtfItems();
+  var item = null;
+  baseItems.forEach(function(x) {
+    if (!item && x.itemCode === code && (x.plantCode || "") === (plant || "")) item = x;
+  });
+  if (!item) return null;
+  var sales = [], supply = [], ending = [];
+  for (var i = 0; i < months.length; i++) {
+    var ms = item.monthlyStatus && item.monthlyStatus[i];
+    if (!ms || !Number.isFinite(ms.endingQty) || !Number.isFinite(ms.supplyQty)) break;
+    sales.push(ms.salesQty || 0);
+    supply.push(ms.supplyQty);
+    ending.push(ms.endingQty);
+  }
+  if (!sales.length) return null;
+  var ti = null;
+  (state.mappedData.target_inv || []).some(function(r) {
+    if (r.itemCode === code) { ti = r; return true; }
+    return false;
+  });
+  return {
+    itemCode: code, itemName: item.itemName || code, plantCode: plant || "",
+    targetDays: ti && Number.isFinite(ti.targetDays) ? ti.targetDays : null,
+    cutQty: 0, cutAmt: 0, keys: [], planVals: {}, cutByKey: {},
+    planAvgSales: sales.reduce(function(a, b) { return a + b; }, 0) / sales.length,
+    months: months.slice(0, sales.length), salesArr: sales,
+    origSupplyArr: supply.slice(), cutSupplyArr: supply.slice(),
+    origEndingArr: ending.slice(), cutEndingArr: ending.slice(),
+    diag: { ti: ti },
+  };
+}
+
+function openMatTableDiag(code, plant) {
+  var det = _matDiagCache && _matDiagCache.aiMat;
+  if (!det) {
+    try { det = computeAiMatExcessPlan(Object.assign({}, state.excessAdj || {})); } catch (e) { det = null; }
+  }
+  if (det) {
+    var idx = -1;
+    det.items.forEach(function(x, i) {
+      if (idx < 0 && x.itemCode === code && (x.plantCode || "") === (plant || "")) idx = i;
+    });
+    if (idx >= 0) {
+      if (!_matDiagCache) _matDiagCache = { aiMat: det, unused: { items: [] } };
+      return openMatDiagPopup("matcut", idx);
+    }
+  }
+  var it = buildMatInfoItem(code, plant);
+  if (it) openInfoDiagPopup(it, true);
+}
+
+function buildMatInfoItem(code, plant) {
+  var rows = calcMatFlowRows(state.excessAdj, state.matExcessAdj);
+  if (!rows) return null;
+  var r = null;
+  rows.forEach(function(x) {
+    if (!r && x.flow.componentCode === code && (x.flow.plant || "") === (plant || "")) r = x;
+  });
+  if (!r) return null;
+  var dvals = r.days.filter(function(v) { return v !== null; });
+  return {
+    itemCode: code, itemName: r.flow.componentName || code, plantCode: plant || "",
+    cutQty: 0, cutAmt: 0, keys: [], planVals: {}, cutByKey: {},
+    maxDays: dvals.length ? Math.max.apply(null, dvals) : null,
+    months: getRtfMonths().slice(), consArr: r.cons.slice(),
+    origIntakeArr: r.intake.slice(), cutIntakeArr: r.intake.slice(),
+    origEndingArr: r.ending.slice(), cutEndingArr: r.ending.slice(),
+    parents: r.flow.parents,
+  };
+}
+
+// 정보성 진단 카드 — AI 제안이 없는 품목: 차트·소견만, 판정 없음
+function openInfoDiagPopup(it, isMat) {
+  closeAiDiagPopup();
+  var pl = it.plantCode && typeof displayPlantName === "function" ? displayPlantName(it.plantCode) : (it.plantCode || "");
+  var opinion = isMat
+    ? "이 자재는 현재 계획 기준으로 AI 감축 제안이 없습니다" +
+      (it.maxDays !== null ? " (재고일수 최대 " + Math.round(it.maxDays) + "일)" : "") +
+      ". 아래 소요·재고 흐름을 참고하세요."
+    : "이 품목은 현재 계획 기준으로 AI 감축 제안이 없습니다" +
+      (Number.isFinite(it.targetDays) ? " (적정 " + Math.round(it.targetDays) + "일 기준 초과분 없음 또는 감축 여지 없음)" : " (적정재고 기준 미등록)") +
+      ". 아래 수요·재고 흐름을 참고하세요.";
+  var ov = document.createElement("div");
+  ov.className = "exc-diag-overlay";
+  ov.innerHTML =
+    "<div class='exc-diag-card'>" +
+      "<div class='exc-diag-head'>" +
+        "<div class='exc-diag-titles'>" +
+          "<div class='exc-diag-name'><span class='exc-ai-codehead'>" + escapeHtml(it.itemCode) + "</span> " +
+            escapeHtml(it.itemName || it.itemCode) +
+            "<span class='exc-ai-code'>" + (pl ? " " + escapeHtml(pl) : "") + "</span></div>" +
+          "<div class='exc-diag-sub'><span class='exc-ai-chip exc-ai-chip-base'>AI 감축 제안 없음</span>" +
+            "<span class='exc-diag-proposal'>재고 흐름 참고용</span></div>" +
+        "</div>" +
+        "<button class='exc-diag-close' title='닫기'>×</button>" +
+      "</div>" +
+      "<div class='exc-diag-opinion'><span class='exc-diag-opinion-tag'>🤖 AI 소견</span>" + escapeHtml(opinion) + "</div>" +
+      "<div class='exc-diag-charts'>" +
+        "<div class='exc-diag-chartbox'>" +
+          "<div class='exc-diag-chart-title'>" + (isMat ? "소요 vs 입고" : "수요 흐름") +
+            " <span class='exc-diag-chart-sub'>" + (isMat ? "월별 BOM 소요량 vs 입고계획" : "출고실적 vs S/F 예측 vs 판매계획") + "</span></div>" +
+          "<div class='exc-diag-canvas-wrap'><canvas class='exc-diag-chart-a'></canvas></div>" +
+        "</div>" +
+        "<div class='exc-diag-chartbox'>" +
+          "<div class='exc-diag-chart-title'>재고 전망 <span class='exc-diag-chart-sub'>" +
+            (isMat ? MAT_TARGET_DAYS + "일 기준" : "적정재고 수준") + " 대비</span></div>" +
+          "<div class='exc-diag-canvas-wrap'><canvas class='exc-diag-chart-b'></canvas></div>" +
+        "</div>" +
+      "</div>" +
+    "</div>";
+  document.body.appendChild(ov);
+  ov.addEventListener("click", function(e) { if (e.target === ov) closeAiDiagPopup(); });
+  ov.querySelector(".exc-diag-close").addEventListener("click", closeAiDiagPopup);
+  if (isMat) renderMatDiagCharts(it, true, ov);
+  else renderAiDiagCharts(it, true, ov);
+}
+
 // 제·상품 탭 평면 테이블 — 원부자재 탭과 동일 양식 (드릴다운 없이 인라인 조정)
 // 컬럼: 품목 | 적정일수 | ↺ | 월별 [판매 | 공급(입력) | 일수]
 function renderExcessFgFlatTable(displayItems, months, globalPlanMap) {
+  // 헤더 클릭 정렬: 품목명 / 적정일수 / 월별 재고일수 — 기본은 초과금액 내림차순 (3회 클릭 시 복귀)
+  var sort = state.excessFgSort || null;
+  if (sort && sort.key) {
+    var sVal = function(item) {
+      if (sort.key === "name") return String(item.itemName || item.itemCode);
+      if (sort.key === "td") return Number.isFinite(item._td) ? item._td : -1;
+      if (sort.key.indexOf("day:") === 0) {
+        var mo = sort.key.slice(4);
+        var pm = new Map();
+        months.forEach(function(m) { pm.set(m, globalPlanMap.get(item.itemCode + "|" + (item.plantCode || "") + "|" + m) || 0); });
+        var r = calcPsiRows(item, pm, months)[months.indexOf(mo)];
+        return r && r.days !== null ? r.days : -1;
+      }
+      return item._excessAmt || 0;
+    };
+    var sVals = new Map();
+    displayItems.forEach(function(x) { sVals.set(x, sVal(x)); });
+    displayItems = displayItems.slice().sort(function(a, b) {
+      var va = sVals.get(a), vb = sVals.get(b);
+      if (typeof va === "string") return sort.dir * String(va).localeCompare(String(vb), "ko");
+      return sort.dir * (va - vb);
+    });
+  }
+  var arrow = function(key) {
+    return sort && sort.key === key ? (sort.dir > 0 ? " ▲" : " ▼") : "";
+  };
   var monthHd = months.map(function(m) {
     return "<th colspan='3' class='exc-mat-mo-hd'>" + escapeHtml(monthLabel(m)) + "</th>";
   }).join("");
-  var subHd = months.map(function() {
-    return "<th class='exc-mat-sub'>판매</th><th class='exc-mat-sub'>공급</th><th class='exc-mat-sub'>일수</th>";
+  var subHd = months.map(function(m) {
+    return "<th class='exc-mat-sub'>판매</th><th class='exc-mat-sub'>공급</th>" +
+      "<th class='exc-mat-sub exc-sort-th' data-sorttab='fg' data-sort='day:" + m + "' title='이 월 재고일수로 정렬'>일수" + arrow("day:" + m) + "</th>";
   }).join("");
 
   var body = displayItems.map(function(item) {
@@ -2390,7 +2561,7 @@ function renderExcessFgFlatTable(displayItems, months, globalPlanMap) {
     }).join("");
 
     return "<tr data-row-key='" + escapeHtml(rowKey) + "' class='" + (rowHasAdj ? "exc-mat-row-adj" : "") + "'>" +
-      "<td class='exc-mat-name'><span class='exc-mat-code'>" + escapeHtml(item.itemCode) + "</span> " +
+      "<td class='exc-mat-name exc-nm-click' title='클릭하면 진단 카드(차트·AI 소견)가 열립니다'><span class='exc-mat-code'>" + escapeHtml(item.itemCode) + "</span> " +
         escapeHtml(item.itemName || item.itemCode) +
         "<span class='exc-mat-cat'>" + escapeHtml(item.itemGroup && item.itemGroup !== NEED_MASTER ? item.itemGroup : (item.typeGroup || "")) + " · " + escapeHtml(item.plant || "") +
         (item._isExcess && item._excessAmt > 0 ? " · 초과 " + formatMoney(item._excessAmt) : "") + "</span></td>" +
@@ -2403,7 +2574,8 @@ function renderExcessFgFlatTable(displayItems, months, globalPlanMap) {
     return "<div class='exc-mat-empty'>표시할 품목이 없습니다.</div>";
   }
   return "<div class='exc-mat-scroll'><table class='exc-mat-table'>" +
-    "<thead><tr><th rowspan='2' class='exc-mat-name-hd'>품목</th><th rowspan='2'>적정<br>일수</th><th rowspan='2'></th>" + monthHd + "</tr>" +
+    "<thead><tr><th rowspan='2' class='exc-mat-name-hd exc-sort-th' data-sorttab='fg' data-sort='name' title='품목명 정렬'>품목" + arrow("name") + "</th>" +
+    "<th rowspan='2' class='exc-sort-th' data-sorttab='fg' data-sort='td' title='적정일수 정렬'>적정<br>일수" + arrow("td") + "</th><th rowspan='2'></th>" + monthHd + "</tr>" +
     "<tr>" + subHd + "</tr></thead>" +
     "<tbody>" + body + "</tbody></table></div>";
 }
@@ -2428,13 +2600,35 @@ function renderExcessMatTable(months) {
   }).filter(function(r) { return r._over || r._hasAdj; })
     .sort(function(a, b) { return b._overAmt - a._overAmt; });
 
+  // 헤더 클릭 정렬: 자재명 / 월별 재고일수 — 기본은 초과금액 내림차순
+  var msort = state.excessMatSort || null;
+  if (msort && msort.key) {
+    var mVal = function(r) {
+      if (msort.key === "name") return String(r.flow.componentName || r.flow.componentCode);
+      if (msort.key.indexOf("day:") === 0) {
+        var mi = months.indexOf(msort.key.slice(4));
+        return r.days[mi] === null ? -1 : r.days[mi];
+      }
+      return r._overAmt;
+    };
+    shown = shown.slice().sort(function(a, b) {
+      var va = mVal(a), vb = mVal(b);
+      if (typeof va === "string") return msort.dir * String(va).localeCompare(String(vb), "ko");
+      return msort.dir * (va - vb);
+    });
+  }
+  var mArrow = function(key) {
+    return msort && msort.key === key ? (msort.dir > 0 ? " ▲" : " ▼") : "";
+  };
+
   var totalOverAmt = shown.reduce(function(s, r) { return s + r._overAmt; }, 0);
 
   var monthHd = months.map(function(m) {
     return "<th colspan='3' class='exc-mat-mo-hd'>" + escapeHtml(monthLabel(m)) + "</th>";
   }).join("");
-  var subHd = months.map(function() {
-    return "<th class='exc-mat-sub'>소비</th><th class='exc-mat-sub'>입고</th><th class='exc-mat-sub'>일수</th>";
+  var subHd = months.map(function(m) {
+    return "<th class='exc-mat-sub'>소비</th><th class='exc-mat-sub'>입고</th>" +
+      "<th class='exc-mat-sub exc-sort-th' data-sorttab='mat' data-sort='day:" + m + "' title='이 월 재고일수로 정렬'>일수" + mArrow("day:" + m) + "</th>";
   }).join("");
 
   var body = shown.map(function(r) {
@@ -2454,8 +2648,8 @@ function renderExcessMatTable(months) {
         "</td>" +
         "<td class='exc-mat-day" + dayCls + "'>" + escapeHtml(dayTxt) + "</td>";
     }).join("");
-    return "<tr class='" + (r._hasAdj ? "exc-mat-row-adj" : "") + "'>" +
-      "<td class='exc-mat-name'><span class='exc-mat-code'>" + escapeHtml(f.componentCode) + "</span> " +
+    return "<tr data-mat-code='" + escapeHtml(f.componentCode) + "' data-mat-plant='" + escapeHtml(f.plant || "") + "' class='" + (r._hasAdj ? "exc-mat-row-adj" : "") + "'>" +
+      "<td class='exc-mat-name exc-nm-click' title='클릭하면 진단 카드(차트·AI 소견)가 열립니다'><span class='exc-mat-code'>" + escapeHtml(f.componentCode) + "</span> " +
         escapeHtml(f.componentName) +
         "<span class='exc-mat-cat'>" + escapeHtml(f.category || "") + " · " + escapeHtml(displayPlantName ? displayPlantName(f.plant) : f.plant) + "</span></td>" +
       "<td class='exc-mat-reset-td'><button class='exc-mat-reset' data-code='" + escapeHtml(f.componentCode) + "' data-plant='" + escapeHtml(f.plant) + "' title='행 초기화'>↺</button></td>" +
@@ -2473,7 +2667,7 @@ function renderExcessMatTable(months) {
   }
   return hd +
     "<div class='exc-mat-scroll'><table class='exc-mat-table'>" +
-    "<thead><tr><th rowspan='2' class='exc-mat-name-hd'>자재</th><th rowspan='2'></th>" + monthHd + "</tr>" +
+    "<thead><tr><th rowspan='2' class='exc-mat-name-hd exc-sort-th' data-sorttab='mat' data-sort='name' title='자재명 정렬'>자재" + mArrow("name") + "</th><th rowspan='2'></th>" + monthHd + "</tr>" +
     "<tr>" + subHd + "</tr></thead>" +
     "<tbody>" + body + "</tbody></table></div>";
 }
@@ -2509,6 +2703,34 @@ function bindExcessAdjustment() {
   root.querySelectorAll(".exc-ai-row").forEach(function(tr) {
     tr.addEventListener("click", function() {
       openAiDiagPopup(tr.dataset.sec, parseInt(tr.dataset.idx, 10));
+    });
+  });
+
+  // 조정 테이블 — 헤더 클릭 정렬 (없음→내림차순→오름차순→기본 복귀)
+  root.querySelectorAll(".exc-sort-th").forEach(function(th) {
+    th.addEventListener("click", function() {
+      var key = th.dataset.sort;
+      var prop = th.dataset.sorttab === "mat" ? "excessMatSort" : "excessFgSort";
+      var cur = state[prop];
+      var firstDir = key === "name" ? 1 : -1;
+      if (!cur || cur.key !== key) state[prop] = { key: key, dir: firstDir };
+      else if (cur.dir === firstDir) state[prop] = { key: key, dir: -firstDir };
+      else state[prop] = null; // 기본 정렬(초과금액) 복귀
+      render("inventory-variance");
+    });
+  });
+
+  // 조정 테이블 — 품목명 클릭 → 진단 카드 (AI 제안 품목이면 판정 가능 카드)
+  root.querySelectorAll(".exc-nm-click").forEach(function(td) {
+    td.addEventListener("click", function() {
+      var tr = td.closest("tr");
+      if (!tr) return;
+      if (tr.dataset.matCode !== undefined) {
+        openMatTableDiag(tr.dataset.matCode, tr.dataset.matPlant || "");
+      } else if (tr.dataset.rowKey) {
+        var parts = tr.dataset.rowKey.split("|");
+        openFgTableDiag(parts[0], parts[1] || "");
+      }
     });
   });
 
