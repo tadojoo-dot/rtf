@@ -803,7 +803,8 @@ function computeAiExcessPlan() {
     if (!validLen) return;
 
     var changed = false;
-    var itemCutQty = 0, itemCutAmt = 0, itemKeys = [], itemPlanVals = {};
+    var itemCutQty = 0, itemCutAmt = 0, itemKeys = [], itemPlanVals = {}, itemCutByKey = {};
+    var origSupplyArr = supply.slice(), origEndingArr = ending.slice();
     for (var mi = 0; mi < validLen; mi++) {
       var dailySales = sales[mi] > 0 ? sales[mi] / monthDays(months[mi]) : 0;
       if (dailySales <= 0) continue;
@@ -820,6 +821,7 @@ function computeAiExcessPlan() {
       plan[planKey] = supply[mi];
       itemKeys.push(planKey);
       itemPlanVals[planKey] = supply[mi];
+      itemCutByKey[planKey] = cut;
       itemCutQty += cut;
       if (Number.isFinite(item.unitInvValue)) {
         totalCutAmt += cut * item.unitInvValue;
@@ -835,8 +837,13 @@ function computeAiExcessPlan() {
         itemCode: item.itemCode, itemName: item.itemName || item.itemCode,
         plantCode: item.plantCode || "", targetDays: td,
         cutQty: itemCutQty, cutAmt: itemCutAmt,
-        keys: itemKeys, planVals: itemPlanVals,
+        keys: itemKeys, planVals: itemPlanVals, cutByKey: itemCutByKey,
         planAvgSales: validLen ? salesSum / validLen : 0,
+        unitInvValue: Number.isFinite(item.unitInvValue) ? item.unitInvValue : null,
+        // 진단 팝업 차트용 월별 흐름 (유효 구간)
+        months: months.slice(0, validLen), salesArr: sales.slice(),
+        origSupplyArr: origSupplyArr, cutSupplyArr: supply.slice(),
+        origEndingArr: origEndingArr, cutEndingArr: ending.slice(),
       });
     }
   });
@@ -921,6 +928,10 @@ function classifyAiExcess() {
       it.cause = "overbase"; secId = "supply";
       it.evidence = "적정 " + Math.round(it.targetDays) + "일 대비 재고일수 초과";
     }
+    // 진단 팝업(차트·소견)용 근거 수치 보관
+    it.diag = { ach: ach, sfSum: sfSum, actSum: actSum, bothCnt: bothCnt,
+                runRate: runRate, ratio: ratio,
+                moq: Number.isFinite(ti.moq) ? ti.moq : null, ti: ti };
     sections[secId].items.push(it);
     sections[secId].totalAmt += it.cutAmt;
   });
@@ -969,6 +980,7 @@ function computeNoPlanInventory() {
     var bu = buMap.get(a.itemCode) || (ti ? ti.businessUnit : null);
     if (planBUs.size && (!bu || !planBUs.has(bu))) { excludedCnt++; excludedAmt += a.amt; return; }
     a.bu = bu;
+    a.ti = ti || null; // 진단 팝업 실적 차트용
     var o26 = ti ? ti.outCurYear || {} : {};
     var o25 = ti ? ti.outPrevYear || {} : {};
     var s26 = 0, last26 = null;
@@ -976,12 +988,14 @@ function computeNoPlanInventory() {
     var s25 = Object.keys(o25).reduce(function(s, m) { return s + o25[m]; }, 0);
     if (s26 > 0) {
       a.cause = "noplan";
+      a.s26 = s26; a.last26 = last26; a.planFromMonth = firstPlanMonth;
       a.evidence = "26년 출고 " + formatNumber(Math.round(s26)) +
         (last26 ? " (최근 " + last26.slice(2).replace("-", ".") + ")" : "") +
         " — " + firstPlanMonth + "월 이후 판매계획 없음";
       sellout.push(a);
     } else if (s25 > 0) {
       a.cause = "stopped";
+      a.s25 = s25;
       a.evidence = "25년 출고 " + formatNumber(Math.round(s25)) + " 이후 26년 출고 0 — 판매중단 추정";
       disposal.push(a);
     } else if (ti) {
@@ -1001,21 +1015,234 @@ function computeNoPlanInventory() {
 }
 
 // AI 진단 패널 (아코디언) — 닫힌 상태에서도 섹션별 요약·적용 버튼 노출
+// 골격: 과잉재고 대응은 세 방향뿐 — 들어올 것을 줄이거나(①②), 있는 것을 내보내거나(③④), 구조를 고치거나(⑤)
 var AI_SECTION_DEFS = [
-  { id: "supply",   no: "①", title: "공급 감축",     owner: "공장·구매",     desc: "입고 취소·연기·생산 축소 — 감축 시나리오 KPI에 반영됩니다." },
-  { id: "planfix",  no: "②", title: "판매계획 보정", owner: "마케팅·영업",   desc: "실적 대비 과대한 판매계획 — 계획 하향 검토 요청 + 해당 공급 감축." },
-  { id: "sellout",  no: "③", title: "소진 촉진",     owner: "마케팅",        desc: "최근까지 출고되던 품목인데 판매계획 누락 — 계획 반영 또는 소진 요청. (실행 주체가 마케팅이므로 KPI 미반영, 액션아이템)" },
-  { id: "disposal", no: "④", title: "처분 검토",     owner: "사업부",        desc: "판매중단·장기불용 재고 — 폐기/할인처분 검토. (손실 인식 수반 — 감축 성과와 분리 집계)" },
-  { id: "policy",   no: "⑤", title: "발주정책 개선", owner: "구매·생산기획", desc: "MOQ·발주단위 제약으로 미세 감축이 불가한 품목 — 발주정책 재협상 안건. (감축 적용 보류)" },
+  { id: "supply",   no: "①", title: "입고·생산 축소",     owner: "공장·구매",     group: "들어올 것을 줄인다",
+    desc: "이번 계획의 입고·생산을 취소·연기해 미래 공급을 줄입니다 — 감축 시나리오 KPI에 반영." },
+  { id: "planfix",  no: "②", title: "판매계획 현실화",    owner: "마케팅·영업",
+    desc: "실적보다 과대한 판매계획을 하향 검토 — 계획을 낮추면 소요·발주가 연쇄로 줄어듭니다. 병행 공급 감축분은 KPI 반영." },
+  { id: "sellout",  no: "③", title: "재고 소진",          owner: "마케팅",        group: "있는 것을 내보낸다",
+    desc: "최근까지 팔리던 품목인데 판매계획에서 빠진 재고 — 계획 반영 또는 소진 요청. (실행 주체가 마케팅 → KPI 미반영 액션아이템)" },
+  { id: "disposal", no: "④", title: "재고 처분",          owner: "사업부",
+    desc: "출고가 멈춘 재고 — 폐기·할인 처분 검토 후보. (손실 인식 수반 → 감축 성과와 분리 집계)" },
+  { id: "policy",   no: "⑤", title: "발주단위 협의 (MOQ)", owner: "구매·생산기획", group: "구조를 고친다",
+    desc: "최소발주량 제약으로 미세 감축이 불가한 품목 — MOQ·공급주기 재협상 안건. (감축 적용 보류)" },
 ];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AI 소견 (경영 보고용 서술문) — 전부 엔진 수치에서 템플릿으로 조립 (외부 API 없음)
+// 추정에는 "~가능성이 높습니다", 데이터 사실에는 단정 어투를 사용
+// ═══════════════════════════════════════════════════════════════════════════
+function aiMonthSpan(keys) {
+  var ms = keys.map(function(k) { return k.split("|")[2]; }).filter(Boolean).sort();
+  if (!ms.length) return "";
+  var lab = function(m) { return monthLabel(m); };
+  return ms.length === 1 ? lab(ms[0]) : lab(ms[0]) + "~" + lab(ms[ms.length - 1]);
+}
+function buildAiOpinion(it) {
+  var d = it.diag || {};
+  var span = aiMonthSpan(it.keys || []);
+  var cutTxt = formatNumber(Math.round(it.cutQty)) + "개(" + formatMoney(it.cutAmt) + ")";
+  var tdTxt = Math.round(it.targetDays) + "일";
+  switch (it.cause) {
+    case "under":
+      return "이 품목은 26년 " + d.bothCnt + "개월 누적 출고가 S/F 예측의 " + Math.round(d.ach * 100) + "% 수준에 그쳤습니다" +
+        "(예측 " + formatNumber(Math.round(d.sfSum)) + " vs 실적 " + formatNumber(Math.round(d.actSum)) + "). " +
+        "예측 수준으로 편성된 공급이 유지되면서 재고가 누적되었을 가능성이 높습니다. " +
+        span + " 공급을 " + cutTxt + " 줄여 적정 " + tdTxt + " 수준으로 수렴시키는 것을 권장합니다. " +
+        "감축 한도를 이후 모든 월의 최소 기말재고 이내로 제한해 품절이 발생하지 않도록 설계된 제안입니다.";
+    case "overplan":
+      return "향후 판매계획(월평균 " + formatNumber(Math.round(it.planAvgSales)) + ")이 최근 출고 실적(월평균 " +
+        formatNumber(Math.round(d.runRate)) + ")의 " + d.ratio.toFixed(1) + "배로 편성되어 있습니다. " +
+        "계획이 실현되지 않으면 이 공급이 그대로 재고로 남을 가능성이 높습니다. " +
+        "판매계획의 현실성 재검토를 마케팅·영업에 요청하고, 병행하여 " + span + " 공급 " + cutTxt + " 감축을 권장합니다.";
+    case "demanddown":
+      return "향후 판매계획(월평균 " + formatNumber(Math.round(it.planAvgSales)) + ")이 최근 실적의 " +
+        Math.round(d.ratio * 100) + "% 수준으로, 수요 하향은 계획에 이미 반영되어 있습니다. " +
+        "다만 과거 수요 기준으로 확보된 재고가 남아 적정 " + tdTxt + "을 초과한 상태입니다. " +
+        "신규 공급을 " + cutTxt + " 줄여 기존 재고 소진을 우선하는 것을 권장합니다.";
+    case "moq":
+      return "권장 감축량 " + formatNumber(Math.round(it.cutQty)) + "개가 최소발주단위 MOQ " +
+        formatNumber(Math.round(d.moq)) + "개 이내라, 발주 취소·축소로 대응하기 어려운 구조입니다. " +
+        "이번 감축 적용에서는 제외했으며, 공급주기 조정 또는 MOQ 재협상을 통한 구조 개선을 권장합니다. " +
+        "동일 구조가 유지되면 같은 과잉이 반복될 가능성이 높습니다.";
+    default: // overbase
+      return "재고일수가 적정 " + tdTxt + "을 초과하고 있으나, 최근 실적·예측상 뚜렷한 수요 이상 신호는 없습니다. " +
+        "공급 일정 조정만으로 적정 수준 복귀가 가능한 품목으로 판단됩니다. " +
+        span + " 공급 " + cutTxt + " 감축을 권장합니다.";
+  }
+}
+function buildNoPlanOpinion(a) {
+  var invTxt = formatNumber(Math.round(a.qty)) + "개(" + formatMoney(a.amt) + ")";
+  switch (a.cause) {
+    case "noplan":
+      return "이 품목은 26년에도 출고가 이어졌으나(누적 " + formatNumber(Math.round(a.s26 || 0)) +
+        (a.last26 ? ", 최근 " + a.last26.slice(2).replace("-", ".") : "") + "), " +
+        (a.planFromMonth || "") + "월 이후 판매계획이 없습니다. " +
+        "판매계획 누락 또는 운영 전환 품목일 가능성이 높습니다. " +
+        "판매계획 반영 여부를 먼저 확인하고, 미판매 방침이라면 보유 재고 " + invTxt + "의 소진 방안(프로모션·채널 확대)을 마케팅에 요청하는 것을 권장합니다.";
+    case "stopped":
+      return "25년까지 출고된 후 26년 출고가 없어 판매중단으로 추정됩니다. " +
+        "보유 재고 " + invTxt + "의 소진 가능성을 먼저 확인하고, 소진이 어렵다면 처분(폐기·할인)을 검토하는 것을 권장합니다. " +
+        "처분은 손실 인식이 수반되므로 감축 성과와 분리해 보고해야 합니다.";
+    case "dormant":
+      return "25~26년 출고 이력이 없는 장기 부동재고입니다. " +
+        "보유 재고 " + invTxt + "에 대해 유효기간·품질 상태 확인 후 처분 여부를 결정하는 것을 권장합니다.";
+    default: // unknown
+      return "적정재고·실적 관리 대상에 포함되지 않은 품목으로, 출고 이력을 확인할 수 없습니다. " +
+        "보유 재고 " + invTxt + "의 성격(수출 대기·수탁·단종 등)을 담당 부서에서 확인하는 것이 선행되어야 합니다.";
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 판정(협의 결과) 레이어 — AI 제안에 대한 회의 확정: 수용/조정/불가/보류
+// 반영 규칙: 명시 판정 > 섹션 일괄적용. 확정(수용·조정)만 KPI에 반영
+// ═══════════════════════════════════════════════════════════════════════════
+var AI_DECISION_LABELS = { accept: "수용", adjust: "조정 수용", reject: "불가", hold: "보류" };
+
+function aiDecisionKey(it) { return it.itemCode + "|" + (it.plantCode || ""); }
+function getAiDecision(it) { return (state.aiDecisions || {})[aiDecisionKey(it)] || null; }
+
+// 품목의 유효 감축 모드: "full" | "none" | 숫자(조정 감축 총량)
+function decideAiMode(it, secApplied) {
+  var d = getAiDecision(it);
+  if (d) {
+    if (d.status === "accept") return "full";
+    if (d.status === "adjust") return Math.max(0, Math.min(it.cutQty, Number(d.qty) || 0));
+    return "none"; // reject | hold
+  }
+  return secApplied ? "full" : "none";
+}
+function effectiveCutOf(it, secApplied) {
+  var mode = decideAiMode(it, secApplied);
+  if (mode === "none") return { qty: 0, amt: 0 };
+  if (mode === "full") return { qty: it.cutQty, amt: it.cutAmt };
+  var f = it.cutQty > 0 ? mode / it.cutQty : 0;
+  return { qty: mode, amt: it.cutAmt * f };
+}
+
+// AI 관리 감축 키 전체 재구성 — 섹션 적용 + 품목 판정의 단일 반영 지점
+function syncAiFgAdj(clsArg) {
+  var cls = clsArg || classifyAiExcess();
+  Object.keys(state.aiExcessKeys || {}).forEach(function(k) { delete state.excessAdj[k]; });
+  state.aiExcessKeys = {};
+  state.aiSecApplied = state.aiSecApplied || {};
+  ["supply", "planfix"].forEach(function(secId) {
+    var secApplied = !!state.aiSecApplied[secId];
+    cls.sections[secId].items.forEach(function(it) {
+      var mode = decideAiMode(it, secApplied);
+      if (mode === "none") return;
+      var f = mode === "full" ? 1 : (it.cutQty > 0 ? mode / it.cutQty : 0);
+      it.keys.forEach(function(k) {
+        var origSupply = it.planVals[k] + (it.cutByKey[k] || 0);
+        var cut = Math.floor((it.cutByKey[k] || 0) * f);
+        state.excessAdj[k] = origSupply - cut;
+        state.aiExcessKeys[k] = true;
+      });
+    });
+  });
+  syncAiMatPlan();
+  saveAiSession();
+}
+
+function setAiDecision(secId, it, status, qty, reason) {
+  state.aiDecisions = state.aiDecisions || {};
+  var key = aiDecisionKey(it);
+  if (!status) delete state.aiDecisions[key];
+  else state.aiDecisions[key] = { status: status, qty: qty || null, reason: reason || "", sec: secId, ts: new Date().toISOString() };
+  if (status) recordAiDecisionMinutes(secId, it, status, qty, reason);
+  if (secId === "supply" || secId === "planfix") syncAiFgAdj();
+  else saveAiSession();
+  render("inventory-variance");
+}
+
+// 판정 시 회의록 자동 기록 (minutes.js가 type: "aiDecision" 분기 렌더)
+function recordAiDecisionMinutes(secId, it, status, qty, reason) {
+  var def = null;
+  AI_SECTION_DEFS.forEach(function(x) { if (x.id === secId) def = x; });
+  state.minutesLog = state.minutesLog || [];
+  state.minutesLog.push({
+    id: Date.now() + Math.floor(Math.random() * 1000),
+    timestamp: new Date(),
+    type: "aiDecision",
+    title: (def ? def.no + " " + def.title : "AI 진단") + " 판정 — " + (it.itemName || it.itemCode),
+    decision: {
+      itemCode: it.itemCode, itemName: it.itemName || "", plant: it.plantCode || "",
+      section: def ? def.title : secId,
+      status: AI_DECISION_LABELS[status] || status,
+      aiCutQty: it.cutQty || null,
+      finalQty: status === "adjust" ? (Number(qty) || 0) : (status === "accept" ? (it.cutQty || null) : 0),
+      aiCutAmt: it.cutAmt || null,
+      reason: reason || "",
+    },
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 세션 저장 — 판정·조정·회의록을 localStorage에 자동 보존 (새로고침 복원)
+// ═══════════════════════════════════════════════════════════════════════════
+var AI_SESSION_LS_KEY = "rtfAiSession.v1";
+function saveAiSession() {
+  try {
+    localStorage.setItem(AI_SESSION_LS_KEY, JSON.stringify({
+      aiDecisions:  state.aiDecisions  || {},
+      aiSecApplied: state.aiSecApplied || {},
+      excessAdj:    state.excessAdj    || {},
+      matExcessAdj: state.matExcessAdj || {},
+      aiExcessKeys: state.aiExcessKeys || {},
+      aiMatKeys:    state.aiMatKeys    || {},
+      minutesLog:   (state.minutesLog || []).map(function(e) {
+        return Object.assign({}, e, { timestamp: e.timestamp instanceof Date ? e.timestamp.toISOString() : e.timestamp });
+      }),
+      savedAt: new Date().toISOString(),
+    }));
+  } catch (e) { /* 저장 실패는 치명적이지 않음 (프라이빗 모드 등) */ }
+}
+function loadAiSession() {
+  try {
+    var raw = localStorage.getItem(AI_SESSION_LS_KEY);
+    if (!raw) return;
+    var s = JSON.parse(raw);
+    state.aiDecisions  = s.aiDecisions  || {};
+    state.aiSecApplied = s.aiSecApplied || {};
+    state.aiExcessKeys = s.aiExcessKeys || {};
+    state.aiMatKeys    = s.aiMatKeys    || {};
+    Object.assign(state.excessAdj,    s.excessAdj    || {});
+    Object.assign(state.matExcessAdj, s.matExcessAdj || {});
+    if (Array.isArray(s.minutesLog) && s.minutesLog.length) {
+      state.minutesLog = s.minutesLog.map(function(e) {
+        var t = new Date(e.timestamp);
+        return Object.assign({}, e, { timestamp: isNaN(t.getTime()) ? e.timestamp : t });
+      });
+    }
+  } catch (e) { /* 손상된 저장분은 무시 */ }
+}
+function clearAiSession() {
+  try { localStorage.removeItem(AI_SESSION_LS_KEY); } catch (e) {}
+}
+
+var _aiDiagCache = null; // 렌더 시점의 분류 결과 — 행 클릭→팝업에서 재사용
 
 function renderAiDiagPanel(hasTargetData) {
   if (!hasTargetData) return "";
   var cls   = classifyAiExcess();
   var aiMat = computeAiMatExcessPlan(Object.assign({}, state.excessAdj || {}, cls.ai.plan));
+  _aiDiagCache = { cls: cls, aiMat: aiMat };
   state.aiSecApplied = state.aiSecApplied || {};
   state.aiDiagOpen   = state.aiDiagOpen   || {};
   var S = cls.sections, np = cls.noPlan;
+
+  // 섹션별 확정(판정 반영) 현황
+  function secConfirm(secId) {
+    var secApplied = !!state.aiSecApplied[secId];
+    var conf = 0, counts = { accept: 0, adjust: 0, reject: 0, hold: 0 }, anyDec = false;
+    S[secId].items.forEach(function(it) {
+      var d = getAiDecision(it);
+      if (d) { anyDec = true; counts[d.status] = (counts[d.status] || 0) + 1; }
+      conf += effectiveCutOf(it, secApplied).amt;
+    });
+    return { conf: conf, counts: counts, anyDec: anyDec, secApplied: secApplied };
+  }
 
   var fgCnt    = S.supply.items.length + S.planfix.items.length + S.policy.items.length;
   var cutTotal = S.supply.totalAmt + S.planfix.totalAmt + (aiMat.totalCutAmt || 0);
@@ -1036,11 +1263,17 @@ function renderAiDiagPanel(hasTargetData) {
       " <span class='exc-ai-code'>" + escapeHtml(code) + (pl ? "·" + escapeHtml(pl) : "") + "</span></td>";
   }
   var MAXR = 100;
-  function cutRows(items) {
+  function dChip(it) {
+    var d = getAiDecision(it);
+    if (!d) return "";
+    return " <span class='exc-ai-dchip exc-ai-dchip-" + d.status + "'>" + (AI_DECISION_LABELS[d.status] || d.status) + "</span>";
+  }
+  function cutRows(items, secId) {
     if (!items.length) return "<div class='exc-aisec-empty'>해당 품목 없음</div>";
-    var html = "<table class='exc-ai-table'><tbody>" + items.slice(0, MAXR).map(function(it) {
-      return "<tr>" + nameCell(it.itemCode, it.itemName, it.plantCode) +
-        "<td class='exc-ai-chipcell'>" + chip(it.cause) + "</td>" +
+    var html = "<table class='exc-ai-table'><tbody>" + items.slice(0, MAXR).map(function(it, idx) {
+      return "<tr class='exc-ai-row' data-sec='" + secId + "' data-idx='" + idx + "' title='클릭하면 진단 카드(차트·AI 소견·판정)가 열립니다'>" +
+        nameCell(it.itemCode, it.itemName, it.plantCode) +
+        "<td class='exc-ai-chipcell'>" + chip(it.cause) + dChip(it) + "</td>" +
         "<td class='exc-ai-evid'>" + escapeHtml(it.evidence) + "</td>" +
         "<td class='exc-ai-cut'>-" + formatNumber(Math.round(it.cutQty)) +
           " <span class='exc-ai-amt'>-" + escapeHtml(formatMoney(it.cutAmt)) + "</span></td></tr>";
@@ -1048,12 +1281,13 @@ function renderAiDiagPanel(hasTargetData) {
     if (items.length > MAXR) html += "<div class='exc-aisec-more'>외 " + (items.length - MAXR) + "품목</div>";
     return html;
   }
-  function invRows(items) {
+  function invRows(items, secId) {
     if (!items.length) return "<div class='exc-aisec-empty'>해당 품목 없음</div>";
-    var html = "<table class='exc-ai-table'><tbody>" + items.slice(0, MAXR).map(function(a) {
-      return "<tr><td class='exc-ai-nm'>" + escapeHtml(a.itemName || a.itemCode) +
+    var html = "<table class='exc-ai-table'><tbody>" + items.slice(0, MAXR).map(function(a, idx) {
+      return "<tr class='exc-ai-row' data-sec='" + secId + "' data-idx='" + idx + "' title='클릭하면 진단 카드(차트·AI 소견·판정)가 열립니다'>" +
+        "<td class='exc-ai-nm'>" + escapeHtml(a.itemName || a.itemCode) +
         " <span class='exc-ai-code'>" + escapeHtml(a.itemCode) + (a.bu ? "·" + escapeHtml(a.bu) : "") + "</span></td>" +
-        "<td class='exc-ai-chipcell'>" + chip(a.cause) + "</td>" +
+        "<td class='exc-ai-chipcell'>" + chip(a.cause) + dChip(a) + "</td>" +
         "<td class='exc-ai-evid'>" + escapeHtml(a.evidence) + "</td>" +
         "<td class='exc-ai-cut'>재고 " + formatNumber(Math.round(a.qty)) +
           " <span class='exc-ai-amt'>" + escapeHtml(formatMoney(a.amt)) + "</span></td></tr>";
@@ -1089,11 +1323,25 @@ function renderAiDiagPanel(hasTargetData) {
       "</strong> — 입고 취소·연기 권장 (상세: 원부자재 탭, 공급 감축 적용 시 함께 반영)</div>"
     : "";
 
+  // 판정 현황 요약 (닫힌 헤더에서도 확정/제안 분해가 보이도록)
+  function decisionSum(secId, baseHtml) {
+    var c = secConfirm(secId);
+    if (!c.anyDec && !c.secApplied) return baseHtml;
+    var chips = [];
+    if (c.counts.accept) chips.push("✅" + c.counts.accept);
+    if (c.counts.adjust) chips.push("🔶" + c.counts.adjust);
+    if (c.counts.reject) chips.push("❌" + c.counts.reject);
+    if (c.counts.hold)   chips.push("⏸" + c.counts.hold);
+    return "확정 <strong>-" + escapeHtml(formatMoney(c.conf)) + "</strong> / 제안 -" +
+      escapeHtml(formatMoney(S[secId].totalAmt)) + (chips.length ? " · " + chips.join(" ") : "");
+  }
   var sumOf = {
-    supply: (S.supply.items.length ? "제·상품 " + S.supply.items.length + "품목 <strong>-" + escapeHtml(formatMoney(S.supply.totalAmt)) + "</strong>" : "") +
-            (aiMat.itemCnt > 0 ? (S.supply.items.length ? " · " : "") + "자재 " + aiMat.itemCnt + "종 <strong>-" + escapeHtml(formatMoney(aiMat.totalCutAmt)) + "</strong>" : "") ||
-            "<span class='exc-aisec-none'>해당 없음</span>",
-    planfix: S.planfix.items.length ? S.planfix.items.length + "품목 <strong>-" + escapeHtml(formatMoney(S.planfix.totalAmt)) + "</strong>" : "<span class='exc-aisec-none'>해당 없음</span>",
+    supply: decisionSum("supply",
+      (S.supply.items.length ? "제·상품 " + S.supply.items.length + "품목 <strong>-" + escapeHtml(formatMoney(S.supply.totalAmt)) + "</strong>" : "") +
+      (aiMat.itemCnt > 0 ? (S.supply.items.length ? " · " : "") + "자재 " + aiMat.itemCnt + "종 <strong>-" + escapeHtml(formatMoney(aiMat.totalCutAmt)) + "</strong>" : "") ||
+      "<span class='exc-aisec-none'>해당 없음</span>"),
+    planfix: decisionSum("planfix",
+      S.planfix.items.length ? S.planfix.items.length + "품목 <strong>-" + escapeHtml(formatMoney(S.planfix.totalAmt)) + "</strong>" : "<span class='exc-aisec-none'>해당 없음</span>"),
     sellout: np.sellout.length ? np.sellout.length + "품목 재고 <strong>" + escapeHtml(formatMoney(np.sellout.reduce(function(s, a) { return s + a.amt; }, 0))) + "</strong>" : "<span class='exc-aisec-none'>해당 없음</span>",
     disposal: np.disposal.length ? np.disposal.length + "품목 재고 <strong>" + escapeHtml(formatMoney(np.disposal.reduce(function(s, a) { return s + a.amt; }, 0))) + "</strong>" : "<span class='exc-aisec-none'>해당 없음</span>",
     policy: S.policy.items.length ? S.policy.items.length + "품목 (감축 보류 " + escapeHtml(formatMoney(S.policy.totalAmt)) + ")" : "<span class='exc-aisec-none'>해당 없음</span>",
@@ -1103,11 +1351,11 @@ function renderAiDiagPanel(hasTargetData) {
       escapeHtml(formatMoney(np.excludedAmt)) + ")은 이 회의 대상에서 제외</div>"
     : "";
   var bodyOf = {
-    supply:   matLine + cutRows(S.supply.items),
-    planfix:  cutRows(S.planfix.items),
-    sellout:  invRows(np.sellout),
-    disposal: invRows(np.disposal) + excludedNote,
-    policy:   cutRows(S.policy.items),
+    supply:   matLine + cutRows(S.supply.items, "supply"),
+    planfix:  cutRows(S.planfix.items, "planfix"),
+    sellout:  invRows(np.sellout, "sellout"),
+    disposal: invRows(np.disposal, "disposal") + excludedNote,
+    policy:   cutRows(S.policy.items, "policy"),
   };
   var btnOf = {
     supply:  applyBtn("supply", S.supply.items.length > 0 || aiMat.itemCnt > 0),
@@ -1115,6 +1363,9 @@ function renderAiDiagPanel(hasTargetData) {
     sellout: "", disposal: "", policy: "",
   };
 
+  // 확정(판정·적용 반영) 총액 — 확정이 하나라도 있으면 헤드에 노출
+  var confTotal = secConfirm("supply").conf + secConfirm("planfix").conf +
+                  (state.aiSecApplied.supply ? (aiMat.totalCutAmt || 0) : 0);
   var headBtns = (!allApplied ? "<button class='exc-ai-apply'>권장안 전체적용</button>" : "") +
                  (anyApplied ? "<button class='exc-ai-clear'>전체해제</button>" : "");
   var head = "<div class='exc-ai-panel-head'>" +
@@ -1122,29 +1373,23 @@ function renderAiDiagPanel(hasTargetData) {
     "<span class='exc-ai-text'><strong>AI 과잉재고 진단</strong> — 원인 분석 " + fgCnt + "품목 · 액션 5분류 · 감축 가능 <strong>-" +
       escapeHtml(formatMoney(cutTotal)) + "</strong> (품절 0 유지)" +
       (identAmt > 0 ? " · 소진·처분 식별 <strong>" + escapeHtml(formatMoney(identAmt)) + "</strong>" : "") +
+      (confTotal > 0 ? " · <span class='exc-ai-conf'>협의 확정 -" + escapeHtml(formatMoney(confTotal)) + "</span>" : "") +
     "</span>" + headBtns + "</div>";
 
   return "<div class='exc-ai-panel'>" + head +
-    AI_SECTION_DEFS.map(function(def) { return secBlock(def, sumOf[def.id], bodyOf[def.id], btnOf[def.id]); }).join("") +
+    AI_SECTION_DEFS.map(function(def) {
+      var kicker = def.group ? "<div class='exc-aisec-group'>" + def.group + "</div>" : "";
+      return kicker + secBlock(def, sumOf[def.id], bodyOf[def.id], btnOf[def.id]);
+    }).join("") +
     "</div>";
 }
 
-// 섹션 단위 권장안 적용/해제 — 확정 상태는 aiSecApplied, 적용 키는 aiExcessKeys로 추적
+// 섹션 단위 권장안 적용/해제 — 플래그만 바꾸고 반영은 syncAiFgAdj가 일원화
+// (품목별 명시 판정은 섹션 플래그보다 우선 유지됨)
 function toggleAiSection(secId) {
-  var cls = classifyAiExcess();
-  var s = cls.sections[secId];
-  if (!s) return;
   state.aiSecApplied = state.aiSecApplied || {};
-  state.aiExcessKeys = state.aiExcessKeys || {};
-  var applied = !!state.aiSecApplied[secId];
-  s.items.forEach(function(it) {
-    it.keys.forEach(function(k) {
-      if (applied) { delete state.excessAdj[k]; delete state.aiExcessKeys[k]; }
-      else { state.excessAdj[k] = it.planVals[k]; state.aiExcessKeys[k] = true; }
-    });
-  });
-  state.aiSecApplied[secId] = !applied;
-  syncAiMatPlan();
+  state.aiSecApplied[secId] = !state.aiSecApplied[secId];
+  syncAiFgAdj();
   render("inventory-variance");
 }
 
@@ -1158,6 +1403,222 @@ function syncAiMatPlan() {
       state.matExcessAdj[k] = aiMat.plan[k];
       state.aiMatKeys[k] = true;
     });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 진단 카드 팝업 — 차트 A(수요: 왜 쌓였나) + 차트 B(재고: 감축하면 어떻게 되나)
+// + AI 소견 서술문 + 협의 판정(수용/조정/불가/보류)
+// ═══════════════════════════════════════════════════════════════════════════
+var _aiPopupCharts = [];
+
+function closeAiDiagPopup() {
+  _aiPopupCharts.forEach(function(c) { try { c.destroy(); } catch (e) {} });
+  _aiPopupCharts = [];
+  var ov = document.querySelector(".exc-diag-overlay");
+  if (ov && ov.parentElement) ov.parentElement.removeChild(ov);
+}
+
+function openAiDiagPopup(secId, idx) {
+  if (!_aiDiagCache) return;
+  var isCut = secId === "supply" || secId === "planfix" || secId === "policy";
+  var it = isCut
+    ? _aiDiagCache.cls.sections[secId].items[idx]
+    : _aiDiagCache.cls.noPlan[secId === "sellout" ? "sellout" : "disposal"][idx];
+  if (!it) return;
+  closeAiDiagPopup();
+
+  var meta = AI_CAUSE_META[it.cause] || AI_CAUSE_META.overbase;
+  var def = null;
+  AI_SECTION_DEFS.forEach(function(x) { if (x.id === secId) def = x; });
+  var d = getAiDecision(it);
+  var opinion = isCut ? buildAiOpinion(it) : buildNoPlanOpinion(it);
+  var plantLabel = it.plantCode && typeof displayPlantName === "function" ? displayPlantName(it.plantCode) : (it.plantCode || "");
+
+  var proposalTxt = isCut
+    ? "감축 제안 <strong>-" + formatNumber(Math.round(it.cutQty)) + "개 · -" + escapeHtml(formatMoney(it.cutAmt)) + "</strong>" +
+      (secId === "policy" ? " <span class='exc-diag-hold'>(MOQ 구조 — 적용 보류)</span>" : "")
+    : "보유 재고 <strong>" + formatNumber(Math.round(it.qty)) + "개 · " + escapeHtml(formatMoney(it.amt)) + "</strong>";
+
+  // 판정 UI — KPI 반영 섹션은 조정 입력 지원, 나머지는 진행/불가/보류 기록
+  var canAdjust = secId === "supply" || secId === "planfix";
+  var decBtns =
+    "<button class='exc-diag-dec' data-status='accept'>✅ 수용</button>" +
+    (canAdjust ? "<button class='exc-diag-dec' data-status='adjust'>🔶 조정 수용</button>" : "") +
+    "<button class='exc-diag-dec' data-status='reject'>❌ 불가</button>" +
+    "<button class='exc-diag-dec' data-status='hold'>⏸ 보류</button>";
+  var curDec = d
+    ? "<span class='exc-ai-dchip exc-ai-dchip-" + d.status + "'>" + (AI_DECISION_LABELS[d.status] || d.status) + "</span>" +
+      (d.qty ? " 확정 -" + formatNumber(Math.round(d.qty)) + "개" : "") +
+      (d.reason ? " · " + escapeHtml(d.reason) : "") +
+      " <button class='exc-diag-dec-clear'>판정 취소</button>"
+    : "<span class='exc-diag-nodec'>미판정</span>";
+
+  var ov = document.createElement("div");
+  ov.className = "exc-diag-overlay";
+  ov.innerHTML =
+    "<div class='exc-diag-card'>" +
+      "<div class='exc-diag-head'>" +
+        "<div class='exc-diag-titles'>" +
+          "<div class='exc-diag-name'>" + escapeHtml(it.itemName || it.itemCode) +
+            " <span class='exc-ai-code'>" + escapeHtml(it.itemCode) +
+            (plantLabel ? "·" + escapeHtml(plantLabel) : "") + (it.bu ? "·" + escapeHtml(it.bu) : "") + "</span></div>" +
+          "<div class='exc-diag-sub'>" +
+            (def ? "<span class='exc-aisec-owner'>" + def.no + " " + def.title + " · " + def.owner + "</span> " : "") +
+            "<span class='exc-ai-chip exc-ai-chip-" + meta.cls + "'>" + meta.label + "</span> " +
+            "<span class='exc-diag-proposal'>" + proposalTxt + "</span>" +
+          "</div>" +
+        "</div>" +
+        "<button class='exc-diag-close' title='닫기'>×</button>" +
+      "</div>" +
+      "<div class='exc-diag-opinion'><span class='exc-diag-opinion-tag'>🤖 AI 소견</span>" + escapeHtml(opinion) + "</div>" +
+      "<div class='exc-diag-charts'>" +
+        "<div class='exc-diag-chartbox'>" +
+          "<div class='exc-diag-chart-title'>수요 흐름 — 왜 쌓였나 <span class='exc-diag-chart-sub'>25~26년 출고실적 vs S/F 예측 vs 향후 판매계획</span></div>" +
+          "<div class='exc-diag-canvas-wrap'><canvas class='exc-diag-chart-a'></canvas></div>" +
+        "</div>" +
+        (isCut
+          ? "<div class='exc-diag-chartbox'>" +
+              "<div class='exc-diag-chart-title'>재고 전망 — 감축하면 어떻게 되나 <span class='exc-diag-chart-sub'>기말재고 vs 적정재고 수준 vs 감축 적용 후</span></div>" +
+              "<div class='exc-diag-canvas-wrap'><canvas class='exc-diag-chart-b'></canvas></div>" +
+            "</div>"
+          : "") +
+      "</div>" +
+      "<div class='exc-diag-decide'>" +
+        "<span class='exc-diag-decide-label'>협의 결과</span>" + decBtns +
+        "<span class='exc-diag-cur'>" + curDec + "</span>" +
+      "</div>" +
+      "<div class='exc-diag-inputs' hidden>" +
+        "<span class='exc-diag-input-qty' hidden>확정 감축량 <input type='number' class='exc-diag-qty' min='0'" +
+          (isCut ? " max='" + Math.round(it.cutQty) + "' value='" + Math.round(it.cutQty) + "'" : "") + "> 개</span>" +
+        "<span class='exc-diag-input-reason'>사유 <input type='text' class='exc-diag-reason' placeholder='예: 전략비축 / 최소운영재고 / 프로모션 예정'></span>" +
+        "<button class='exc-diag-save'>판정 기록</button>" +
+      "</div>" +
+    "</div>";
+  document.body.appendChild(ov);
+
+  // 닫기
+  ov.addEventListener("click", function(e) { if (e.target === ov) closeAiDiagPopup(); });
+  ov.querySelector(".exc-diag-close").addEventListener("click", closeAiDiagPopup);
+
+  // 판정 흐름: 상태 버튼 클릭 → 입력영역 노출 → [판정 기록]
+  var selStatus = null;
+  var inputs = ov.querySelector(".exc-diag-inputs");
+  var qtyWrap = ov.querySelector(".exc-diag-input-qty");
+  ov.querySelectorAll(".exc-diag-dec").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      selStatus = btn.dataset.status;
+      ov.querySelectorAll(".exc-diag-dec").forEach(function(b) {
+        b.classList.toggle("exc-diag-dec-sel", b === btn);
+      });
+      inputs.hidden = false;
+      qtyWrap.hidden = selStatus !== "adjust";
+    });
+  });
+  var saveBtn = ov.querySelector(".exc-diag-save");
+  if (saveBtn) saveBtn.addEventListener("click", function() {
+    if (!selStatus) return;
+    var qty = selStatus === "adjust" ? Number(ov.querySelector(".exc-diag-qty").value) || 0 : null;
+    var reason = (ov.querySelector(".exc-diag-reason").value || "").trim();
+    closeAiDiagPopup();
+    setAiDecision(secId, it, selStatus, qty, reason);
+  });
+  var clearBtn = ov.querySelector(".exc-diag-dec-clear");
+  if (clearBtn) clearBtn.addEventListener("click", function() {
+    closeAiDiagPopup();
+    setAiDecision(secId, it, null);
+  });
+
+  renderAiDiagCharts(it, isCut, ov);
+}
+
+// 팝업 차트 2종 — Chart.js 전역이 있을 때만 (없으면 카드 텍스트만으로도 성립)
+function renderAiDiagCharts(it, isCut, ov) {
+  if (typeof Chart === "undefined") return;
+  var shortM = function(m) { return m.slice(2).replace("-", "."); };
+  var ti = isCut ? (it.diag && it.diag.ti) : it.ti;
+
+  // 차트 A: 과거 실적(막대) + S/F 예측(점선) + 향후 판매계획(실선)
+  var hist = [], histVals = [];
+  if (ti) {
+    var histMap = {};
+    Object.keys(ti.outPrevYear || {}).forEach(function(m) { histMap[m] = ti.outPrevYear[m]; });
+    Object.keys(ti.outCurYear || {}).forEach(function(m) { histMap[m] = ti.outCurYear[m]; });
+    hist = Object.keys(histMap).sort();
+    histVals = hist.map(function(m) { return histMap[m]; });
+  }
+  var future = isCut && it.months ? it.months : [];
+  var labels = hist.concat(future);
+  var canvasA = ov.querySelector(".exc-diag-chart-a");
+  if (canvasA && labels.length) {
+    var histData = histVals.concat(future.map(function() { return null; }));
+    var sfData = labels.map(function(m) {
+      var v = ti && ti.sfByMonth ? ti.sfByMonth[m] : undefined;
+      return v === undefined ? null : v;
+    });
+    var planData = labels.map(function(m) {
+      var i = future.indexOf(m);
+      return i < 0 ? null : (it.salesArr ? it.salesArr[i] : null);
+    });
+    _aiPopupCharts.push(new Chart(canvasA.getContext("2d"), {
+      type: "bar",
+      data: {
+        labels: labels.map(shortM),
+        datasets: [
+          { type: "bar", label: "출고 실적", data: histData, order: 2,
+            backgroundColor: labels.map(function(m) { return m < "2026" ? "#cbd5e1" : "#93c5fd"; }) },
+          { type: "line", label: "S/F 예측", data: sfData, borderColor: "#f59e0b",
+            borderDash: [6, 4], borderWidth: 2, pointRadius: 0, spanGaps: true, order: 1 },
+          { type: "line", label: "판매계획", data: planData, borderColor: "#4f46e5",
+            borderWidth: 2.5, pointRadius: 2.5, spanGaps: true, order: 0 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: true, position: "top", labels: { boxWidth: 14, font: { size: 12.5 } } },
+          tooltip: { callbacks: { label: function(c) {
+            return c.raw === null || c.raw === undefined ? null : c.dataset.label + ": " + Math.round(c.raw).toLocaleString();
+          } } } },
+        scales: {
+          x: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 11.5 }, maxRotation: 0, autoSkip: true } },
+          y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 11.5 }, callback: function(v) { return Math.round(v).toLocaleString(); } } },
+        },
+      },
+    }));
+  }
+
+  // 차트 B: 기말재고(현재 계획) vs 감축 적용 후 vs 적정재고 수준
+  var canvasB = ov.querySelector(".exc-diag-chart-b");
+  if (canvasB && isCut && it.months && it.months.length) {
+    var tgtLine = it.months.map(function(m, i) {
+      var daily = it.salesArr[i] > 0 ? it.salesArr[i] / monthDays(m) : 0;
+      return daily > 0 ? it.targetDays * daily : null;
+    });
+    _aiPopupCharts.push(new Chart(canvasB.getContext("2d"), {
+      type: "line",
+      data: {
+        labels: it.months.map(shortM),
+        datasets: [
+          { label: "기말재고 (현재 계획)", data: it.origEndingArr, borderColor: "#94a3b8",
+            backgroundColor: "rgba(148,163,184,0.14)", fill: true, borderWidth: 2, pointRadius: 2.5 },
+          { label: "감축 적용 후", data: it.cutEndingArr, borderColor: "#16a34a",
+            borderDash: [6, 4], borderWidth: 2.5, pointRadius: 2.5 },
+          { label: "적정재고 수준", data: tgtLine, borderColor: "#dc2626",
+            borderDash: [2, 3], borderWidth: 1.8, pointRadius: 0, spanGaps: true },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        plugins: { legend: { display: true, position: "top", labels: { boxWidth: 14, font: { size: 12.5 } } },
+          tooltip: { callbacks: { label: function(c) {
+            return c.raw === null || c.raw === undefined ? null : c.dataset.label + ": " + Math.round(c.raw).toLocaleString();
+          } } } },
+        scales: {
+          x: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 11.5 } } },
+          y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 11.5 }, callback: function(v) { return Math.round(v).toLocaleString(); } } },
+        },
+      },
+    }));
   }
 }
 
