@@ -864,7 +864,6 @@ var AI_CAUSE_META = {
   overplan:   { label: "계획과대", cls: "overplan" },
   demanddown: { label: "수요감소", cls: "down" },
   overbase:   { label: "기준초과", cls: "base" },
-  moq:        { label: "MOQ구조", cls: "moq" },
   noplan:     { label: "계획누락", cls: "noplan" },
   stopped:    { label: "판매중단", cls: "stopped" },
   dormant:    { label: "장기불용", cls: "dormant" },
@@ -880,7 +879,6 @@ function classifyAiExcess() {
   var sections = {
     supply:  { items: [], totalAmt: 0 },
     planfix: { items: [], totalAmt: 0 },
-    policy:  { items: [], totalAmt: 0 },
   };
   (ai.items || []).forEach(function(it) {
     var ti = tiMap.get(it.itemCode) || {};
@@ -909,11 +907,7 @@ function classifyAiExcess() {
     if (ratio !== null && (ratio > AI_UNIT_SUSPECT || ratio < 1 / AI_UNIT_SUSPECT)) ratio = null;
 
     var secId;
-    if (Number.isFinite(ti.moq) && ti.moq > 0 && it.cutQty <= ti.moq) {
-      it.cause = "moq"; secId = "policy";
-      it.evidence = "권장 감축 " + formatNumber(Math.round(it.cutQty)) + " ≤ MOQ " +
-        formatNumber(Math.round(ti.moq)) + " — 발주단위 협의 필요";
-    } else if (ach !== null && ach < AI_ACH_LOW) {
+    if (ach !== null && ach < AI_ACH_LOW) {
       it.cause = "under"; secId = "supply";
       it.evidence = "S/F 대비 달성 " + Math.round(ach * 100) + "% (26년 " + bothCnt + "개월: 예측 " +
         formatNumber(Math.round(sfSum)) + " vs 실적 " + formatNumber(Math.round(actSum)) + ")";
@@ -1025,8 +1019,6 @@ var AI_SECTION_DEFS = [
     desc: "담당: 마케팅 — 최근까지 팔리던 품목인데 판매계획에서 빠진 재고. 계획 반영 또는 소진 요청. (실행 주체가 마케팅 → KPI 미반영 액션아이템)" },
   { id: "disposal", no: "④", title: "재고 처분",          owner: "출고가 멈춘 재고",
     desc: "담당: 사업부 — 폐기·할인 처분 검토 후보. (손실 인식 수반 → 감축 성과와 분리 집계)" },
-  { id: "policy",   no: "⑤", title: "발주단위 협의 (MOQ)", owner: "MOQ 제약으로 감축 곤란",   group: "구조를 고친다",
-    desc: "담당: 구매·생산기획 — 최소발주량 제약으로 미세 감축이 불가한 품목. MOQ·공급주기 재협상 안건. (감축 적용 보류)" },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1061,11 +1053,6 @@ function buildAiOpinion(it) {
         Math.round(d.ratio * 100) + "% 수준으로, 수요 하향은 계획에 이미 반영되어 있습니다. " +
         "다만 과거 수요 기준으로 확보된 재고가 남아 적정 " + tdTxt + "을 초과한 상태입니다. " +
         "신규 공급을 " + cutTxt + " 줄여 기존 재고 소진을 우선하는 것을 권장합니다.";
-    case "moq":
-      return "권장 감축량 " + formatNumber(Math.round(it.cutQty)) + "개가 최소발주단위 MOQ " +
-        formatNumber(Math.round(d.moq)) + "개 이내라, 발주 취소·축소로 대응하기 어려운 구조입니다. " +
-        "이번 감축 적용에서는 제외했으며, 공급주기 조정 또는 MOQ 재협상을 통한 구조 개선을 권장합니다. " +
-        "동일 구조가 유지되면 같은 과잉이 반복될 가능성이 높습니다.";
     default: // overbase
       return "재고일수가 적정 " + tdTxt + "을 초과하고 있으나, 최근 실적·예측상 뚜렷한 수요 이상 신호는 없습니다. " +
         "공급 일정 조정만으로 적정 수준 복귀가 가능한 품목으로 판단됩니다. " +
@@ -1243,7 +1230,7 @@ function renderAiDiagPanel(hasTargetData) {
     return { conf: conf, counts: counts, anyDec: anyDec, secApplied: secApplied };
   }
 
-  var fgCnt    = S.supply.items.length + S.planfix.items.length + S.policy.items.length;
+  var fgCnt    = S.supply.items.length + S.planfix.items.length;
   var cutTotal = S.supply.totalAmt + S.planfix.totalAmt;
   var identAmt = np.sellout.concat(np.disposal).reduce(function(s, a) { return s + a.amt; }, 0);
   if (!fgCnt && !np.sellout.length && !np.disposal.length) return "";
@@ -1339,7 +1326,6 @@ function renderAiDiagPanel(hasTargetData) {
       S.planfix.items.length ? S.planfix.items.length + "품목 <strong>-" + escapeHtml(formatMoney(S.planfix.totalAmt)) + "</strong>" : "<span class='exc-aisec-none'>해당 없음</span>"),
     sellout: np.sellout.length ? np.sellout.length + "품목 재고 <strong>" + escapeHtml(formatMoney(np.sellout.reduce(function(s, a) { return s + a.amt; }, 0))) + "</strong>" : "<span class='exc-aisec-none'>해당 없음</span>",
     disposal: np.disposal.length ? np.disposal.length + "품목 재고 <strong>" + escapeHtml(formatMoney(np.disposal.reduce(function(s, a) { return s + a.amt; }, 0))) + "</strong>" : "<span class='exc-aisec-none'>해당 없음</span>",
-    policy: S.policy.items.length ? S.policy.items.length + "품목 (감축 보류 " + escapeHtml(formatMoney(S.policy.totalAmt)) + ")" : "<span class='exc-aisec-none'>해당 없음</span>",
   };
   var excludedNote = np.excludedCnt > 0
     ? "<div class='exc-aisec-more'>※ 판매계획 파일 범위 밖 사업부·미분류 " + np.excludedCnt + "품목(" +
@@ -1350,12 +1336,11 @@ function renderAiDiagPanel(hasTargetData) {
     planfix:  cutRows(S.planfix.items, "planfix"),
     sellout:  invRows(np.sellout, "sellout"),
     disposal: invRows(np.disposal, "disposal") + excludedNote,
-    policy:   cutRows(S.policy.items, "policy"),
   };
   var btnOf = {
     supply:  applyBtn("supply", S.supply.items.length > 0),
     planfix: applyBtn("planfix", S.planfix.items.length > 0),
-    sellout: "", disposal: "", policy: "",
+    sellout: "", disposal: "",
   };
 
   // 확정(판정·적용 반영) 총액 — 확정이 하나라도 있으면 헤드에 노출 (제·상품 기준)
@@ -1364,7 +1349,7 @@ function renderAiDiagPanel(hasTargetData) {
                  (anyApplied ? "<button class='exc-ai-clear'>전체해제</button>" : "");
   var head = "<div class='exc-ai-panel-head'>" +
     "<span class='exc-ai-icon'>🤖</span>" +
-    "<span class='exc-ai-text'><strong>AI 과잉재고 진단</strong> — 원인 분석 " + fgCnt + "품목 · 액션 5분류 · 감축 가능 <strong>-" +
+    "<span class='exc-ai-text'><strong>AI 과잉재고 진단</strong> — 원인 분석 " + fgCnt + "품목 · 액션 4분류 · 감축 가능 <strong>-" +
       escapeHtml(formatMoney(cutTotal)) + "</strong> (품절 0 유지)" +
       (identAmt > 0 ? " · 소진·처분 식별 <strong>" + escapeHtml(formatMoney(identAmt)) + "</strong>" : "") +
       (confTotal > 0 ? " · <span class='exc-ai-conf'>협의 확정 -" + escapeHtml(formatMoney(confTotal)) + "</span>" : "") +
@@ -1415,7 +1400,7 @@ function closeAiDiagPopup() {
 
 function openAiDiagPopup(secId, idx) {
   if (!_aiDiagCache) return;
-  var isCut = secId === "supply" || secId === "planfix" || secId === "policy";
+  var isCut = secId === "supply" || secId === "planfix";
   var it = isCut
     ? _aiDiagCache.cls.sections[secId].items[idx]
     : _aiDiagCache.cls.noPlan[secId === "sellout" ? "sellout" : "disposal"][idx];
@@ -1430,8 +1415,7 @@ function openAiDiagPopup(secId, idx) {
   var plantLabel = it.plantCode && typeof displayPlantName === "function" ? displayPlantName(it.plantCode) : (it.plantCode || "");
 
   var proposalTxt = isCut
-    ? "감축 제안 <strong>-" + formatNumber(Math.round(it.cutQty)) + "개 · -" + escapeHtml(formatMoney(it.cutAmt)) + "</strong>" +
-      (secId === "policy" ? " <span class='exc-diag-hold'>(MOQ 구조 — 적용 보류)</span>" : "")
+    ? "감축 제안 <strong>-" + formatNumber(Math.round(it.cutQty)) + "개 · -" + escapeHtml(formatMoney(it.cutAmt)) + "</strong>"
     : "보유 재고 <strong>" + formatNumber(Math.round(it.qty)) + "개 · " + escapeHtml(formatMoney(it.amt)) + "</strong>";
 
   // 판정 UI — KPI 반영 섹션은 조정 입력 지원, 나머지는 진행/불가/보류 기록
@@ -1570,13 +1554,13 @@ function renderAiDiagCharts(it, isCut, ov) {
       },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        plugins: { legend: { display: true, position: "top", labels: { boxWidth: 14, font: { size: 12.5 } } },
+        plugins: { legend: { display: true, position: "top", labels: { boxWidth: 14, font: { size: 13.5 } } },
           tooltip: { callbacks: { label: function(c) {
             return c.raw === null || c.raw === undefined ? null : c.dataset.label + ": " + Math.round(c.raw).toLocaleString();
           } } } },
         scales: {
-          x: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 11.5 }, maxRotation: 0, autoSkip: true } },
-          y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 11.5 }, callback: function(v) { return Math.round(v).toLocaleString(); } } },
+          x: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 13 }, maxRotation: 0, autoSkip: true } },
+          y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 13 }, callback: function(v) { return Math.round(v).toLocaleString(); } } },
         },
       },
     }));
@@ -1612,12 +1596,12 @@ function renderAiDiagCharts(it, isCut, ov) {
           var v0 = d0[i], v1 = d1[i];
           if (v0 === null || v0 === undefined) return;
           var same = v1 !== null && v1 !== undefined && Math.abs(v0 - v1) < Math.max(1, Math.abs(v0) * 0.005);
-          c.font = "600 10.5px Pretendard, sans-serif";
+          c.font = "600 12.5px Pretendard, sans-serif";
           c.fillStyle = "#64748b";
           c.textBaseline = "bottom";
           c.fillText(fmtC(v0), clampX(el.x), el.y - 5);
           if (!same && m1.data[i] && v1 !== null && v1 !== undefined) {
-            c.font = "800 11px Pretendard, sans-serif";
+            c.font = "800 13px Pretendard, sans-serif";
             c.fillStyle = "#15803d";
             c.textBaseline = "top";
             c.fillText(fmtC(v1), clampX(m1.data[i].x), m1.data[i].y + 5);
@@ -1628,7 +1612,7 @@ function renderAiDiagCharts(it, isCut, ov) {
           if (d2[i2] !== null && d2[i2] !== undefined) { lastIdx = i2; break; }
         }
         if (lastIdx >= 0 && m2.data[lastIdx]) {
-          c.font = "700 10.5px Pretendard, sans-serif";
+          c.font = "700 12.5px Pretendard, sans-serif";
           c.fillStyle = "#dc2626";
           c.textAlign = "right";
           c.textBaseline = "bottom";
@@ -1653,13 +1637,13 @@ function renderAiDiagCharts(it, isCut, ov) {
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
         layout: { padding: { top: 18, bottom: 8 } },
-        plugins: { legend: { display: true, position: "top", labels: { boxWidth: 14, font: { size: 12.5 } } },
+        plugins: { legend: { display: true, position: "top", labels: { boxWidth: 14, font: { size: 13.5 } } },
           tooltip: { callbacks: { label: function(c) {
             return c.raw === null || c.raw === undefined ? null : c.dataset.label + ": " + Math.round(c.raw).toLocaleString();
           } } } },
         scales: {
-          x: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 11.5 } } },
-          y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 11.5 }, callback: function(v) { return Math.round(v).toLocaleString(); } } },
+          x: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 13 } } },
+          y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 13 }, callback: function(v) { return Math.round(v).toLocaleString(); } } },
         },
       },
       plugins: [diagLabelsPlugin],
