@@ -743,31 +743,8 @@ function _renderExcessAdjustmentInner() {
   // 3시나리오 KPI 배너 (RTF·공급원인과 동일 기준: 전체재고·공시·관리, RTF/감축 delta 분해)
   var bannerHtml = (typeof renderScenarioKpiBanner === "function") ? renderScenarioKpiBanner() : "";
 
-  // AI 감축 선제안 스트립 (제·상품 + 원부자재 통합)
-  var aiHtml = "";
-  {
-    var aiApplied = Object.keys(state.aiExcessKeys || {}).length > 0 ||
-                    Object.keys(state.aiMatKeys || {}).length > 0;
-    if (aiApplied) {
-      aiHtml = "<div class='exc-ai-strip exc-ai-applied'>" +
-        "<span class='exc-ai-icon'>🤖</span>" +
-        "<span class='exc-ai-text'><strong>AI 권장 감축안 적용됨</strong> — 각 탭에서 품목별 수정 가능</span>" +
-        "<button class='exc-ai-clear'>권장안 해제</button></div>";
-    } else {
-      var ai    = hasTargetData ? computeAiExcessPlan() : { plan: {}, totalCutAmt: 0, itemCnt: 0 };
-      var aiMat = computeAiMatExcessPlan(Object.assign({}, state.excessAdj || {}, ai.plan));
-      if (ai.itemCnt > 0 || aiMat.itemCnt > 0) {
-        var parts = [];
-        if (ai.itemCnt > 0)    parts.push("제·상품 <strong>" + escapeHtml(formatMoney(ai.totalCutAmt)) + "</strong> (" + ai.itemCnt + "품목)");
-        if (aiMat.itemCnt > 0) parts.push("자재 <strong>" + escapeHtml(formatMoney(aiMat.totalCutAmt)) + "</strong> (" + aiMat.itemCnt + "종)");
-        aiHtml = "<div class='exc-ai-strip'>" +
-          "<span class='exc-ai-icon'>🤖</span>" +
-          "<span class='exc-ai-text'><strong>AI 감축 선제안</strong> — " + parts.join(" + ") +
-          " = 총 <strong>" + escapeHtml(formatMoney(ai.totalCutAmt + aiMat.totalCutAmt)) + "</strong> 감축 가능 · 품절 0건 유지</span>" +
-          "<button class='exc-ai-apply'>권장안 전체적용</button></div>";
-      }
-    }
-  }
+  // AI 과잉재고 진단 패널 — 원인 분류 + 액션(오너)별 아코디언, 섹션별 권장안 적용
+  var aiHtml = renderAiDiagPanel(hasTargetData);
 
   // 탭: 제·상품 (적정재고 기준) | 원부자재 (180일 기준)
   var excessTab = state.excessTab === "mat" ? "mat" : "fg";
@@ -808,7 +785,7 @@ function computeAiExcessPlan() {
     ? computeScenarioItemSets().rtfAdj
     : computeRtfItems();
 
-  var plan = {}, totalCutAmt = 0, itemCnt = 0;
+  var plan = {}, totalCutAmt = 0, itemCnt = 0, aiItems = [];
   baseItems.forEach(function(item) {
     var td = targetMap.get(item.itemCode);
     if (!td || !item.hasInventory) return;
@@ -826,6 +803,7 @@ function computeAiExcessPlan() {
     if (!validLen) return;
 
     var changed = false;
+    var itemCutQty = 0, itemCutAmt = 0, itemKeys = [], itemPlanVals = {};
     for (var mi = 0; mi < validLen; mi++) {
       var dailySales = sales[mi] > 0 ? sales[mi] / monthDays(months[mi]) : 0;
       if (dailySales <= 0) continue;
@@ -838,13 +816,349 @@ function computeAiExcessPlan() {
       if (cut <= 0) continue;
       supply[mi] -= cut;
       for (var k3 = mi; k3 < validLen; k3++) ending[k3] -= cut;
-      plan[item.itemCode + "|" + (item.plantCode || "") + "|" + months[mi]] = supply[mi];
-      if (Number.isFinite(item.unitInvValue)) totalCutAmt += cut * item.unitInvValue;
+      var planKey = item.itemCode + "|" + (item.plantCode || "") + "|" + months[mi];
+      plan[planKey] = supply[mi];
+      itemKeys.push(planKey);
+      itemPlanVals[planKey] = supply[mi];
+      itemCutQty += cut;
+      if (Number.isFinite(item.unitInvValue)) {
+        totalCutAmt += cut * item.unitInvValue;
+        itemCutAmt  += cut * item.unitInvValue;
+      }
       changed = true;
     }
-    if (changed) itemCnt++;
+    if (changed) {
+      itemCnt++;
+      var salesSum = 0;
+      for (var si = 0; si < validLen; si++) salesSum += sales[si];
+      aiItems.push({
+        itemCode: item.itemCode, itemName: item.itemName || item.itemCode,
+        plantCode: item.plantCode || "", targetDays: td,
+        cutQty: itemCutQty, cutAmt: itemCutAmt,
+        keys: itemKeys, planVals: itemPlanVals,
+        planAvgSales: validLen ? salesSum / validLen : 0,
+      });
+    }
   });
-  return { plan: plan, totalCutAmt: totalCutAmt, itemCnt: itemCnt };
+  return { plan: plan, totalCutAmt: totalCutAmt, itemCnt: itemCnt, items: aiItems };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AI 과잉재고 진단 — 원인 분류 + 액션(오너)별 권장안 그룹핑
+// 근거 데이터: 적정재고_RAW의 25년 월별 출고실적 · 26년 출고실적 · S/F 예측 · MOQ
+// ═══════════════════════════════════════════════════════════════════════════
+var AI_ACH_LOW     = 0.8;  // S/F 대비 실적 달성률 — 미만이면 판매부진
+var AI_PLAN_HIGH   = 1.3;  // 계획 월평균 ÷ 실적 월평균 — 초과면 계획과대
+var AI_PLAN_LOW    = 0.7;  // 미만이면 수요감소 (계획은 이미 낮췄으나 기존 재고 잔류)
+var AI_UNIT_SUSPECT = 20;  // 계획/실적 비율이 이 배수 밖이면 단위불일치 의심 → 교차비교 제외
+
+var AI_CAUSE_META = {
+  under:      { label: "판매부진", cls: "under" },
+  overplan:   { label: "계획과대", cls: "overplan" },
+  demanddown: { label: "수요감소", cls: "down" },
+  overbase:   { label: "기준초과", cls: "base" },
+  moq:        { label: "MOQ구조", cls: "moq" },
+  noplan:     { label: "계획누락", cls: "noplan" },
+  stopped:    { label: "판매중단", cls: "stopped" },
+  dormant:    { label: "장기불용", cls: "dormant" },
+  unknown:    { label: "이력미상", cls: "unknown" },
+};
+
+// AI 감축안의 각 품목을 원인 분류 → 액션 섹션(공급감축/계획보정/정책개선)으로 배분
+function classifyAiExcess() {
+  var ai = computeAiExcessPlan();
+  var tiMap = new Map();
+  (state.mappedData.target_inv || []).forEach(function(r) { if (r.itemCode) tiMap.set(r.itemCode, r); });
+
+  var sections = {
+    supply:  { items: [], totalAmt: 0 },
+    planfix: { items: [], totalAmt: 0 },
+    policy:  { items: [], totalAmt: 0 },
+  };
+  (ai.items || []).forEach(function(it) {
+    var ti = tiMap.get(it.itemCode) || {};
+    var sf = ti.sfByMonth || {}, o26 = ti.outCurYear || {}, o25 = ti.outPrevYear || {};
+
+    // S/F 대비 달성률 (예측·실적이 둘 다 있는 월끼리만)
+    var sfSum = 0, actSum = 0, bothCnt = 0;
+    Object.keys(sf).forEach(function(m) {
+      if (o26[m] !== undefined) { sfSum += sf[m]; actSum += o26[m]; bothCnt++; }
+    });
+    var ach = bothCnt > 0 && sfSum > 0 ? actSum / sfSum : null;
+
+    // 실적 run-rate: 26년 월평균 → 25년 월평균 → 12개월 평균 출고 순 폴백
+    var vals26 = Object.keys(o26).map(function(m) { return o26[m]; });
+    var vals25 = Object.keys(o25).map(function(m) { return o25[m]; });
+    var runRate = null;
+    if (vals26.length && vals26.some(function(v) { return v > 0; }))
+      runRate = vals26.reduce(function(a, b) { return a + b; }, 0) / vals26.length;
+    else if (vals25.length && vals25.some(function(v) { return v > 0; }))
+      runRate = vals25.reduce(function(a, b) { return a + b; }, 0) / vals25.length;
+    else if (Number.isFinite(ti.avg12OutQty) && ti.avg12OutQty > 0)
+      runRate = ti.avg12OutQty;
+
+    // 계획/실적 비율 (단위불일치 의심 시 교차비교 사용 안 함)
+    var ratio = runRate > 0 && it.planAvgSales > 0 ? it.planAvgSales / runRate : null;
+    if (ratio !== null && (ratio > AI_UNIT_SUSPECT || ratio < 1 / AI_UNIT_SUSPECT)) ratio = null;
+
+    var secId;
+    if (Number.isFinite(ti.moq) && ti.moq > 0 && it.cutQty <= ti.moq) {
+      it.cause = "moq"; secId = "policy";
+      it.evidence = "권장 감축 " + formatNumber(Math.round(it.cutQty)) + " ≤ MOQ " +
+        formatNumber(Math.round(ti.moq)) + " — 발주단위 협의 필요";
+    } else if (ach !== null && ach < AI_ACH_LOW) {
+      it.cause = "under"; secId = "supply";
+      it.evidence = "S/F 대비 달성 " + Math.round(ach * 100) + "% (26년 " + bothCnt + "개월: 예측 " +
+        formatNumber(Math.round(sfSum)) + " vs 실적 " + formatNumber(Math.round(actSum)) + ")";
+    } else if (ratio !== null && ratio > AI_PLAN_HIGH) {
+      it.cause = "overplan"; secId = "planfix";
+      it.evidence = "계획 월평균 " + formatNumber(Math.round(it.planAvgSales)) + " = 실적 월평균 " +
+        formatNumber(Math.round(runRate)) + "의 " + ratio.toFixed(1) + "배";
+    } else if (ratio !== null && ratio < AI_PLAN_LOW) {
+      it.cause = "demanddown"; secId = "supply";
+      it.evidence = "향후 계획이 실적 월평균의 " + Math.round(ratio * 100) + "% — 수요 축소분 재고 잔류";
+    } else {
+      it.cause = "overbase"; secId = "supply";
+      it.evidence = "적정 " + Math.round(it.targetDays) + "일 대비 재고일수 초과";
+    }
+    sections[secId].items.push(it);
+    sections[secId].totalAmt += it.cutAmt;
+  });
+  Object.keys(sections).forEach(function(k) {
+    sections[k].items.sort(function(a, b) { return b.cutAmt - a.cutAmt; });
+  });
+  return { sections: sections, noPlan: computeNoPlanInventory(), ai: ai };
+}
+
+// 판매계획에 아예 없는 제·상품 재고 → 소진요청(마케팅) / 처분검토(사업부) 후보
+// 범위: 판매계획 파일에 등장하는 사업부의 품목만 (타 사업부 재고는 이 회의 범위 밖 → 제외 집계)
+function computeNoPlanInventory() {
+  var planned = new Set();
+  (state.mappedData.plan_monthly || []).forEach(function(r) { if (r.itemCode) planned.add(r.itemCode); });
+  if (!planned.size) return { sellout: [], disposal: [], excludedCnt: 0, excludedAmt: 0 };
+  var tiMap = new Map();
+  (state.mappedData.target_inv || []).forEach(function(r) { if (r.itemCode) tiMap.set(r.itemCode, r); });
+  var buMap = new Map();
+  (state.mappedData.item_master || []).forEach(function(r) {
+    if (r.itemCode && r.businessUnit) buMap.set(r.itemCode, r.businessUnit);
+  });
+  var planBUs = new Set();
+  planned.forEach(function(code) {
+    var bu = buMap.get(code);
+    if (bu) planBUs.add(bu);
+  });
+
+  var agg = new Map();
+  (state.mappedData.inventory_base || []).forEach(function(r) {
+    var t = String(r.itemType || "");
+    if (t.indexOf("완제품") < 0 && t.indexOf("상품") < 0) return;
+    if (!r.itemCode || planned.has(r.itemCode)) return;
+    var qty = Number.isFinite(r.baseQty) ? r.baseQty : 0;
+    var amt = Number.isFinite(r.baseAmount) ? r.baseAmount : 0;
+    if (qty <= 0 && amt <= 0) return;
+    var a = agg.get(r.itemCode);
+    if (!a) { a = { itemCode: r.itemCode, itemName: r.itemName || "", itemType: t, qty: 0, amt: 0 }; agg.set(r.itemCode, a); }
+    a.qty += qty; a.amt += amt;
+    if (!a.itemName && r.itemName) a.itemName = r.itemName;
+  });
+
+  var firstPlanMonth = parseInt((getRtfMonths()[0] || "").slice(5), 10) || "";
+  var sellout = [], disposal = [], excludedCnt = 0, excludedAmt = 0;
+  agg.forEach(function(a) {
+    var ti = tiMap.get(a.itemCode);
+    var bu = buMap.get(a.itemCode) || (ti ? ti.businessUnit : null);
+    if (planBUs.size && (!bu || !planBUs.has(bu))) { excludedCnt++; excludedAmt += a.amt; return; }
+    a.bu = bu;
+    var o26 = ti ? ti.outCurYear || {} : {};
+    var o25 = ti ? ti.outPrevYear || {} : {};
+    var s26 = 0, last26 = null;
+    Object.keys(o26).sort().forEach(function(m) { s26 += o26[m]; if (o26[m] > 0) last26 = m; });
+    var s25 = Object.keys(o25).reduce(function(s, m) { return s + o25[m]; }, 0);
+    if (s26 > 0) {
+      a.cause = "noplan";
+      a.evidence = "26년 출고 " + formatNumber(Math.round(s26)) +
+        (last26 ? " (최근 " + last26.slice(2).replace("-", ".") + ")" : "") +
+        " — " + firstPlanMonth + "월 이후 판매계획 없음";
+      sellout.push(a);
+    } else if (s25 > 0) {
+      a.cause = "stopped";
+      a.evidence = "25년 출고 " + formatNumber(Math.round(s25)) + " 이후 26년 출고 0 — 판매중단 추정";
+      disposal.push(a);
+    } else if (ti) {
+      a.cause = "dormant";
+      a.evidence = "25~26년 출고 이력 없음";
+      disposal.push(a);
+    } else {
+      a.cause = "unknown";
+      a.evidence = "적정재고·실적 파일에 없는 품목 — 이력 확인 필요";
+      disposal.push(a);
+    }
+  });
+  var byAmt = function(x, y) { return y.amt - x.amt; };
+  sellout.sort(byAmt);
+  disposal.sort(byAmt);
+  return { sellout: sellout, disposal: disposal, excludedCnt: excludedCnt, excludedAmt: excludedAmt };
+}
+
+// AI 진단 패널 (아코디언) — 닫힌 상태에서도 섹션별 요약·적용 버튼 노출
+var AI_SECTION_DEFS = [
+  { id: "supply",   no: "①", title: "공급 감축",     owner: "공장·구매",     desc: "입고 취소·연기·생산 축소 — 감축 시나리오 KPI에 반영됩니다." },
+  { id: "planfix",  no: "②", title: "판매계획 보정", owner: "마케팅·영업",   desc: "실적 대비 과대한 판매계획 — 계획 하향 검토 요청 + 해당 공급 감축." },
+  { id: "sellout",  no: "③", title: "소진 촉진",     owner: "마케팅",        desc: "최근까지 출고되던 품목인데 판매계획 누락 — 계획 반영 또는 소진 요청. (실행 주체가 마케팅이므로 KPI 미반영, 액션아이템)" },
+  { id: "disposal", no: "④", title: "처분 검토",     owner: "사업부",        desc: "판매중단·장기불용 재고 — 폐기/할인처분 검토. (손실 인식 수반 — 감축 성과와 분리 집계)" },
+  { id: "policy",   no: "⑤", title: "발주정책 개선", owner: "구매·생산기획", desc: "MOQ·발주단위 제약으로 미세 감축이 불가한 품목 — 발주정책 재협상 안건. (감축 적용 보류)" },
+];
+
+function renderAiDiagPanel(hasTargetData) {
+  if (!hasTargetData) return "";
+  var cls   = classifyAiExcess();
+  var aiMat = computeAiMatExcessPlan(Object.assign({}, state.excessAdj || {}, cls.ai.plan));
+  state.aiSecApplied = state.aiSecApplied || {};
+  state.aiDiagOpen   = state.aiDiagOpen   || {};
+  var S = cls.sections, np = cls.noPlan;
+
+  var fgCnt    = S.supply.items.length + S.planfix.items.length + S.policy.items.length;
+  var cutTotal = S.supply.totalAmt + S.planfix.totalAmt + (aiMat.totalCutAmt || 0);
+  var identAmt = np.sellout.concat(np.disposal).reduce(function(s, a) { return s + a.amt; }, 0);
+  if (!fgCnt && !aiMat.itemCnt && !np.sellout.length && !np.disposal.length) return "";
+
+  var anyApplied = Object.keys(state.aiExcessKeys || {}).length > 0 ||
+                   Object.keys(state.aiMatKeys || {}).length > 0;
+  var allApplied = !!(state.aiSecApplied.supply && state.aiSecApplied.planfix);
+
+  function chip(cause) {
+    var meta = AI_CAUSE_META[cause] || AI_CAUSE_META.overbase;
+    return "<span class='exc-ai-chip exc-ai-chip-" + meta.cls + "'>" + meta.label + "</span>";
+  }
+  function nameCell(code, name, plant) {
+    var pl = plant && typeof displayPlantName === "function" ? displayPlantName(plant) : (plant || "");
+    return "<td class='exc-ai-nm'>" + escapeHtml(name || code) +
+      " <span class='exc-ai-code'>" + escapeHtml(code) + (pl ? "·" + escapeHtml(pl) : "") + "</span></td>";
+  }
+  var MAXR = 100;
+  function cutRows(items) {
+    if (!items.length) return "<div class='exc-aisec-empty'>해당 품목 없음</div>";
+    var html = "<table class='exc-ai-table'><tbody>" + items.slice(0, MAXR).map(function(it) {
+      return "<tr>" + nameCell(it.itemCode, it.itemName, it.plantCode) +
+        "<td class='exc-ai-chipcell'>" + chip(it.cause) + "</td>" +
+        "<td class='exc-ai-evid'>" + escapeHtml(it.evidence) + "</td>" +
+        "<td class='exc-ai-cut'>-" + formatNumber(Math.round(it.cutQty)) +
+          " <span class='exc-ai-amt'>-" + escapeHtml(formatMoney(it.cutAmt)) + "</span></td></tr>";
+    }).join("") + "</tbody></table>";
+    if (items.length > MAXR) html += "<div class='exc-aisec-more'>외 " + (items.length - MAXR) + "품목</div>";
+    return html;
+  }
+  function invRows(items) {
+    if (!items.length) return "<div class='exc-aisec-empty'>해당 품목 없음</div>";
+    var html = "<table class='exc-ai-table'><tbody>" + items.slice(0, MAXR).map(function(a) {
+      return "<tr><td class='exc-ai-nm'>" + escapeHtml(a.itemName || a.itemCode) +
+        " <span class='exc-ai-code'>" + escapeHtml(a.itemCode) + (a.bu ? "·" + escapeHtml(a.bu) : "") + "</span></td>" +
+        "<td class='exc-ai-chipcell'>" + chip(a.cause) + "</td>" +
+        "<td class='exc-ai-evid'>" + escapeHtml(a.evidence) + "</td>" +
+        "<td class='exc-ai-cut'>재고 " + formatNumber(Math.round(a.qty)) +
+          " <span class='exc-ai-amt'>" + escapeHtml(formatMoney(a.amt)) + "</span></td></tr>";
+    }).join("") + "</tbody></table>";
+    if (items.length > MAXR) html += "<div class='exc-aisec-more'>외 " + (items.length - MAXR) + "품목</div>";
+    return html;
+  }
+  function applyBtn(secId, hasContent) {
+    if (!hasContent) return "";
+    var on = !!state.aiSecApplied[secId];
+    return "<button class='exc-aisec-apply" + (on ? " exc-aisec-apply-on" : "") + "' data-sec='" + secId + "'>" +
+      (on ? "적용 해제" : "권장안 적용") + "</button>";
+  }
+  function secBlock(def, sumHtml, bodyHtml, btnHtml) {
+    var isOpen  = !!state.aiDiagOpen[def.id];
+    var applied = !!state.aiSecApplied[def.id];
+    return "<div class='exc-aisec" + (applied ? " exc-aisec-on" : "") + "'>" +
+      "<div class='exc-aisec-head' data-sec='" + def.id + "'>" +
+        "<span class='exc-aisec-chev'>" + (isOpen ? "▾" : "▸") + "</span>" +
+        "<span class='exc-aisec-no'>" + def.no + "</span>" +
+        "<span class='exc-aisec-title'>" + def.title + "</span>" +
+        "<span class='exc-aisec-owner'>" + def.owner + "</span>" +
+        (applied ? "<span class='exc-aisec-badge'>✓ 적용됨</span>" : "") +
+        "<span class='exc-aisec-sum'>" + sumHtml + "</span>" + btnHtml +
+      "</div>" +
+      "<div class='exc-aisec-body'" + (isOpen ? "" : " hidden") + ">" +
+        "<div class='exc-aisec-desc'>" + def.desc + "</div>" + bodyHtml +
+      "</div></div>";
+  }
+
+  var matLine = aiMat.itemCnt > 0
+    ? "<div class='exc-aisec-mat'>원부자재 <strong>" + aiMat.itemCnt + "종 -" + escapeHtml(formatMoney(aiMat.totalCutAmt)) +
+      "</strong> — 입고 취소·연기 권장 (상세: 원부자재 탭, 공급 감축 적용 시 함께 반영)</div>"
+    : "";
+
+  var sumOf = {
+    supply: (S.supply.items.length ? "제·상품 " + S.supply.items.length + "품목 <strong>-" + escapeHtml(formatMoney(S.supply.totalAmt)) + "</strong>" : "") +
+            (aiMat.itemCnt > 0 ? (S.supply.items.length ? " · " : "") + "자재 " + aiMat.itemCnt + "종 <strong>-" + escapeHtml(formatMoney(aiMat.totalCutAmt)) + "</strong>" : "") ||
+            "<span class='exc-aisec-none'>해당 없음</span>",
+    planfix: S.planfix.items.length ? S.planfix.items.length + "품목 <strong>-" + escapeHtml(formatMoney(S.planfix.totalAmt)) + "</strong>" : "<span class='exc-aisec-none'>해당 없음</span>",
+    sellout: np.sellout.length ? np.sellout.length + "품목 재고 <strong>" + escapeHtml(formatMoney(np.sellout.reduce(function(s, a) { return s + a.amt; }, 0))) + "</strong>" : "<span class='exc-aisec-none'>해당 없음</span>",
+    disposal: np.disposal.length ? np.disposal.length + "품목 재고 <strong>" + escapeHtml(formatMoney(np.disposal.reduce(function(s, a) { return s + a.amt; }, 0))) + "</strong>" : "<span class='exc-aisec-none'>해당 없음</span>",
+    policy: S.policy.items.length ? S.policy.items.length + "품목 (감축 보류 " + escapeHtml(formatMoney(S.policy.totalAmt)) + ")" : "<span class='exc-aisec-none'>해당 없음</span>",
+  };
+  var excludedNote = np.excludedCnt > 0
+    ? "<div class='exc-aisec-more'>※ 판매계획 파일 범위 밖 사업부·미분류 " + np.excludedCnt + "품목(" +
+      escapeHtml(formatMoney(np.excludedAmt)) + ")은 이 회의 대상에서 제외</div>"
+    : "";
+  var bodyOf = {
+    supply:   matLine + cutRows(S.supply.items),
+    planfix:  cutRows(S.planfix.items),
+    sellout:  invRows(np.sellout),
+    disposal: invRows(np.disposal) + excludedNote,
+    policy:   cutRows(S.policy.items),
+  };
+  var btnOf = {
+    supply:  applyBtn("supply", S.supply.items.length > 0 || aiMat.itemCnt > 0),
+    planfix: applyBtn("planfix", S.planfix.items.length > 0),
+    sellout: "", disposal: "", policy: "",
+  };
+
+  var headBtns = (!allApplied ? "<button class='exc-ai-apply'>권장안 전체적용</button>" : "") +
+                 (anyApplied ? "<button class='exc-ai-clear'>전체해제</button>" : "");
+  var head = "<div class='exc-ai-panel-head'>" +
+    "<span class='exc-ai-icon'>🤖</span>" +
+    "<span class='exc-ai-text'><strong>AI 과잉재고 진단</strong> — 원인 분석 " + fgCnt + "품목 · 액션 5분류 · 감축 가능 <strong>-" +
+      escapeHtml(formatMoney(cutTotal)) + "</strong> (품절 0 유지)" +
+      (identAmt > 0 ? " · 소진·처분 식별 <strong>" + escapeHtml(formatMoney(identAmt)) + "</strong>" : "") +
+    "</span>" + headBtns + "</div>";
+
+  return "<div class='exc-ai-panel'>" + head +
+    AI_SECTION_DEFS.map(function(def) { return secBlock(def, sumOf[def.id], bodyOf[def.id], btnOf[def.id]); }).join("") +
+    "</div>";
+}
+
+// 섹션 단위 권장안 적용/해제 — 확정 상태는 aiSecApplied, 적용 키는 aiExcessKeys로 추적
+function toggleAiSection(secId) {
+  var cls = classifyAiExcess();
+  var s = cls.sections[secId];
+  if (!s) return;
+  state.aiSecApplied = state.aiSecApplied || {};
+  state.aiExcessKeys = state.aiExcessKeys || {};
+  var applied = !!state.aiSecApplied[secId];
+  s.items.forEach(function(it) {
+    it.keys.forEach(function(k) {
+      if (applied) { delete state.excessAdj[k]; delete state.aiExcessKeys[k]; }
+      else { state.excessAdj[k] = it.planVals[k]; state.aiExcessKeys[k] = true; }
+    });
+  });
+  state.aiSecApplied[secId] = !applied;
+  syncAiMatPlan();
+  render("inventory-variance");
+}
+
+// 자재 권장안을 현재 적용된 제·상품 감축과 정합하게 재산출 (공급감축 섹션에 종속)
+function syncAiMatPlan() {
+  Object.keys(state.aiMatKeys || {}).forEach(function(k) { delete state.matExcessAdj[k]; });
+  state.aiMatKeys = {};
+  if (state.aiSecApplied && state.aiSecApplied.supply) {
+    var aiMat = computeAiMatExcessPlan(Object.assign({}, state.excessAdj || {}));
+    Object.keys(aiMat.plan).forEach(function(k) {
+      state.matExcessAdj[k] = aiMat.plan[k];
+      state.aiMatKeys[k] = true;
+    });
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1079,22 +1393,25 @@ function bindExcessAdjustment() {
   var root = document.querySelector("#screenRoot");
   if (!root) return;
 
-  // AI 감축 선제안 적용/해제 (제·상품 + 원부자재)
+  // AI 진단 — 전체적용(공급감축+계획보정, MOQ구조·소진·처분 제외) / 전체해제
   var aiApplyBtn = root.querySelector(".exc-ai-apply");
   if (aiApplyBtn) {
     aiApplyBtn.addEventListener("click", function() {
-      var ai    = computeAiExcessPlan();
-      var aiMat = computeAiMatExcessPlan(Object.assign({}, state.excessAdj || {}, ai.plan));
-      state.aiExcessKeys = {};
-      state.aiMatKeys    = {};
-      Object.keys(ai.plan).forEach(function(k) {
-        state.excessAdj[k]    = ai.plan[k];
-        state.aiExcessKeys[k] = true;
+      var cls = classifyAiExcess();
+      state.aiSecApplied = state.aiSecApplied || {};
+      state.aiExcessKeys = state.aiExcessKeys || {};
+      ["supply", "planfix"].forEach(function(secId) {
+        var s = cls.sections[secId];
+        if (!s.items.length && !(secId === "supply")) return;
+        s.items.forEach(function(it) {
+          it.keys.forEach(function(k) {
+            state.excessAdj[k]    = it.planVals[k];
+            state.aiExcessKeys[k] = true;
+          });
+        });
+        state.aiSecApplied[secId] = true;
       });
-      Object.keys(aiMat.plan).forEach(function(k) {
-        state.matExcessAdj[k] = aiMat.plan[k];
-        state.aiMatKeys[k]    = true;
-      });
+      syncAiMatPlan();
       render("inventory-variance");
     });
   }
@@ -1105,9 +1422,29 @@ function bindExcessAdjustment() {
       Object.keys(state.aiMatKeys    || {}).forEach(function(k) { delete state.matExcessAdj[k]; });
       state.aiExcessKeys = {};
       state.aiMatKeys    = {};
+      state.aiSecApplied = {};
       render("inventory-variance");
     });
   }
+
+  // AI 진단 — 섹션 아코디언 펼침/접기 (리렌더 없이 DOM 토글)
+  root.querySelectorAll(".exc-aisec-head").forEach(function(head) {
+    head.addEventListener("click", function(e) {
+      if (e.target.closest(".exc-aisec-apply")) return;
+      var sec = head.dataset.sec;
+      state.aiDiagOpen = state.aiDiagOpen || {};
+      state.aiDiagOpen[sec] = !state.aiDiagOpen[sec];
+      var body = head.parentElement.querySelector(".exc-aisec-body");
+      if (body) body.hidden = !state.aiDiagOpen[sec];
+      var chev = head.querySelector(".exc-aisec-chev");
+      if (chev) chev.textContent = state.aiDiagOpen[sec] ? "▾" : "▸";
+    });
+  });
+
+  // AI 진단 — 섹션별 권장안 적용/해제
+  root.querySelectorAll(".exc-aisec-apply").forEach(function(btn) {
+    btn.addEventListener("click", function() { toggleAiSection(btn.dataset.sec); });
+  });
 
   // 제·상품 / 원부자재 탭 전환
   root.querySelectorAll(".exc-tab-btn").forEach(function(btn) {
@@ -1156,6 +1493,7 @@ function bindExcessAdjustment() {
       state.matExcessAdj = {};
       state.aiExcessKeys = {};
       state.aiMatKeys = {};
+      state.aiSecApplied = {};
       state.excessExpandedRows = new Set();
       render("inventory-variance");
     });

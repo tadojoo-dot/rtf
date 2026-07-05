@@ -83,19 +83,48 @@ function mapTargetInvRows(rows) {
   for (var hr = 0; hr < Math.min(rows.length, 10); hr++) {
     var hrow = rows[hr] || [];
     if (String(hrow[0]).trim() !== "내역" || String(hrow[1]).trim() !== "자재") continue;
-    var optCol = -1, rangeCol = -1, svcCol = -1;
+    var srow = rows[hr + 1] || []; // 서브헤더 행 (S/F 26.1… / 25.1… / 수량·금액 등)
+    var optCol = -1, rangeCol = -1, svcCol = -1, moqCol = -1, cycleCol = -1, avgOutCol = -1;
     for (var hc = 0; hc < hrow.length; hc++) {
       var hv = String(hrow[hc]).trim();
       if (hv === "적정재고") optCol = hc;
       else if (hv.indexOf("적정재고(구간)") === 0) rangeCol = hc;
       else if (hv.indexOf("서비스") >= 0) svcCol = hc;
+      else if (hv === "MOQ") moqCol = hc;
+      else if (hv.indexOf("공급주기") >= 0) cycleCol = hc;
+      else if (hv.indexOf("12개월 평균") >= 0) avgOutCol = hc;
     }
     if (optCol < 0) break; // 이 레이아웃 아님 → 기존 로직으로
+    // 월별 출고실적·S/F 예측 컬럼 탐색 (서브헤더 라벨 기반).
+    // "25.M" = 25년 출고실적. "26.x"는 S/F(예측)와 26년 출고실적 양쪽에 있어
+    // 위치로 구분: 25년 실적 그룹보다 앞이면 S/F, 뒤면 실적.
+    var out25Cols = [], out26Cols = [], sfCols = [], firstOut25 = Infinity;
+    for (var sc = 0; sc < srow.length; sc++) {
+      if (/^25\.\d{1,2}$/.test(String(srow[sc]).trim())) firstOut25 = Math.min(firstOut25, sc);
+    }
+    for (var sc2 = 0; sc2 < srow.length; sc2++) {
+      var sv = String(srow[sc2]).trim();
+      var m25 = sv.match(/^25\.(\d{1,2})$/);
+      var m26 = sv.match(/^26\.(\d{1,2})$/);
+      if (m25) out25Cols.push({ col: sc2, month: "2025-" + String(parseInt(m25[1], 10)).padStart(2, "0") });
+      else if (m26) {
+        var entry = { col: sc2, month: "2026-" + String(parseInt(m26[1], 10)).padStart(2, "0") };
+        if (sc2 < firstOut25) sfCols.push(entry); else out26Cols.push(entry);
+      }
+    }
     var DAYS = optCol + 2; // 그룹 내 [수량, 금액, 재고일수]
     return rows.slice(hr + 1).map(function(row) {
       var code = cleanOptional(row[1]);
       var days = cleanNumber(row[DAYS]);
       if (!code || days === null) return null;
+      var pickMonths = function(cols) {
+        var o = {};
+        cols.forEach(function(c) {
+          var v = cleanNumber(row[c.col]);
+          if (v !== null) o[c.month] = v;
+        });
+        return o;
+      };
       return {
         itemCode:     normalizeCode(String(code)),
         targetDays:   days,
@@ -104,6 +133,12 @@ function mapTargetInvRows(rows) {
         serviceLevel: svcCol >= 0 ? cleanOptional(row[svcCol]) : null,
         itemType:     cleanOptional(row[0]),
         businessUnit: cleanOptional(row[3]),
+        sfByMonth:    pickMonths(sfCols),    // 26년 S/F 판매예측 (월별)
+        outPrevYear:  pickMonths(out25Cols), // 25년 월별 출고실적
+        outCurYear:   pickMonths(out26Cols), // 26년 월별 출고실적
+        moq:          moqCol >= 0 ? cleanNumber(row[moqCol]) : null,
+        cycleMonths:  cycleCol >= 0 ? cleanNumber(row[cycleCol]) : null,
+        avg12OutQty:  avgOutCol >= 0 ? cleanNumber(row[avgOutCol]) : null,
       };
     }).filter(function(r) { return r !== null; });
   }

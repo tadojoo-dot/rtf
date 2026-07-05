@@ -467,6 +467,78 @@
 .exc-ai-clear { background: #fff; color: #64748b; border-color: #cbd5e1; }
 .exc-ai-clear:hover { background: #f1f5f9; color: #334155; }
 
+/* ── AI 과잉재고 진단 패널 (원인 분류 × 액션 아코디언) ─────────────────── */
+.exc-ai-panel {
+  margin-bottom: 10px; border: 1px solid #c7d2fe; border-radius: 10px;
+  background: #fff; overflow: hidden;
+}
+.exc-ai-panel-head {
+  display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+  background: linear-gradient(90deg, #eef2ff 0%, #f8fafc 100%);
+  border-bottom: 1px solid #e2e8f0;
+}
+.exc-aisec { border-top: 1px solid #eef1f6; }
+.exc-aisec-head {
+  display: flex; align-items: center; gap: 9px; padding: 8px 16px;
+  cursor: pointer; user-select: none;
+}
+.exc-aisec-head:hover { background: #f8fafc; }
+.exc-aisec-chev { width: 12px; color: #94a3b8; font-size: 12px; flex-shrink: 0; }
+.exc-aisec-no { font-weight: 800; color: #4f46e5; font-size: 14px; flex-shrink: 0; }
+.exc-aisec-title { font-weight: 800; font-size: 14px; color: #1e293b; flex-shrink: 0; white-space: nowrap; }
+.exc-aisec-owner {
+  flex-shrink: 0; font-size: 11.5px; font-weight: 700; color: #64748b;
+  background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 20px; padding: 2px 9px;
+  white-space: nowrap;
+}
+.exc-aisec-badge {
+  flex-shrink: 0; font-size: 11.5px; font-weight: 800; color: #047857;
+  background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 20px; padding: 2px 9px;
+  white-space: nowrap;
+}
+.exc-aisec-sum { margin-left: auto; font-size: 13px; color: #475569; text-align: right; }
+.exc-aisec-sum strong { color: #b91c1c; }
+.exc-aisec-none { color: #94a3b8; font-weight: 400; }
+.exc-aisec-on { background: #f6fef9; }
+.exc-aisec-apply {
+  flex-shrink: 0; padding: 5px 13px; border-radius: 7px; font-size: 12.5px;
+  font-weight: 700; cursor: pointer; border: 1px solid #4f46e5;
+  background: #fff; color: #4f46e5;
+}
+.exc-aisec-apply:hover { background: #eef2ff; }
+.exc-aisec-apply-on { border-color: #cbd5e1; color: #64748b; }
+.exc-aisec-apply-on:hover { background: #f1f5f9; }
+.exc-aisec-body { padding: 0 16px 10px 37px; max-height: 280px; overflow-y: auto; }
+.exc-aisec-desc { font-size: 12px; color: #64748b; padding: 2px 0 8px; }
+.exc-aisec-mat {
+  font-size: 12.5px; color: #334155; background: #f8fafc;
+  border: 1px dashed #cbd5e1; border-radius: 7px; padding: 6px 10px; margin-bottom: 8px;
+}
+.exc-aisec-mat strong { color: #b91c1c; }
+.exc-aisec-empty { font-size: 12.5px; color: #94a3b8; padding: 4px 0 6px; }
+.exc-aisec-more { font-size: 12px; color: #94a3b8; padding: 6px 0 0; }
+.exc-ai-table { width: 100%; border-collapse: collapse; }
+.exc-ai-table td { padding: 4px 8px 4px 0; border-top: 1px solid #f1f5f9; vertical-align: middle; }
+.exc-ai-nm { font-size: 12.5px; font-weight: 700; color: #1e293b; max-width: 300px; }
+.exc-ai-code { font-weight: 400; color: #94a3b8; font-size: 11.5px; }
+.exc-ai-chipcell { width: 74px; }
+.exc-ai-chip {
+  display: inline-block; font-size: 11px; font-weight: 800; border-radius: 5px;
+  padding: 2px 7px; white-space: nowrap;
+}
+.exc-ai-chip-under    { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+.exc-ai-chip-overplan { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+.exc-ai-chip-down     { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+.exc-ai-chip-base     { background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; }
+.exc-ai-chip-moq      { background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; }
+.exc-ai-chip-noplan   { background: #f0fdfa; color: #0f766e; border: 1px solid #99f6e4; }
+.exc-ai-chip-stopped  { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
+.exc-ai-chip-dormant  { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+.exc-ai-chip-unknown  { background: #fafafa; color: #737373; border: 1px dashed #d4d4d4; }
+.exc-ai-evid { font-size: 12px; color: #64748b; }
+.exc-ai-cut { font-size: 12.5px; font-weight: 700; color: #1e293b; text-align: right; white-space: nowrap; }
+.exc-ai-amt { color: #b91c1c; font-weight: 800; }
+
 /* ── 제·상품 / 원부자재 탭 ─────────────────────────────────────────────── */
 .exc-tabbar { display: flex; gap: 6px; margin-bottom: 10px; }
 .exc-tab-btn {
