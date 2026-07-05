@@ -1589,6 +1589,54 @@ function renderAiDiagCharts(it, isCut, ov) {
       var daily = it.salesArr[i] > 0 ? it.salesArr[i] / monthDays(m) : 0;
       return daily > 0 ? it.targetDays * daily : null;
     });
+    // 수량 축약 표기 (라벨용): 123.5만 / 1.2억
+    var fmtC = function(v) {
+      if (v === null || v === undefined) return "";
+      var av = Math.abs(v);
+      if (av >= 1e8) return (Math.round(v / 1e7) / 10).toLocaleString() + "억";
+      if (av >= 1e4) return (Math.round(v / 1e3) / 10).toLocaleString() + "만";
+      return Math.round(v).toLocaleString();
+    };
+    // 데이터 라벨: 현재계획=점 위(회색), 감축후=점 아래(초록, 값이 같아진 월은 생략),
+    // 적정선=우측 끝 1개만 — 라벨 과밀로 화면이 깨지지 않게 하는 규칙
+    var diagLabelsPlugin = {
+      id: "diagLabels",
+      afterDatasetsDraw: function(chart) {
+        var c = chart.ctx, area = chart.chartArea;
+        var clampX = function(x) { return Math.min(Math.max(x, area.left + 16), area.right - 16); };
+        var m0 = chart.getDatasetMeta(0), m1 = chart.getDatasetMeta(1), m2 = chart.getDatasetMeta(2);
+        var d0 = chart.data.datasets[0].data, d1 = chart.data.datasets[1].data, d2 = chart.data.datasets[2].data;
+        c.save();
+        c.textAlign = "center";
+        m0.data.forEach(function(el, i) {
+          var v0 = d0[i], v1 = d1[i];
+          if (v0 === null || v0 === undefined) return;
+          var same = v1 !== null && v1 !== undefined && Math.abs(v0 - v1) < Math.max(1, Math.abs(v0) * 0.005);
+          c.font = "600 10.5px Pretendard, sans-serif";
+          c.fillStyle = "#64748b";
+          c.textBaseline = "bottom";
+          c.fillText(fmtC(v0), clampX(el.x), el.y - 5);
+          if (!same && m1.data[i] && v1 !== null && v1 !== undefined) {
+            c.font = "800 11px Pretendard, sans-serif";
+            c.fillStyle = "#15803d";
+            c.textBaseline = "top";
+            c.fillText(fmtC(v1), clampX(m1.data[i].x), m1.data[i].y + 5);
+          }
+        });
+        var lastIdx = -1;
+        for (var i2 = d2.length - 1; i2 >= 0; i2--) {
+          if (d2[i2] !== null && d2[i2] !== undefined) { lastIdx = i2; break; }
+        }
+        if (lastIdx >= 0 && m2.data[lastIdx]) {
+          c.font = "700 10.5px Pretendard, sans-serif";
+          c.fillStyle = "#dc2626";
+          c.textAlign = "right";
+          c.textBaseline = "bottom";
+          c.fillText("적정 " + fmtC(d2[lastIdx]), m2.data[lastIdx].x - 2, m2.data[lastIdx].y - 4);
+        }
+        c.restore();
+      },
+    };
     _aiPopupCharts.push(new Chart(canvasB.getContext("2d"), {
       type: "line",
       data: {
@@ -1604,6 +1652,7 @@ function renderAiDiagCharts(it, isCut, ov) {
       },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
+        layout: { padding: { top: 18, bottom: 8 } },
         plugins: { legend: { display: true, position: "top", labels: { boxWidth: 14, font: { size: 12.5 } } },
           tooltip: { callbacks: { label: function(c) {
             return c.raw === null || c.raw === undefined ? null : c.dataset.label + ": " + Math.round(c.raw).toLocaleString();
@@ -1613,6 +1662,7 @@ function renderAiDiagCharts(it, isCut, ov) {
           y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 11.5 }, callback: function(v) { return Math.round(v).toLocaleString(); } } },
         },
       },
+      plugins: [diagLabelsPlugin],
     }));
   }
 }
