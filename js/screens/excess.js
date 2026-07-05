@@ -1414,6 +1414,15 @@ function closeAiDiagPopup() {
 
 function openAiDiagPopup(secId, idx) {
   if (secId === "matcut" || secId === "matunused") return openMatDiagPopup(secId, idx);
+  // 재고일수 구간 목록 → 정보성 진단 카드 (감축안 없음)
+  if (secId === "mat180x" || secId === "mat150" || secId === "mat120" || secId === "mat90") {
+    var band = _matDiagCache && _matDiagCache.bands && _matDiagCache.bands[secId] && _matDiagCache.bands[secId][idx];
+    if (band) {
+      var bit = buildMatInfoItem(band.itemCode, band.plantCode);
+      if (bit) openInfoDiagPopup(bit, true);
+    }
+    return;
+  }
   if (!_aiDiagCache) return;
   var isCut = secId === "supply" || secId === "planfix";
   var it = isCut
@@ -1818,9 +1827,15 @@ function computeAiMatExcessPlan(fgAdj) {
 // 원인 설명은 팝업(진단 카드) 안에서만 — 목록은 심각도·금액만
 // ═══════════════════════════════════════════════════════════════════════════
 var MAT_SECTION_DEFS = [
-  { id: "matcut",    no: "①", title: "너무 많이 쌓인 재고", owner: "재고일수 " + MAT_TARGET_DAYS + "일 이상",
-    desc: "기준: 향후 소요 대비 재고일수가 " + MAT_TARGET_DAYS + "일을 초과. 담당: 구매·공장 — 입고 취소·연기, 감축 시나리오 KPI 반영." },
-  { id: "matunused", no: "②", title: "아예 안 쓰는 재고",   owner: "이번 계획 소요 0",
+  { id: "matcut",    no: "①", title: MAT_TARGET_DAYS + "일 이상 — 즉시 감축", owner: "AI 감축안 적용 대상", group: "너무 많이 쌓인 재고 — 재고일수 구간",
+    desc: "기준: 향후 소요 대비 재고일수 최대치가 " + MAT_TARGET_DAYS + "일 초과. 담당: 구매·공장 — 입고 취소·연기, 감축 시나리오 KPI 반영. (입고가 없어 감축 여지가 없는 자재는 목록 하단 별도 표기)" },
+  { id: "mat150",    no: "②", title: "150~" + MAT_TARGET_DAYS + "일 — 감축 검토", owner: "다음 사이클 후보",
+    desc: "기준선(" + MAT_TARGET_DAYS + "일)에 근접한 자재 — 소요·입고 추이를 확인하고 다음 사이클 감축 후보로 관리. (참고 목록, KPI 미반영)" },
+  { id: "mat120",    no: "③", title: "120~150일 — 관찰", owner: "참고 목록",
+    desc: "재고일수 120~150일 자재 — 추세 관찰 대상. (참고 목록, KPI 미반영)" },
+  { id: "mat90",     no: "④", title: "90~120일 — 관찰", owner: "참고 목록",
+    desc: "재고일수 90~120일 자재 — 추세 관찰 대상. (참고 목록, KPI 미반영)" },
+  { id: "matunused", no: "⑤", title: "아예 안 쓰는 재고",   owner: "이번 계획 소요 0", group: "아예 안 쓰는 재고",
     desc: "기준: 재고는 있으나 이번 계획 기간에 소요(BOM 전개)가 전혀 없음 — BOM 미등록 포함. 담당: 구매·사업부 — 반품·전용·폐기 검토. (KPI 미반영 액션아이템)" },
 ];
 function findAiSecDef(secId) {
@@ -1927,10 +1942,39 @@ function renderMatDiagPanel() {
   // 정합 의심(단위) 자재 수 — 각주 표기용
   var flowRows = calcMatFlowRows(state.excessAdj, null) || [];
   var insaneCnt = flowRows.filter(function(r) { return !r.sane; }).length;
-  _matDiagCache = { aiMat: aiMat, unused: unused };
+
+  // 재고일수 구간(150/120/90) + 180↑인데 입고가 없어 감축 불가한 자재
+  var aiCutSet = new Set();
+  aiMat.items.forEach(function(it) { aiCutSet.add(it.itemCode + "|" + (it.plantCode || "")); });
+  var bands = { mat180x: [], mat150: [], mat120: [], mat90: [] };
+  flowRows.forEach(function(r) {
+    if (!r.sane) return;
+    var dvals = r.days.filter(function(v) { return v !== null; });
+    if (!dvals.length) return;
+    var maxD = Math.max.apply(null, dvals);
+    if (maxD < 90) return;
+    var key = r.flow.componentCode + "|" + (r.flow.plant || "");
+    var unitVal = Number.isFinite(r.flow.unitVal) ? r.flow.unitVal : 0;
+    var consSum = 0, consCnt = 0;
+    r.cons.forEach(function(v) { if (v > 0) { consSum += v; consCnt++; } });
+    var entry = {
+      itemCode: r.flow.componentCode, itemName: r.flow.componentName || r.flow.componentCode,
+      plantCode: r.flow.plant || "", maxDays: maxD,
+      invAmt: Math.max(0, r.ending[0] || 0) * unitVal,
+      avgCons: consCnt ? consSum / consCnt : 0,
+    };
+    if (maxD >= MAT_TARGET_DAYS) { if (!aiCutSet.has(key)) bands.mat180x.push(entry); }
+    else if (maxD >= 150) bands.mat150.push(entry);
+    else if (maxD >= 120) bands.mat120.push(entry);
+    else bands.mat90.push(entry);
+  });
+  Object.keys(bands).forEach(function(k) { bands[k].sort(function(a, b) { return b.invAmt - a.invAmt; }); });
+
+  _matDiagCache = { aiMat: aiMat, unused: unused, bands: bands };
   state.aiSecApplied = state.aiSecApplied || {};
   state.aiDiagOpen   = state.aiDiagOpen   || {};
-  if (!aiMat.itemCnt && !unused.items.length) return "";
+  var bandCnt = bands.mat180x.length + bands.mat150.length + bands.mat120.length + bands.mat90.length;
+  if (!aiMat.itemCnt && !unused.items.length && !bandCnt) return "";
 
   var matApplied = !!state.aiSecApplied.matcut;
   var conf = 0, counts = { accept: 0, adjust: 0, reject: 0, hold: 0 }, anyDec = false;
@@ -2010,23 +2054,62 @@ function renderMatDiagPanel() {
         "<div class='exc-aisec-desc'>" + def.desc + "</div>" + bodyHtml +
       "</div></div>";
   }
+  // 재고일수 구간 목록 (참고용 — 클릭 시 정보성 진단 카드)
+  var tierChipCls = { mat180x: "under", mat150: "overplan", mat120: "noplan", mat90: "base" };
+  function tierRows(items, secId) {
+    if (!items.length) return "<div class='exc-aisec-empty'>해당 자재 없음</div>";
+    var html = "<table class='exc-ai-table'><tbody>" + items.slice(0, MAXR).map(function(a, idx) {
+      var pl = a.plantCode && typeof displayPlantName === "function" ? displayPlantName(a.plantCode) : (a.plantCode || "");
+      return "<tr class='exc-ai-row' data-sec='" + secId + "' data-idx='" + idx + "' title='클릭하면 진단 카드가 열립니다'>" +
+        "<td class='exc-ai-nm'><span class='exc-ai-codehead'>" + escapeHtml(a.itemCode) + "</span> " +
+          escapeHtml(a.itemName) + (pl ? " <span class='exc-ai-code'>" + escapeHtml(pl) + "</span>" : "") + "</td>" +
+        "<td class='exc-ai-chipcell'><span class='exc-ai-chip exc-ai-chip-" + tierChipCls[secId] + "'>최대 " + Math.round(a.maxDays) + "일</span></td>" +
+        "<td class='exc-ai-evid'>" + (secId === "mat180x" ? "입고계획이 없어 감축 불가 — 소진·반품 검토" : "월평균 소요 " + formatNumber(Math.round(a.avgCons))) + "</td>" +
+        "<td class='exc-ai-cut'><span class='exc-ai-amt'>" + escapeHtml(formatMoney(a.invAmt)) + "</span></td></tr>";
+    }).join("") + "</tbody></table>";
+    if (items.length > MAXR) html += "<div class='exc-aisec-more'>외 " + (items.length - MAXR) + "종</div>";
+    return html;
+  }
+  function tierSum(items) {
+    if (!items.length) return "<span class='exc-aisec-none'>해당 없음</span>";
+    var amt = items.reduce(function(s, a) { return s + a.invAmt; }, 0);
+    return items.length + "종 재고 <strong>" + escapeHtml(formatMoney(amt)) + "</strong>";
+  }
+
   var cutBtn = aiMat.itemCnt
     ? "<button class='exc-aisec-apply" + (matApplied ? " exc-aisec-apply-on" : "") + "' data-sec='matcut'>" +
       (matApplied ? "적용 해제" : "권장안 적용") + "</button>"
     : "";
+  var cutBody = matCutRows(aiMat.items) +
+    (bands.mat180x.length
+      ? "<div class='exc-aisec-desc' style='padding-top:10px;'>▼ " + MAT_TARGET_DAYS + "일 초과이나 입고계획이 없어 감축 불가 — 소진·반품 검토 대상</div>" +
+        tierRows(bands.mat180x, "mat180x")
+      : "");
   var foot = [];
   if (insaneCnt) foot.push("단위 정합 확인 " + insaneCnt + "종");
   if (unused.scopeCnt) foot.push("회의 범위 외 " + unused.scopeCnt + "종(" + formatMoney(unused.scopeAmt) + ")");
   var footHtml = foot.length ? "<div class='exc-aisec-group'>※ " + foot.join(" · ") + " 제외</div>" : "";
 
+  var sumOf = {
+    matcut: cutSum, mat150: tierSum(bands.mat150), mat120: tierSum(bands.mat120),
+    mat90: tierSum(bands.mat90), matunused: unusedSum,
+  };
+  var bodyOf = {
+    matcut: cutBody, mat150: tierRows(bands.mat150, "mat150"), mat120: tierRows(bands.mat120, "mat120"),
+    mat90: tierRows(bands.mat90, "mat90"), matunused: matUnusedRows(unused.items),
+  };
+  var btnOf = { matcut: cutBtn, mat150: "", mat120: "", mat90: "", matunused: "" };
+
   return "<div class='exc-ai-panel'>" +
     "<div class='exc-ai-panel-head'><span class='exc-ai-icon'>🤖</span>" +
-    "<span class='exc-ai-text'><strong>AI 원부자재 진단</strong> — 두 가지만 봅니다: 너무 많이 쌓였거나, 아예 안 쓰거나 · 감축 가능 <strong>-" +
+    "<span class='exc-ai-text'><strong>AI 원부자재 진단</strong> — 재고일수 구간(90/120/150/" + MAT_TARGET_DAYS + "일) + 미사용 재고 · 감축 가능 <strong>-" +
     escapeHtml(formatMoney(aiMat.totalCutAmt)) + "</strong>" +
     (unusedAmt > 0 ? " · 미사용 재고 <strong>" + escapeHtml(formatMoney(unusedAmt)) + "</strong> 식별" : "") +
     "</span></div>" +
-    secBlockM(MAT_SECTION_DEFS[0], cutSum, matCutRows(aiMat.items), cutBtn) +
-    secBlockM(MAT_SECTION_DEFS[1], unusedSum, matUnusedRows(unused.items), "") +
+    MAT_SECTION_DEFS.map(function(def) {
+      var kicker = def.group ? "<div class='exc-aisec-group'>" + def.group + "</div>" : "";
+      return kicker + secBlockM(def, sumOf[def.id], bodyOf[def.id], btnOf[def.id]);
+    }).join("") +
     footHtml +
     "</div>";
 }
