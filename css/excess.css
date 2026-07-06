@@ -457,6 +457,8 @@
 .exc-ai-icon { font-size: 18px; }
 .exc-ai-text { flex: 1; font-size: 14px; color: #334155; }
 .exc-ai-text strong { color: #1e293b; }
+/* 색 원칙: 문제(초과·품절)=빨강, 해결(감축·발굴)=초록 */
+.exc-ai-text strong.exc-ai-good { color: #15803d; }
 .exc-ai-apply, .exc-ai-clear {
   flex-shrink: 0; padding: 7px 16px; border-radius: 8px;
   font-size: 13px; font-weight: 700; cursor: pointer;
@@ -498,7 +500,7 @@
   white-space: nowrap;
 }
 .exc-aisec-sum { margin-left: auto; font-size: 14.5px; color: #475569; text-align: right; }
-.exc-aisec-sum strong { color: #b91c1c; }
+.exc-aisec-sum strong { color: #15803d; }
 .exc-aisec-none { color: #94a3b8; font-weight: 400; }
 .exc-aisec-on { background: #f6fef9; }
 .exc-aisec-apply {
@@ -538,7 +540,7 @@
 .exc-ai-chip-unknown  { background: #fafafa; color: #737373; border: 1px dashed #d4d4d4; }
 .exc-ai-evid { font-size: 13.5px; color: #64748b; }
 .exc-ai-cut { font-size: 14px; font-weight: 700; color: #1e293b; text-align: right; white-space: nowrap; }
-.exc-ai-amt { color: #b91c1c; font-weight: 800; }
+.exc-ai-amt { color: #15803d; font-weight: 800; }
 .exc-ai-row { cursor: pointer; }
 .exc-ai-row:hover td { background: #f8fafc; }
 
@@ -582,7 +584,7 @@
 .exc-diag-name .exc-ai-codehead { font-size: 15px; vertical-align: 3px; }
 .exc-diag-sub { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
 .exc-diag-proposal { font-size: 15.5px; color: #334155; }
-.exc-diag-proposal strong { color: #b91c1c; }
+.exc-diag-proposal strong { color: #15803d; }
 .exc-diag-close {
   flex-shrink: 0; width: 34px; height: 34px; border-radius: 8px; border: 1px solid #e2e8f0;
   background: #fff; color: #64748b; font-size: 20px; font-weight: 700; cursor: pointer; line-height: 1;

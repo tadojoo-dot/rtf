@@ -1355,9 +1355,9 @@ function renderAiDiagPanel(hasTargetData) {
                  (anyApplied ? "<button class='exc-ai-clear'>전체해제</button>" : "");
   var head = "<div class='exc-ai-panel-head'>" +
     "<span class='exc-ai-icon'>🤖</span>" +
-    "<span class='exc-ai-text'><strong>AI 과잉재고 진단</strong> — 완제품 " + fgCnt + "품목 원인 규명 완료 ➜ 권장안 적용 시 <strong>-" +
+    "<span class='exc-ai-text'><strong>AI 과잉재고 진단</strong> — 완제품 " + fgCnt + "품목 원인 규명 완료 ➜ 권장안 적용 시 <strong class='exc-ai-good'>-" +
       escapeHtml(formatMoney(cutTotal)) + "</strong> 감축 (품절 0 유지)" +
-      (identAmt > 0 ? " · 잠자는 재고 <strong>" + escapeHtml(formatMoney(identAmt)) + "</strong> 소진·처분 발굴" : "") +
+      (identAmt > 0 ? " · 잠자는 재고 <strong class='exc-ai-good'>" + escapeHtml(formatMoney(identAmt)) + "</strong> 소진·처분 발굴" : "") +
       (confTotal > 0 ? " · <span class='exc-ai-conf'>협의 확정 -" + escapeHtml(formatMoney(confTotal)) + "</span>" : "") +
     "</span>" + headBtns + "</div>";
 
@@ -2114,9 +2114,9 @@ function renderMatDiagPanel() {
 
   return "<div class='exc-ai-panel'>" +
     "<div class='exc-ai-panel-head'><span class='exc-ai-icon'>🤖</span>" +
-    "<span class='exc-ai-text'><strong>AI 원부자재 진단</strong> — 전 자재 재고일수 전수 스캔(90~" + MAT_TARGET_DAYS + "일 4구간) ➜ 감축 가능 <strong>-" +
+    "<span class='exc-ai-text'><strong>AI 원부자재 진단</strong> — 전 자재 재고일수 전수 스캔(90~" + MAT_TARGET_DAYS + "일 4구간) ➜ 감축 가능 <strong class='exc-ai-good'>-" +
     escapeHtml(formatMoney(aiMat.totalCutAmt)) + "</strong>" +
-    (unusedAmt > 0 ? " · 미사용 재고 <strong>" + escapeHtml(formatMoney(unusedAmt)) + "</strong> 발굴" : "") +
+    (unusedAmt > 0 ? " · 미사용 재고 <strong class='exc-ai-good'>" + escapeHtml(formatMoney(unusedAmt)) + "</strong> 발굴" : "") +
     "</span></div>" +
     MAT_SECTION_DEFS.map(function(def) {
       var kicker = def.group ? "<div class='exc-aisec-group'>" + def.group + "</div>" : "";
