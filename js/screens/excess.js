@@ -1507,7 +1507,7 @@ function openAiDiagPopup(secId, idx) {
       "<div class='exc-diag-opinion'><span class='exc-diag-opinion-tag'>🤖 AI 소견</span>" + escapeHtml(opinion) + "</div>" +
       "<div class='exc-diag-charts'>" +
         "<div class='exc-diag-chartbox'>" +
-          "<div class='exc-diag-chart-title'>수요 흐름 — 왜 쌓였나 <span class='exc-diag-chart-sub'>출고실적(막대) vs 판매계획(선)</span></div>" +
+          "<div class='exc-diag-chart-title'>수요 흐름 — 왜 쌓였나 <span class='exc-diag-chart-sub'>출고실적·입고계획(막대) vs 판매계획(선)</span></div>" +
           "<div class='exc-diag-canvas-wrap'><canvas class='exc-diag-chart-a'></canvas></div>" +
         "</div>" +
         (isCut
@@ -1620,6 +1620,11 @@ function renderAiDiagCharts(it, isCut, ov) {
       var v = ti && ti.sfByMonth ? ti.sfByMonth[m] : undefined;
       return v === undefined ? null : v;
     });
+    // 미래 입고(공급)계획 — 감축 제안이 취소하려는 바로 그 입고. 감축 제안 있는 품목은 항상 존재(cut≤공급).
+    var supplyData = labels.map(function(m) {
+      var i = future.indexOf(m);
+      return i < 0 ? null : (it.origSupplyArr ? it.origSupplyArr[i] : null);
+    });
     _aiPopupCharts.push(new Chart(canvasA.getContext("2d"), {
       type: "bar",
       data: {
@@ -1627,6 +1632,8 @@ function renderAiDiagCharts(it, isCut, ov) {
         datasets: [
           { type: "bar", label: "출고 실적", data: histData, order: 2,
             backgroundColor: labels.map(function(m) { return m < "2026" ? "#cbd5e1" : "#93c5fd"; }) },
+          { type: "bar", label: "입고(공급)계획", data: supplyData, order: 2,
+            backgroundColor: "#fb923c" },
           { type: "line", label: "판매계획", data: planData, borderColor: "#4f46e5",
             borderWidth: 2.5, pointRadius: 2.5, spanGaps: true, order: 0 },
         ],
@@ -2702,7 +2709,7 @@ function openInfoDiagPopup(it, isMat) {
       "<div class='exc-diag-charts'>" +
         "<div class='exc-diag-chartbox'>" +
           "<div class='exc-diag-chart-title'>" + (isMat ? "소요 vs 입고" : "수요 흐름") +
-            " <span class='exc-diag-chart-sub'>" + (isMat ? "월별 BOM 소요량 vs 입고계획" : "출고실적(막대) vs 판매계획(선)") + "</span></div>" +
+            " <span class='exc-diag-chart-sub'>" + (isMat ? "월별 BOM 소요량 vs 입고계획" : "출고실적·입고계획(막대) vs 판매계획(선)") + "</span></div>" +
           "<div class='exc-diag-canvas-wrap'><canvas class='exc-diag-chart-a'></canvas></div>" +
         "</div>" +
         "<div class='exc-diag-chartbox'>" +
