@@ -1426,6 +1426,13 @@ function buildCvChip(ti) {
   if (r.intermittent) return "<span class='exc-diag-cvchip exc-diag-cvchip-int' title='출고 없는 달이 많아 변동률 산정 제외'>수요변동 —<small> 간헐</small></span>";
   return "<span class='exc-diag-cvchip' title='과거 월별 출고 표준편차 ÷ 평균'>수요변동 " + Math.round(r.cv * 100) + "%</span>";
 }
+// 적정재고일수 칩 — 감축 제안의 기준점(며칠까지 맞추나). it.targetDays 우선, 없으면 ti.targetDays
+function buildTargetChip(it, ti) {
+  var td = it && Number.isFinite(it.targetDays) ? it.targetDays
+         : (ti && Number.isFinite(ti.targetDays) ? ti.targetDays : null);
+  if (td === null) return "<span class='exc-diag-tgtchip exc-diag-tgtchip-none'>적정 미등록</span>";
+  return "<span class='exc-diag-tgtchip' title='적정재고 기준일수'>적정 " + Math.round(td) + "일</span>";
+}
 
 function closeAiDiagPopup() {
   _aiPopupCharts.forEach(function(c) { try { c.destroy(); } catch (e) {} });
@@ -1491,7 +1498,8 @@ function openAiDiagPopup(secId, idx) {
             (def ? "<span class='exc-aisec-owner'>" + def.no + " " + def.title + " · " + def.owner + "</span> " : "") +
             "<span class='exc-ai-chip exc-ai-chip-" + meta.cls + "'>" + meta.label + "</span> " +
             "<span class='exc-diag-proposal'>" + proposalTxt + "</span> " +
-            buildCvChip(isCut ? (it.diag && it.diag.ti) : it.ti) +
+            buildCvChip(isCut ? (it.diag && it.diag.ti) : it.ti) + " " +
+            buildTargetChip(it, isCut ? (it.diag && it.diag.ti) : it.ti) +
           "</div>" +
         "</div>" +
         "<button class='exc-diag-close' title='닫기'>×</button>" +
@@ -2677,7 +2685,7 @@ function openInfoDiagPopup(it, isMat) {
             "<span class='exc-ai-code'>" + (pl ? " " + escapeHtml(pl) : "") + "</span></div>" +
           "<div class='exc-diag-sub'><span class='exc-ai-chip exc-ai-chip-base'>AI 감축 제안 없음</span>" +
             "<span class='exc-diag-proposal'>재고 흐름 참고용</span> " +
-            (!isMat ? buildCvChip(it.diag && it.diag.ti) : "") + "</div>" +
+            (!isMat ? buildCvChip(it.diag && it.diag.ti) + " " + buildTargetChip(it, it.diag && it.diag.ti) : "") + "</div>" +
         "</div>" +
         "<button class='exc-diag-close' title='닫기'>×</button>" +
       "</div>" +
