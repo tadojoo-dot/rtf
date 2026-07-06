@@ -2597,28 +2597,38 @@ function buildFgInfoItem(code, plant) {
     if (!item && x.itemCode === code && (x.plantCode || "") === (plant || "")) item = x;
   });
   if (!item) return null;
-  var sales = [], supply = [], ending = [];
+  // 시뮬레이션(조정 테이블)과 완전히 동일한 계산 — 같은 calcPsiRows(기초재고+공급계획-판매, excessAdj 반영)
+  var planMap = new Map();
+  (state.mappedData.plan_monthly || []).forEach(function(r) {
+    var ic = cleanOptional(r.itemCode), pl = cleanOptional(r.plant) || "", mo = cleanOptional(r.month);
+    if (ic === code && pl === (plant || "")) planMap.set(mo, (planMap.get(mo) || 0) + (cleanNumber(r.supplyQty) || 0));
+  });
+  var psi = calcPsiRows(item, planMap, months);
+  // 유효 구간: 계획·재고가 이어진 앞부분까지만 (테이블 표시 범위와 동일)
+  var validLen = 0;
   for (var i = 0; i < months.length; i++) {
     var ms = item.monthlyStatus && item.monthlyStatus[i];
     if (!ms || !Number.isFinite(ms.endingQty) || !Number.isFinite(ms.supplyQty)) break;
-    sales.push(ms.salesQty || 0);
-    supply.push(ms.supplyQty);
-    ending.push(ms.endingQty);
+    validLen++;
   }
-  if (!sales.length) return null;
+  if (!validLen) return null;
   var ti = null;
   (state.mappedData.target_inv || []).some(function(r) {
     if (r.itemCode === code) { ti = r; return true; }
     return false;
   });
+  var v = psi.slice(0, validLen);
+  var sales = v.map(function(r) { return r.salesQty; });
   return {
     itemCode: code, itemName: item.itemName || code, plantCode: plant || "",
     targetDays: ti && Number.isFinite(ti.targetDays) ? ti.targetDays : null,
     cutQty: 0, cutAmt: 0, keys: [], planVals: {}, cutByKey: {},
-    planAvgSales: sales.reduce(function(a, b) { return a + b; }, 0) / sales.length,
-    months: months.slice(0, sales.length), salesArr: sales,
-    origSupplyArr: supply.slice(), cutSupplyArr: supply.slice(),
-    origEndingArr: ending.slice(), cutEndingArr: ending.slice(),
+    planAvgSales: sales.reduce(function(a, b) { return a + b; }, 0) / (sales.length || 1),
+    months: months.slice(0, validLen), salesArr: sales,
+    origSupplyArr: v.map(function(r) { return r.origSupply; }),
+    cutSupplyArr:  v.map(function(r) { return r.supplyQty; }),
+    origEndingArr: v.map(function(r) { return r.origEndingQty; }),
+    cutEndingArr:  v.map(function(r) { return r.endingQty; }),
     diag: { ti: ti },
   };
 }
