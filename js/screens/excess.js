@@ -1020,7 +1020,7 @@ var AI_SECTION_DEFS = [
       "담당: 공장·구매 — 입고·생산 취소·연기." },
   { id: "planfix",  no: "②", title: "판매계획 현실화", owner: "계획이 실적의 " + AI_PLAN_HIGH + "배 이상",
     desc: "기준: 향후 판매계획 월평균 ≥ 최근 출고실적 월평균(26년, 없으면 25년) × " + AI_PLAN_HIGH +
-      ". 담당: 마케팅·영업 — 계획 하향 검토. 계획을 낮추면 소요·발주가 연쇄로 줄어듭니다. 병행 공급 감축분은 KPI 반영." },
+      ". 담당: 마케팅·영업 — 계획 하향 검토. 계획을 낮추면 소요·발주가 연쇄로 줄어듭니다." },
   { id: "sellout",  no: "③", title: "재고 소진",       owner: "출고 지속 중 + 판매계획 0",   group: "있는 것을 내보낸다",
     desc: "기준: 26년 출고 실적 있음 + 향후 판매계획 없음(0). 담당: 마케팅 — 계획 반영 또는 소진 요청. (실행 주체가 마케팅 → KPI 미반영 액션아이템)" },
   { id: "disposal", no: "④", title: "재고 처분",       owner: "26년 출고 0 + 판매계획 0",
@@ -1539,6 +1539,14 @@ function renderAiDiagCharts(it, isCut, ov) {
   if (typeof Chart === "undefined") return;
   var shortM = function(m) { return m.slice(2).replace("-", "."); };
   var ti = isCut ? (it.diag && it.diag.ti) : it.ti;
+  // 수량 축약 표기 (라벨·y축용): 123.5만 / 1.2억 — 팝업 내 모든 축 단위 통일
+  var fmtC = function(v) {
+    if (v === null || v === undefined) return "";
+    var av = Math.abs(v);
+    if (av >= 1e8) return (Math.round(v / 1e7) / 10).toLocaleString() + "억";
+    if (av >= 1e4) return (Math.round(v / 1e3) / 10).toLocaleString() + "만";
+    return Math.round(v).toLocaleString();
+  };
 
   // 차트 A: 과거 실적(막대) + S/F 예측(점선) + 향후 판매계획(실선)
   var hist = [], histVals = [];
@@ -1579,11 +1587,11 @@ function renderAiDiagCharts(it, isCut, ov) {
         responsive: true, maintainAspectRatio: false, animation: false,
         plugins: { legend: { display: true, position: "top", labels: { boxWidth: 14, font: { size: 13.5 } } },
           tooltip: { callbacks: { label: function(c) {
-            return c.raw === null || c.raw === undefined ? null : c.dataset.label + ": " + Math.round(c.raw).toLocaleString();
+            return c.raw === null || c.raw === undefined ? null : c.dataset.label + ": " + Math.round(c.raw).toLocaleString() + "개";
           } } } },
         scales: {
           x: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 13 }, maxRotation: 0, autoSkip: true } },
-          y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 13 }, callback: function(v) { return Math.round(v).toLocaleString(); } } },
+          y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 13 }, callback: function(v) { return fmtC(v); } } },
         },
       },
     }));
@@ -1596,21 +1604,32 @@ function renderAiDiagCharts(it, isCut, ov) {
       var daily = it.salesArr[i] > 0 ? it.salesArr[i] / monthDays(m) : 0;
       return daily > 0 ? it.targetDays * daily : null;
     });
-    // 수량 축약 표기 (라벨용): 123.5만 / 1.2억
-    var fmtC = function(v) {
-      if (v === null || v === undefined) return "";
-      var av = Math.abs(v);
-      if (av >= 1e8) return (Math.round(v / 1e7) / 10).toLocaleString() + "억";
-      if (av >= 1e4) return (Math.round(v / 1e3) / 10).toLocaleString() + "만";
-      return Math.round(v).toLocaleString();
-    };
     // 데이터 라벨: 현재계획=점 위(회색), 감축후=점 아래(초록, 값이 같아진 월은 생략),
     // 적정선=우측 끝 1개만, 직전 라벨·태그와 겹치는 것은 자동 스킵 — 라벨 과밀로 화면이 깨지지 않게 하는 규칙
-    // + 감축 적용 후 월별 재고일수 태그 (하단, 적정 초과 빨강/이내 초록)
+    // + 재고일수 태그 2줄 (하단: 감축 전 회색 / 감축 후 초록, 글자색=적정 판정)
     var fgDaysAfter = it.months.map(function(m, i) {
       var daily = it.salesArr[i] > 0 ? it.salesArr[i] / monthDays(m) : 0;
       return daily > 0 ? it.cutEndingArr[i] / daily : null;
     });
+    var fgDaysBefore = it.months.map(function(m, i) {
+      var daily = it.salesArr[i] > 0 ? it.salesArr[i] / monthDays(m) : 0;
+      return daily > 0 ? it.origEndingArr[i] / daily : null;
+    });
+    // 제목 옆 효과 칩 — 마지막 유효 월 기준 "감축 전 → 후" 일수 한 줄 요약
+    var effIdx = -1;
+    for (var ei = it.months.length - 1; ei >= 0; ei--) {
+      if (Number.isFinite(fgDaysBefore[ei]) && Number.isFinite(fgDaysAfter[ei])) { effIdx = ei; break; }
+    }
+    var titleElB = canvasB.closest(".exc-diag-chartbox").querySelector(".exc-diag-chart-title");
+    if (effIdx >= 0 && titleElB && !titleElB.querySelector(".exc-diag-eff-chip")) {
+      var effB = Math.round(fgDaysBefore[effIdx]), effA = Math.round(fgDaysAfter[effIdx]);
+      var effChip = document.createElement("span");
+      effChip.className = "exc-diag-eff-chip";
+      effChip.innerHTML = escapeHtml(shortM(it.months[effIdx])) +
+        " <b class='" + (Number.isFinite(it.targetDays) && effB > it.targetDays ? "exc-eff-over" : "exc-eff-ok") + "'>" + effB + "일</b> → <b class='" +
+        (Number.isFinite(it.targetDays) && effA > it.targetDays ? "exc-eff-over" : "exc-eff-ok") + "'>" + effA + "일</b>";
+      titleElB.appendChild(effChip);
+    }
     var diagLabelsPlugin = {
       id: "diagLabels",
       afterDatasetsDraw: function(chart) {
@@ -1655,28 +1674,34 @@ function renderAiDiagCharts(it, isCut, ov) {
           c.textBaseline = "bottom";
           c.fillText("적정 " + fmtC(d2[lastIdx]), m2.data[lastIdx].x - 2, m2.data[lastIdx].y - 4);
         }
-        // 월별 재고일수(감축 적용 후) 태그 — 하단, 직전 태그와 겹치면 스킵
+        // 재고일수 태그 2줄 — 윗줄 감축 전(회색=라인색) / 아랫줄 감축 후(초록=라인색).
+        // 배경·테두리=시리즈 색, 글자=적정 판정(초과 빨강). 전후 동일 월은 아랫줄 생략, 줄별 겹침 스킵.
         c.textAlign = "center";
-        var lastPillR = -Infinity;
-        m1.data.forEach(function(el, i) {
-          var dv = fgDaysAfter[i];
-          if (dv === null || !isFinite(dv)) return;
-          var text = Math.round(dv) + "일";
-          c.font = "800 12px Pretendard, sans-serif";
-          var tw = c.measureText(text).width + 14, th = 22;
-          var tx = clampX(el.x) - tw / 2, ty = area.bottom - th - 4;
-          if (tx < lastPillR + 4) return;
-          lastPillR = tx + tw;
-          var over = Number.isFinite(it.targetDays) && dv > it.targetDays;
-          c.fillStyle = over ? "rgba(220,38,38,0.10)" : "rgba(22,163,74,0.10)";
-          _excRoundRect(c, tx, ty, tw, th, 5); c.fill();
-          c.strokeStyle = over ? "rgba(220,38,38,0.45)" : "rgba(22,163,74,0.40)";
-          c.lineWidth = 1;
-          _excRoundRect(c, tx, ty, tw, th, 5); c.stroke();
-          c.fillStyle = over ? "#dc2626" : "#15803d";
-          c.textBaseline = "middle";
-          c.fillText(text, clampX(el.x), ty + th / 2);
-        });
+        var th = 22;
+        var pillRow = function(daysArr, ty, bg, border, okColor, skipSame) {
+          var lastR = -Infinity;
+          m1.data.forEach(function(el, i) {
+            var dv = daysArr[i];
+            if (dv === null || !isFinite(dv)) return;
+            if (skipSame && Number.isFinite(fgDaysBefore[i]) && Math.round(fgDaysBefore[i]) === Math.round(dv)) return;
+            var text = Math.round(dv) + "일";
+            c.font = "800 12px Pretendard, sans-serif";
+            var tw = c.measureText(text).width + 14;
+            var tx = clampX(el.x) - tw / 2;
+            if (tx < lastR + 4) return;
+            lastR = tx + tw;
+            var over = Number.isFinite(it.targetDays) && dv > it.targetDays;
+            c.fillStyle = bg;
+            _excRoundRect(c, tx, ty, tw, th, 5); c.fill();
+            c.strokeStyle = border; c.lineWidth = 1;
+            _excRoundRect(c, tx, ty, tw, th, 5); c.stroke();
+            c.fillStyle = over ? "#dc2626" : okColor;
+            c.textBaseline = "middle";
+            c.fillText(text, clampX(el.x), ty + th / 2);
+          });
+        };
+        pillRow(fgDaysBefore, area.bottom - th * 2 - 8, "rgba(148,163,184,0.16)", "rgba(100,116,139,0.45)", "#475569", false);
+        pillRow(fgDaysAfter,  area.bottom - th - 4,     "rgba(22,163,74,0.10)",  "rgba(22,163,74,0.40)",  "#15803d", true);
         c.restore();
       },
     };
@@ -1698,11 +1723,11 @@ function renderAiDiagCharts(it, isCut, ov) {
         layout: { padding: { top: 18, bottom: 8 } },
         plugins: { legend: { display: true, position: "top", labels: { boxWidth: 14, font: { size: 13.5 } } },
           tooltip: { callbacks: { label: function(c) {
-            return c.raw === null || c.raw === undefined ? null : c.dataset.label + ": " + Math.round(c.raw).toLocaleString();
+            return c.raw === null || c.raw === undefined ? null : c.dataset.label + ": " + Math.round(c.raw).toLocaleString() + "개";
           } } } },
         scales: {
           x: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 13 } } },
-          y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 13 }, callback: function(v) { return Math.round(v).toLocaleString(); } } },
+          y: { grid: { color: "#f3f4f6" }, ticks: { font: { size: 13 }, callback: function(v) { return fmtC(v); } } },
         },
       },
       plugins: [diagLabelsPlugin],
@@ -2370,11 +2395,30 @@ function renderMatDiagCharts(it, isCut, ov) {
       var daily = it.consArr[i] > 0 ? it.consArr[i] / monthDays(m) : 0;
       return daily > 0 ? MAT_TARGET_DAYS * daily : null;
     });
-    // 감축 적용 후 월별 재고일수 — 하단 태그 (기준 초과 빨강 / 이내 초록)
+    // 재고일수 태그 2줄용 — 감축 전/후 (배경=시리즈 색, 글자=기준 판정)
     var daysAfter = it.months.map(function(m, i) {
       var daily = it.consArr[i] > 0 ? it.consArr[i] / monthDays(m) : 0;
       return daily > 0 ? it.cutEndingArr[i] / daily : null;
     });
+    var daysBefore = it.months.map(function(m, i) {
+      var daily = it.consArr[i] > 0 ? it.consArr[i] / monthDays(m) : 0;
+      return daily > 0 ? it.origEndingArr[i] / daily : null;
+    });
+    // 제목 옆 효과 칩 — 마지막 유효 월 기준 "감축 전 → 후" 일수 한 줄 요약
+    var effIdx = -1;
+    for (var ei = it.months.length - 1; ei >= 0; ei--) {
+      if (Number.isFinite(daysBefore[ei]) && Number.isFinite(daysAfter[ei])) { effIdx = ei; break; }
+    }
+    var titleElB = canvasB.closest(".exc-diag-chartbox").querySelector(".exc-diag-chart-title");
+    if (effIdx >= 0 && titleElB && !titleElB.querySelector(".exc-diag-eff-chip")) {
+      var effB = Math.round(daysBefore[effIdx]), effA = Math.round(daysAfter[effIdx]);
+      var effChip = document.createElement("span");
+      effChip.className = "exc-diag-eff-chip";
+      effChip.innerHTML = escapeHtml(shortM(it.months[effIdx])) +
+        " <b class='" + (effB > MAT_TARGET_DAYS ? "exc-eff-over" : "exc-eff-ok") + "'>" + effB + "일</b> → <b class='" +
+        (effA > MAT_TARGET_DAYS ? "exc-eff-over" : "exc-eff-ok") + "'>" + effA + "일</b>";
+      titleElB.appendChild(effChip);
+    }
     var diagLabelsPlugin = {
       id: "matDiagLabels",
       afterDatasetsDraw: function(chart) {
@@ -2408,26 +2452,31 @@ function renderMatDiagCharts(it, isCut, ov) {
             }
           }
         });
-        var lastPillR = -Infinity;
-        m1.data.forEach(function(el, i) {
-          var dv = daysAfter[i];
-          if (dv === null || !isFinite(dv)) return;
-          var text = Math.round(dv) + "일";
-          c.font = "800 12px Pretendard, sans-serif";
-          var tw = c.measureText(text).width + 14, th = 22;
-          var tx = clampX(el.x) - tw / 2, ty = area.bottom - th - 4;
-          if (tx < lastPillR + 4) return;
-          lastPillR = tx + tw;
-          var over = dv > MAT_TARGET_DAYS;
-          c.fillStyle = over ? "rgba(220,38,38,0.10)" : "rgba(22,163,74,0.10)";
-          _excRoundRect(c, tx, ty, tw, th, 5); c.fill();
-          c.strokeStyle = over ? "rgba(220,38,38,0.45)" : "rgba(22,163,74,0.40)";
-          c.lineWidth = 1;
-          _excRoundRect(c, tx, ty, tw, th, 5); c.stroke();
-          c.fillStyle = over ? "#dc2626" : "#15803d";
-          c.textBaseline = "middle";
-          c.fillText(text, clampX(el.x), ty + th / 2);
-        });
+        var th = 22;
+        var pillRow = function(daysArr, ty, bg, border, okColor, skipSame) {
+          var lastR = -Infinity;
+          m1.data.forEach(function(el, i) {
+            var dv = daysArr[i];
+            if (dv === null || !isFinite(dv)) return;
+            if (skipSame && Number.isFinite(daysBefore[i]) && Math.round(daysBefore[i]) === Math.round(dv)) return;
+            var text = Math.round(dv) + "일";
+            c.font = "800 12px Pretendard, sans-serif";
+            var tw = c.measureText(text).width + 14;
+            var tx = clampX(el.x) - tw / 2;
+            if (tx < lastR + 4) return;
+            lastR = tx + tw;
+            var over = dv > MAT_TARGET_DAYS;
+            c.fillStyle = bg;
+            _excRoundRect(c, tx, ty, tw, th, 5); c.fill();
+            c.strokeStyle = border; c.lineWidth = 1;
+            _excRoundRect(c, tx, ty, tw, th, 5); c.stroke();
+            c.fillStyle = over ? "#dc2626" : okColor;
+            c.textBaseline = "middle";
+            c.fillText(text, clampX(el.x), ty + th / 2);
+          });
+        };
+        pillRow(daysBefore, area.bottom - th * 2 - 8, "rgba(148,163,184,0.16)", "rgba(100,116,139,0.45)", "#475569", false);
+        pillRow(daysAfter,  area.bottom - th - 4,     "rgba(22,163,74,0.10)",  "rgba(22,163,74,0.40)",  "#15803d", true);
         c.restore();
       },
     };
