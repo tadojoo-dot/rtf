@@ -1486,6 +1486,7 @@ function openAiDiagPopup(secId, idx) {
             "</div>"
           : "") +
       "</div>" +
+      (isCut ? buildCutPlanStrip(it) : "") +
       "<div class='exc-diag-decide'>" +
         "<span class='exc-diag-decide-label'>협의 결과</span>" + decBtns +
         "<span class='exc-diag-cur'>" + curDec + "</span>" +
@@ -1532,6 +1533,24 @@ function openAiDiagPopup(secId, idx) {
   });
 
   renderAiDiagCharts(it, isCut, ov);
+}
+
+// 월별 감축 지시 스트립 — 실행 담당이 "몇 월에 몇 개"를 바로 읽도록, 감축 발생 월만 칩으로
+// (완제품=공급계획 감축, 원부자재=입고 취소 — 키 구조가 같아 공용)
+function buildCutPlanStrip(it) {
+  if (!it || !it.cutByKey || !it.months || !(it.cutQty > 0)) return "";
+  var chips = [];
+  it.months.forEach(function(m) {
+    var cut = it.cutByKey[it.itemCode + "|" + (it.plantCode || "") + "|" + m];
+    if (!cut) return;
+    chips.push("<span class='exc-diag-cut-chip'>" + escapeHtml(monthLabel(m)) +
+      " <b>-" + formatNumber(cut) + "</b></span>");
+  });
+  if (!chips.length) return "";
+  return "<div class='exc-diag-cutplan'><span class='exc-diag-cutplan-lbl'>✂ 감축 제안</span>" +
+    chips.join("") +
+    "<span class='exc-diag-cutplan-sum'>합계 -" + formatNumber(Math.round(it.cutQty)) + "개 · -" +
+    escapeHtml(formatMoney(it.cutAmt)) + "</span></div>";
 }
 
 // 팝업 차트 2종 — Chart.js 전역이 있을 때만 (없으면 카드 텍스트만으로도 성립)
@@ -2289,6 +2308,7 @@ function openMatDiagPopup(secId, idx) {
             "</div>" +
           "</div>"
         : "") +
+      (isCut ? buildCutPlanStrip(it) : "") +
       "<div class='exc-diag-decide'>" +
         "<span class='exc-diag-decide-label'>협의 결과</span>" + decBtns +
         "<span class='exc-diag-cur'>" + curDec + "</span>" +
