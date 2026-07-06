@@ -1405,6 +1405,28 @@ function syncAiMatPlan() {
 // ═══════════════════════════════════════════════════════════════════════════
 var _aiPopupCharts = [];
 
+// 수요변동률(CV = 과거 월별 출고 표준편차 ÷ 평균) — 판정어 없이 숫자만.
+// 출고 0인 달이 40% 이상이면 간헐 수요라 %가 왜곡되므로 숫자 대신 "간헐" 표기.
+function computeDemandCv(ti) {
+  if (!ti) return null;
+  var vals = [];
+  [ti.outPrevYear, ti.outCurYear].forEach(function(m) {
+    if (m) Object.keys(m).forEach(function(k) { vals.push(Number(m[k]) || 0); });
+  });
+  if (vals.length < 3) return null;
+  var zeros = vals.filter(function(v) { return v <= 0; }).length;
+  var mean = vals.reduce(function(a, b) { return a + b; }, 0) / vals.length;
+  if (zeros / vals.length >= 0.4 || mean <= 0) return { intermittent: true };
+  var varc = vals.reduce(function(a, b) { return a + (b - mean) * (b - mean); }, 0) / vals.length;
+  return { intermittent: false, cv: Math.sqrt(varc) / mean };
+}
+function buildCvChip(ti) {
+  var r = computeDemandCv(ti);
+  if (!r) return "";
+  if (r.intermittent) return "<span class='exc-diag-cvchip exc-diag-cvchip-int' title='출고 없는 달이 많아 변동률 산정 제외'>수요변동 —<small> 간헐</small></span>";
+  return "<span class='exc-diag-cvchip' title='과거 월별 출고 표준편차 ÷ 평균'>수요변동 " + Math.round(r.cv * 100) + "%</span>";
+}
+
 function closeAiDiagPopup() {
   _aiPopupCharts.forEach(function(c) { try { c.destroy(); } catch (e) {} });
   _aiPopupCharts = [];
@@ -1468,7 +1490,8 @@ function openAiDiagPopup(secId, idx) {
           "<div class='exc-diag-sub'>" +
             (def ? "<span class='exc-aisec-owner'>" + def.no + " " + def.title + " · " + def.owner + "</span> " : "") +
             "<span class='exc-ai-chip exc-ai-chip-" + meta.cls + "'>" + meta.label + "</span> " +
-            "<span class='exc-diag-proposal'>" + proposalTxt + "</span>" +
+            "<span class='exc-diag-proposal'>" + proposalTxt + "</span> " +
+            buildCvChip(isCut ? (it.diag && it.diag.ti) : it.ti) +
           "</div>" +
         "</div>" +
         "<button class='exc-diag-close' title='닫기'>×</button>" +
@@ -1476,7 +1499,7 @@ function openAiDiagPopup(secId, idx) {
       "<div class='exc-diag-opinion'><span class='exc-diag-opinion-tag'>🤖 AI 소견</span>" + escapeHtml(opinion) + "</div>" +
       "<div class='exc-diag-charts'>" +
         "<div class='exc-diag-chartbox'>" +
-          "<div class='exc-diag-chart-title'>수요 흐름 — 왜 쌓였나 <span class='exc-diag-chart-sub'>25~26년 출고실적 vs S/F 예측 vs 향후 판매계획</span></div>" +
+          "<div class='exc-diag-chart-title'>수요 흐름 — 왜 쌓였나 <span class='exc-diag-chart-sub'>출고실적 vs 판매계획 vs 공급(입고)계획 · S/F 예측</span></div>" +
           "<div class='exc-diag-canvas-wrap'><canvas class='exc-diag-chart-a'></canvas></div>" +
         "</div>" +
         (isCut
@@ -1589,6 +1612,11 @@ function renderAiDiagCharts(it, isCut, ov) {
       var i = future.indexOf(m);
       return i < 0 ? null : (it.salesArr ? it.salesArr[i] : null);
     });
+    // 미래 공급(입고)계획 — "이만큼 팔 계획인데 입고는 이랬다"의 간극을 보여줌
+    var supplyData = labels.map(function(m) {
+      var i = future.indexOf(m);
+      return i < 0 ? null : (it.origSupplyArr ? it.origSupplyArr[i] : null);
+    });
     _aiPopupCharts.push(new Chart(canvasA.getContext("2d"), {
       type: "bar",
       data: {
@@ -1596,6 +1624,8 @@ function renderAiDiagCharts(it, isCut, ov) {
         datasets: [
           { type: "bar", label: "출고 실적", data: histData, order: 2,
             backgroundColor: labels.map(function(m) { return m < "2026" ? "#cbd5e1" : "#93c5fd"; }) },
+          { type: "bar", label: "공급(입고)계획", data: supplyData, order: 2,
+            backgroundColor: "rgba(13,148,136,0.35)" },
           { type: "line", label: "S/F 예측", data: sfData, borderColor: "#f59e0b",
             borderDash: [6, 4], borderWidth: 2, pointRadius: 0, spanGaps: true, order: 1 },
           { type: "line", label: "판매계획", data: planData, borderColor: "#4f46e5",
@@ -2655,7 +2685,8 @@ function openInfoDiagPopup(it, isMat) {
             escapeHtml(it.itemName || it.itemCode) +
             "<span class='exc-ai-code'>" + (pl ? " " + escapeHtml(pl) : "") + "</span></div>" +
           "<div class='exc-diag-sub'><span class='exc-ai-chip exc-ai-chip-base'>AI 감축 제안 없음</span>" +
-            "<span class='exc-diag-proposal'>재고 흐름 참고용</span></div>" +
+            "<span class='exc-diag-proposal'>재고 흐름 참고용</span> " +
+            (!isMat ? buildCvChip(it.diag && it.diag.ti) : "") + "</div>" +
         "</div>" +
         "<button class='exc-diag-close' title='닫기'>×</button>" +
       "</div>" +
@@ -2663,7 +2694,7 @@ function openInfoDiagPopup(it, isMat) {
       "<div class='exc-diag-charts'>" +
         "<div class='exc-diag-chartbox'>" +
           "<div class='exc-diag-chart-title'>" + (isMat ? "소요 vs 입고" : "수요 흐름") +
-            " <span class='exc-diag-chart-sub'>" + (isMat ? "월별 BOM 소요량 vs 입고계획" : "출고실적 vs S/F 예측 vs 판매계획") + "</span></div>" +
+            " <span class='exc-diag-chart-sub'>" + (isMat ? "월별 BOM 소요량 vs 입고계획" : "출고실적 vs 판매계획 vs 공급(입고)계획") + "</span></div>" +
           "<div class='exc-diag-canvas-wrap'><canvas class='exc-diag-chart-a'></canvas></div>" +
         "</div>" +
         "<div class='exc-diag-chartbox'>" +
