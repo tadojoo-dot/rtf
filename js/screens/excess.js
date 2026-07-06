@@ -1604,8 +1604,11 @@ function renderAiDiagCharts(it, isCut, ov) {
       },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
+        // S/F 라인은 점이 없어 개별 히트 불가 → 월 단위로 세 시리즈 동시 툴팁
+        interaction: { mode: "index", intersect: false },
         plugins: { legend: { display: true, position: "top", labels: { boxWidth: 14, font: { size: 13.5 } } },
-          tooltip: { callbacks: { label: function(c) {
+          tooltip: { filter: function(item) { return item.raw !== null && item.raw !== undefined; },
+            callbacks: { label: function(c) {
             return c.raw === null || c.raw === undefined ? null : c.dataset.label + ": " + Math.round(c.raw).toLocaleString() + "개";
           } } } },
         scales: {
@@ -1691,7 +1694,10 @@ function renderAiDiagCharts(it, isCut, ov) {
           c.fillStyle = "#dc2626";
           c.textAlign = "right";
           c.textBaseline = "bottom";
-          c.fillText("적정 " + fmtC(d2[lastIdx]), m2.data[lastIdx].x - 2, m2.data[lastIdx].y - 4);
+          var tgtTxt = Number.isFinite(it.targetDays)
+            ? "적정 " + Math.round(it.targetDays) + "일 · " + fmtC(d2[lastIdx])
+            : "적정 " + fmtC(d2[lastIdx]);
+          c.fillText(tgtTxt, m2.data[lastIdx].x - 2, m2.data[lastIdx].y - 4);
         }
         // 재고일수 태그 2줄 — 윗줄 감축 전(회색=라인색) / 아랫줄 감축 후(초록=라인색).
         // 배경·테두리=시리즈 색, 글자=적정 판정(초과 빨강). 전후 동일 월은 아랫줄 생략, 줄별 겹침 스킵.
@@ -1733,7 +1739,7 @@ function renderAiDiagCharts(it, isCut, ov) {
             backgroundColor: "rgba(148,163,184,0.14)", fill: true, borderWidth: 2, pointRadius: 2.5 },
           { label: "감축 적용 후", data: it.cutEndingArr, borderColor: "#16a34a",
             borderDash: [6, 4], borderWidth: 2.5, pointRadius: 2.5 },
-          { label: "적정재고 수준", data: tgtLine, borderColor: "#dc2626",
+          { label: "적정재고 수준" + (Number.isFinite(it.targetDays) ? " (" + Math.round(it.targetDays) + "일)" : ""), data: tgtLine, borderColor: "#dc2626",
             borderDash: [2, 3], borderWidth: 1.8, pointRadius: 0, spanGaps: true },
         ],
       },
