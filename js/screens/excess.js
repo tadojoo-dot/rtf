@@ -1714,19 +1714,18 @@ function renderAiDiagCharts(it, isCut, ov) {
             }
           }
         });
+        // 적정선 라벨 — 차트 밖 우측 여백에 선 높이 맞춰 표기(플롯 영역 비우기). 일수는 범례·헤더에 있어 수량만.
         var lastIdx = -1;
         for (var i2 = d2.length - 1; i2 >= 0; i2--) {
           if (d2[i2] !== null && d2[i2] !== undefined) { lastIdx = i2; break; }
         }
         if (lastIdx >= 0 && m2.data[lastIdx]) {
-          c.font = "700 12.5px Pretendard, sans-serif";
+          c.font = "700 12px Pretendard, sans-serif";
           c.fillStyle = "#dc2626";
-          c.textAlign = "right";
-          c.textBaseline = "bottom";
-          var tgtTxt = Number.isFinite(it.targetDays)
-            ? "적정 " + Math.round(it.targetDays) + "일 · " + fmtC(d2[lastIdx])
-            : "적정 " + fmtC(d2[lastIdx]);
-          c.fillText(tgtTxt, m2.data[lastIdx].x - 2, m2.data[lastIdx].y - 4);
+          c.textAlign = "left";
+          c.textBaseline = "middle";
+          var ly = Math.min(Math.max(m2.data[lastIdx].y, area.top + 8), area.bottom - 8);
+          c.fillText("적정 " + fmtC(d2[lastIdx]), area.right + 6, ly);
         }
         // 재고일수 태그 2줄 — 윗줄 감축 전(회색=라인색) / 아랫줄 감축 후(초록=라인색).
         // 배경·테두리=시리즈 색, 글자=적정 판정(초과 빨강). 전후 동일 월은 아랫줄 생략, 줄별 겹침 스킵.
@@ -1774,7 +1773,7 @@ function renderAiDiagCharts(it, isCut, ov) {
       },
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
-        layout: { padding: { top: 18, bottom: 8 } },
+        layout: { padding: { top: 18, bottom: 8, right: 64 } },
         plugins: { legend: { display: true, position: "top", labels: { boxWidth: 14, font: { size: 13.5 } } },
           tooltip: { callbacks: { label: function(c) {
             return c.raw === null || c.raw === undefined ? null : c.dataset.label + ": " + Math.round(c.raw).toLocaleString() + "개";
