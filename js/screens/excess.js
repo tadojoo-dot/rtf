@@ -1605,7 +1605,7 @@ function renderAiDiagCharts(it, isCut, ov) {
       return Math.round(v).toLocaleString();
     };
     // 데이터 라벨: 현재계획=점 위(회색), 감축후=점 아래(초록, 값이 같아진 월은 생략),
-    // 적정선=우측 끝 1개만 — 라벨 과밀로 화면이 깨지지 않게 하는 규칙
+    // 적정선=우측 끝 1개만, 직전 라벨·태그와 겹치는 것은 자동 스킵 — 라벨 과밀로 화면이 깨지지 않게 하는 규칙
     // + 감축 적용 후 월별 재고일수 태그 (하단, 적정 초과 빨강/이내 초록)
     var fgDaysAfter = it.months.map(function(m, i) {
       var daily = it.salesArr[i] > 0 ? it.salesArr[i] / monthDays(m) : 0;
@@ -1620,19 +1620,28 @@ function renderAiDiagCharts(it, isCut, ov) {
         var d0 = chart.data.datasets[0].data, d1 = chart.data.datasets[1].data, d2 = chart.data.datasets[2].data;
         c.save();
         c.textAlign = "center";
+        var lastR0 = -Infinity, lastR1 = -Infinity;
         m0.data.forEach(function(el, i) {
           var v0 = d0[i], v1 = d1[i];
           if (v0 === null || v0 === undefined) return;
           var same = v1 !== null && v1 !== undefined && Math.abs(v0 - v1) < Math.max(1, Math.abs(v0) * 0.005);
           c.font = "600 12.5px Pretendard, sans-serif";
-          c.fillStyle = "#64748b";
-          c.textBaseline = "bottom";
-          c.fillText(fmtC(v0), clampX(el.x), el.y - 5);
+          var t0 = fmtC(v0), x0 = clampX(el.x), w0 = c.measureText(t0).width;
+          if (x0 - w0 / 2 > lastR0 + 4) {
+            c.fillStyle = "#64748b";
+            c.textBaseline = "bottom";
+            c.fillText(t0, x0, el.y - 5);
+            lastR0 = x0 + w0 / 2;
+          }
           if (!same && m1.data[i] && v1 !== null && v1 !== undefined) {
             c.font = "800 13px Pretendard, sans-serif";
-            c.fillStyle = "#15803d";
-            c.textBaseline = "top";
-            c.fillText(fmtC(v1), clampX(m1.data[i].x), m1.data[i].y + 5);
+            var t1 = fmtC(v1), x1 = clampX(m1.data[i].x), w1 = c.measureText(t1).width;
+            if (x1 - w1 / 2 > lastR1 + 4) {
+              c.fillStyle = "#15803d";
+              c.textBaseline = "top";
+              c.fillText(t1, x1, m1.data[i].y + 5);
+              lastR1 = x1 + w1 / 2;
+            }
           }
         });
         var lastIdx = -1;
@@ -1646,8 +1655,9 @@ function renderAiDiagCharts(it, isCut, ov) {
           c.textBaseline = "bottom";
           c.fillText("적정 " + fmtC(d2[lastIdx]), m2.data[lastIdx].x - 2, m2.data[lastIdx].y - 4);
         }
-        // 월별 재고일수(감축 적용 후) 태그 — 하단
+        // 월별 재고일수(감축 적용 후) 태그 — 하단, 직전 태그와 겹치면 스킵
         c.textAlign = "center";
+        var lastPillR = -Infinity;
         m1.data.forEach(function(el, i) {
           var dv = fgDaysAfter[i];
           if (dv === null || !isFinite(dv)) return;
@@ -1655,6 +1665,8 @@ function renderAiDiagCharts(it, isCut, ov) {
           c.font = "800 12px Pretendard, sans-serif";
           var tw = c.measureText(text).width + 14, th = 22;
           var tx = clampX(el.x) - tw / 2, ty = area.bottom - th - 4;
+          if (tx < lastPillR + 4) return;
+          lastPillR = tx + tw;
           var over = Number.isFinite(it.targetDays) && dv > it.targetDays;
           c.fillStyle = over ? "rgba(220,38,38,0.10)" : "rgba(22,163,74,0.10)";
           _excRoundRect(c, tx, ty, tw, th, 5); c.fill();
@@ -2372,21 +2384,31 @@ function renderMatDiagCharts(it, isCut, ov) {
         var d0 = chart.data.datasets[0].data, d1 = chart.data.datasets[1].data;
         c.save();
         c.textAlign = "center";
+        var lastR0 = -Infinity, lastR1 = -Infinity;
         m0.data.forEach(function(el, i) {
           var v0 = d0[i], v1 = d1[i];
           if (v0 === null || v0 === undefined) return;
           var same = v1 !== null && v1 !== undefined && Math.abs(v0 - v1) < Math.max(1, Math.abs(v0) * 0.005);
           c.font = "600 12.5px Pretendard, sans-serif";
-          c.fillStyle = "#64748b";
-          c.textBaseline = "bottom";
-          c.fillText(fmtC(v0), clampX(el.x), el.y - 5);
+          var t0 = fmtC(v0), x0 = clampX(el.x), w0 = c.measureText(t0).width;
+          if (x0 - w0 / 2 > lastR0 + 4) {
+            c.fillStyle = "#64748b";
+            c.textBaseline = "bottom";
+            c.fillText(t0, x0, el.y - 5);
+            lastR0 = x0 + w0 / 2;
+          }
           if (!same && m1.data[i] && v1 !== null && v1 !== undefined) {
             c.font = "800 13px Pretendard, sans-serif";
-            c.fillStyle = "#15803d";
-            c.textBaseline = "top";
-            c.fillText(fmtC(v1), clampX(m1.data[i].x), m1.data[i].y + 5);
+            var t1 = fmtC(v1), x1 = clampX(m1.data[i].x), w1 = c.measureText(t1).width;
+            if (x1 - w1 / 2 > lastR1 + 4) {
+              c.fillStyle = "#15803d";
+              c.textBaseline = "top";
+              c.fillText(t1, x1, m1.data[i].y + 5);
+              lastR1 = x1 + w1 / 2;
+            }
           }
         });
+        var lastPillR = -Infinity;
         m1.data.forEach(function(el, i) {
           var dv = daysAfter[i];
           if (dv === null || !isFinite(dv)) return;
@@ -2394,6 +2416,8 @@ function renderMatDiagCharts(it, isCut, ov) {
           c.font = "800 12px Pretendard, sans-serif";
           var tw = c.measureText(text).width + 14, th = 22;
           var tx = clampX(el.x) - tw / 2, ty = area.bottom - th - 4;
+          if (tx < lastPillR + 4) return;
+          lastPillR = tx + tw;
           var over = dv > MAT_TARGET_DAYS;
           c.fillStyle = over ? "rgba(220,38,38,0.10)" : "rgba(22,163,74,0.10)";
           _excRoundRect(c, tx, ty, tw, th, 5); c.fill();
