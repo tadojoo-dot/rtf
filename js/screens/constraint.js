@@ -1978,7 +1978,7 @@ function renderCstAdjSubRow(item, months, totalCols, matSupplyMap) {
       var origEnding = Math.max(0, origAvail - req);
       var adjEnding  = Math.max(0, adjAvail  - req);
       extraCarry = Math.max(0, adjEnding - origEnding);
-      return { adjShortage: adjShortage, origShortage: origShortage };
+      return { adjShortage: adjShortage, origShortage: origShortage, adjEnding: adjEnding };
     });
   })();
 
@@ -2008,7 +2008,11 @@ function renderCstAdjSubRow(item, months, totalCols, matSupplyMap) {
     var borderCls = ci > 0 ? " cst-adj-mborder" : "";
     if (s === null) return "<td class=\"cst-adj-val" + borderCls + "\">-</td>";
     if (s.adjShortage <= 0 && s.origShortage > 0) return "<td class=\"cst-adj-resolved" + borderCls + "\">✓ 해소</td>";
-    if (s.adjShortage <= 0) return "<td class=\"cst-adj-val" + borderCls + "\">-</td>";
+    if (s.adjShortage <= 0) {
+      // 부족 없는 달 — 자재 기말재고(조정 반영) 회색 표시 (과입고 시 쌓임이 보임)
+      var endTxt = Number.isFinite(s.adjEnding) ? _cstFmtVal(s.adjEnding, dec, item.unit) : "-";
+      return "<td class=\"cst-adj-val" + borderCls + "\"><span class=\"cst-inv-sub\">" + escapeHtml(endTxt) + "</span></td>";
+    }
     return "<td class=\"cst-adj-shortage" + borderCls + "\">" + escapeHtml(_cstFmtVal(s.adjShortage, dec, item.unit)) + "</td>";
   }).join("");
 
@@ -2025,7 +2029,7 @@ function renderCstAdjSubRow(item, months, totalCols, matSupplyMap) {
     "</tr></thead><tbody>" +
     "<tr class=\"cst-adj-orig-row\"><td class=\"cst-adj-rlabel\">현재 입고계획</td>" + origCells + "<td class=\"cst-adj-action-cell\"></td></tr>" +
     "<tr class=\"cst-adj-input-row\"><td class=\"cst-adj-rlabel cst-adj-input-lbl\">조정 입고량</td>" + inputCells + "<td class=\"cst-adj-action-cell\">" + resetBtn + "</td></tr>" +
-    "<tr class=\"cst-adj-short-row\"><td class=\"cst-adj-rlabel\">부족 (조정후)</td>" + sCells + "<td class=\"cst-adj-action-cell\"></td></tr>" +
+    "<tr class=\"cst-adj-short-row\"><td class=\"cst-adj-rlabel\">부족/재고 (조정후)</td>" + sCells + "<td class=\"cst-adj-action-cell\"></td></tr>" +
     "</tbody></table>" +
     "</div></td></tr>";
 }
@@ -2698,7 +2702,7 @@ function renderCstFgMatTable(mats, months, supplyMap, simAdj) {
     return "<th colspan=\"2\" class=\"cst-sa-mhd" + (mi > 0 ? " cst-sa-mborder" : "") + "\">" + escapeHtml(monthLabel(m)) + "</th>";
   }).join("");
   var subHeads = months.map(function(_, mi) {
-    return "<th class=\"cst-sa-sub" + (mi > 0 ? " cst-sa-mborder" : "") + "\">입고/조정</th><th class=\"cst-sa-sub\">부족</th>";
+    return "<th class=\"cst-sa-sub" + (mi > 0 ? " cst-sa-mborder" : "") + "\">입고/조정</th><th class=\"cst-sa-sub\">부족/재고</th>";
   }).join("");
 
   var bodyRows = mats.map(function(item) {
@@ -2719,7 +2723,7 @@ function renderCstFgMatTable(mats, months, supplyMap, simAdj) {
       var md   = item.monthlyData[mi] || {};
       var origShortage = md.shortageQty || 0;
 
-      var adjShortage = null;
+      var adjShortage = null, matEnding = null;
       if (item.hasInventory && item.hasSupplyPlan && md.availableQty !== null) {
         var opening   = Math.max(0, md.availableQty - orig);
         var req       = md.requiredQty || 0;
@@ -2730,6 +2734,7 @@ function renderCstFgMatTable(mats, months, supplyMap, simAdj) {
         var origEnding = Math.max(0, origAvail - req);
         var adjEnding  = Math.max(0, adjAvail  - req);
         _extraCarry = Math.max(0, adjEnding - origEnding);
+        matEnding = adjEnding;
       } else {
         _extraCarry = 0;
       }
@@ -2753,7 +2758,10 @@ function renderCstFgMatTable(mats, months, supplyMap, simAdj) {
       var shortCell = (showShortage === null || showShortage === undefined) ? "<td class=\"cst-sa-short-cell" + borderCls + "\">-</td>"
         : (showShortage <= 0 && origShortage > 0 && isAdj) ? "<td class=\"cst-sa-resolved" + borderCls + "\">✓ 해소</td>"
         : showShortage > 0 ? "<td class=\"cst-sa-short-num" + borderCls + "\">" + escapeHtml(_cstFmtVal(showShortage, dec, "")) + "</td>"
-        : "<td class=\"cst-sa-short-cell" + borderCls + "\">-</td>";
+        : "<td class=\"cst-sa-short-cell" + borderCls + "\">" +
+          (Number.isFinite(matEnding)
+            ? "<span class=\"cst-inv-sub\">" + escapeHtml(_cstFmtVal(matEnding, dec, "")) + "</span>"
+            : "-") + "</td>";
 
       return inputCell + shortCell;
     }).join("");
