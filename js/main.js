@@ -636,6 +636,9 @@ function downloadRequestForm() {
 
 // ── 화면 전환 ─────────────────────────────────────────────────────────────────
 function render(menuId) {
+  // 렌더 경계 토큰 — 한 번의 render() 안에서 무거운 시나리오 계산을 1회로 메모이즈(성능).
+  // 렌더마다 증가시켜, 다음 렌더에서는 자동으로 재계산되도록 함(값이 낡을 일 없음).
+  if (typeof bumpRenderEpoch === "function") bumpRenderEpoch();
   // 같은 화면 안에서의 재렌더(품목군 펼치기, 정렬, 필터 등)는 스크롤 위치 유지.
   // 실제 탭 전환일 때만 맨 위로 이동.
   var isSameScreen  = state.currentMenuId === menuId;

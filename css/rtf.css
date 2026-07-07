@@ -570,6 +570,8 @@
 
 /* 좌측 컬럼 — 위치·폭은 inline style로 관리, 시각 스타일만 유지 */
 .rtf-col-name        { overflow: hidden; text-overflow: ellipsis; }
+/* 사업부/플랜트/유형 라벨: 잘림 방지 — 줄바꿈 허용(긴 이름 2줄) */
+.rtf-col-firstlabel  { white-space: normal !important; word-break: break-all; overflow: visible; text-overflow: clip; line-height: 1.2; }
 .rtf-col-last-sticky { border-right: 1px solid #cbd3dc !important; }
 
 /* ── 셀 정렬 ── */

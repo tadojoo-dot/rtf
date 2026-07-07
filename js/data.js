@@ -7,6 +7,7 @@ function detectRawType(fileName) {
   if (name.includes("사업부") && name.includes("품목 기준정보")) return "itemMaster";
   if (name.includes("BOM"))              return "bom";
   if (name.includes("적정재고"))         return "targetInventory";
+  if (name.includes("나보타"))           return "nabota";
   if (name.includes("매출"))             return "salesActual";
   if (name.includes("결산실적_월별요약") || name.includes("결산_raw") || name.includes("결산_RAW")) return "actualMonthly";
   if (name.includes("RTF_RAW_보조양식")) return "rtfHelper";
@@ -205,8 +206,48 @@ function mapTargetInvRows(rows) {
   }).filter(function(r) { return r.itemCode && r.targetDays !== null; });
 }
 
+// 나보타_RAW: 비점검(계획 없음) 사업부의 월별 집계 — 총재고 델타·각주용.
+// 레이아웃: 헤더행에 "YYYY-MM" 월 라벨, 지표행은 col1(구분) 라벨(재고금액/입고금액/출고금액(전체)/재고일수).
+// 값 단위 = 억. 재고금액만 필수(총재고 델타), 입·출고는 증감 원인 각주용(있으면 사용).
+function mapNabotaRows(rows) {
+  var hr = -1, monthCols = [];
+  for (var r = 0; r < Math.min(rows.length, 8); r++) {
+    var mc = [];
+    (rows[r] || []).forEach(function(v, c) {
+      var m = String(v == null ? "" : v).trim().match(/^(\d{4})-(\d{2})$/);
+      if (m) mc.push({ col: c, month: m[1] + "-" + m[2] });
+    });
+    if (mc.length >= 6) { hr = r; monthCols = mc; break; }
+  }
+  if (hr < 0) return [];
+  function findRow(test) {
+    for (var i = hr + 1; i < rows.length; i++) {
+      var lbl = String((rows[i] || [])[1] == null ? "" : rows[i][1]).trim();
+      if (lbl && test(lbl)) return rows[i];
+    }
+    return null;
+  }
+  var invR      = findRow(function(l) { return l === "재고금액"; });
+  var intakeR   = findRow(function(l) { return l.indexOf("입고") >= 0; });
+  var outR      = findRow(function(l) { return l.indexOf("출고") >= 0 && l.indexOf("제품") < 0; }); // 출고(전체)
+  var outProdR  = findRow(function(l) { return l.indexOf("출고") >= 0 && l.indexOf("제품") >= 0; }); // 출고(제품만)=판매원가
+  var salesR    = findRow(function(l) { return l === "매출액"; });
+  var daysR     = findRow(function(l) { return l.indexOf("재고일수") >= 0; });
+  return monthCols.map(function(mc) {
+    return {
+      month:      mc.month,
+      invAmt:     invR      ? cleanNumber(invR[mc.col])      : null, // 억, 재고금액(총재고 델타용)
+      intakeAmt:  intakeR   ? cleanNumber(intakeR[mc.col])   : null, // 억
+      outAmt:     outR      ? cleanNumber(outR[mc.col])      : null, // 억, 출고(전체)
+      outProdAmt: outProdR  ? cleanNumber(outProdR[mc.col])  : null, // 억, 출고(제품만)=판매원가(원가 모드)
+      salesAmt:   salesR    ? cleanNumber(salesR[mc.col])    : null, // 억, 매출액(매출 모드)
+      invDays:    daysR     ? cleanNumber(daysR[mc.col])     : null,
+    };
+  }).filter(function(r) { return r.invAmt !== null; });
+}
+
 function mapRawData(rawFiles) {
-  const tables = { item_master:[], inventory_base:[], plan_monthly:[], bom_components:[], business_mapping:[], target_inv:[], actuals_monthly:[], actuals_meta:[], sales_actual:[] };
+  const tables = { item_master:[], inventory_base:[], plan_monthly:[], bom_components:[], business_mapping:[], target_inv:[], actuals_monthly:[], actuals_meta:[], sales_actual:[], nabota_monthly:[] };
   Object.values(rawFiles).filter((f) => f.parseSuccess).forEach((file) => {
     const rows = file.sheets?.[0]?.rows ?? [];
     if (file.rawType === "salesSupplyPlan")   tables.plan_monthly.push(...mapPlanRows(rows));
@@ -224,6 +265,7 @@ function mapRawData(rawFiles) {
       tables.actuals_monthly.push(...mapActualsRows(rows));
       tables.actuals_meta.push(...mapActualsMetaRows(rows));
     }
+    if (file.rawType === "nabota")          tables.nabota_monthly.push(...mapNabotaRows(rows));
   });
   return tables;
 }
@@ -333,6 +375,7 @@ function mapSalesActualRows(rows) {
     itemName: get(row, idx("자재 내역")),
     netSales: toNumber(get(row, idx("순매출액(공시)"))),
     paQty:    toNumber(get(row, idx("총수량(PA)"))),
+    costAmt:  toNumber(get(row, idx("원가금액"))), // 나보타 평균 원가율 산출용
   }));
 }
 

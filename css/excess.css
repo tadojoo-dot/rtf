@@ -503,6 +503,9 @@
 .exc-aisec-sum strong { color: #15803d; }
 .exc-aisec-none { color: #94a3b8; font-weight: 400; }
 .exc-aisec-on { background: #f6fef9; }
+/* 클릭해 시뮬 표 강조 중인 섹션 표시 */
+.exc-aisec-focus { background: #eef2ff; box-shadow: inset 3px 0 0 #4f46e5; }
+.exc-aisec-focus .exc-aisec-title { color: #4f46e5; }
 .exc-aisec-apply {
   flex-shrink: 0; padding: 6px 15px; border-radius: 7px; font-size: 13.5px;
   font-weight: 700; cursor: pointer; border: 1px solid #4f46e5;
@@ -511,7 +514,7 @@
 .exc-aisec-apply:hover { background: #eef2ff; }
 .exc-aisec-apply-on { border-color: #cbd5e1; color: #64748b; }
 .exc-aisec-apply-on:hover { background: #f1f5f9; }
-.exc-aisec-body { padding: 0 16px 10px 38px; max-height: 340px; overflow-y: auto; }
+.exc-aisec-body { padding: 0 16px 10px 38px; max-height: 340px; overflow-y: auto; contain: layout; }
 .exc-aisec-desc { font-size: 13.5px; color: #64748b; padding: 2px 0 8px; }
 .exc-aisec-empty { font-size: 13.5px; color: #94a3b8; padding: 4px 0 6px; }
 .exc-aisec-more { font-size: 12.5px; color: #94a3b8; padding: 6px 0 0; }
@@ -680,7 +683,8 @@
 .exc-tab-btn.exc-tab-active .exc-tab-sub { color: rgba(255,255,255,0.55); }
 
 /* ── 원부자재 테이블 ───────────────────────────────────────────────────── */
-.exc-mat-scroll { overflow: auto; flex: 1; min-height: 0; }
+/* contain:layout — 섹션 토글 등 외부 변화가 이 거대한 시뮬 표 내부를 재배치하지 않게 격리(드릴다운 지연 완화). paint는 제외(sticky 헤더 보호) */
+.exc-mat-scroll { overflow: auto; flex: 1; min-height: 0; contain: layout; }
 .exc-mat-table { border-collapse: collapse; width: 100%; font-size: 12px; }
 .exc-mat-table th {
   background: #f1f5f9; color: #475569; padding: 5px 8px;
@@ -707,6 +711,12 @@
 .exc-mat-day-ok { color: #16a34a; }
 .exc-mat-day-danger { color: #fff; background: #dc2626; }
 .exc-mat-row-adj { background: #fffbeb; }
+/* AI 진단 섹션 클릭 시 — 그 원인의 품목만 부각, 나머지는 흐리게 (구분용) */
+/* AI 진단 섹션 클릭 → 원인 품목만 파란 강조. 흐림(dim) 제거:
+   나머지 수백 행에 opacity를 칠했다 지우는 리페인트가 펼침·접기 지연의 원인이라,
+   나머지는 그대로 두고 매칭 행만 강조 → 페인트가 매칭 몇 행으로 한정됨. */
+.exc-mat-focusing tr.exc-mat-row-focus { background: #eef2ff !important; }
+.exc-mat-focusing tr.exc-mat-row-focus > td:first-child { box-shadow: inset 4px 0 0 #4f46e5; }
 .exc-mat-reset-td { text-align: center; }
 .exc-mat-reset { border: none; background: none; cursor: pointer; color: #94a3b8; font-size: 14px; }
 .exc-mat-reset:hover { color: #ef4444; }

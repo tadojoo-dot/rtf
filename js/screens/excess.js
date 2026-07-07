@@ -7,6 +7,37 @@ var MAT_SANITY_DAYS  = 1800;
 var _excessChartInst = null;
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 성능 측정(임시) — 병목 진단용. 콘솔에서 EXC_PROF=false 로 끄고, 배포 시 이 블록 제거.
+// 렌더마다 F12 콘솔에 구간별 ms + 무거운 함수 호출횟수를 한 줄(접힌 그룹)로 출력.
+// ═══════════════════════════════════════════════════════════════════════════
+var EXC_PROF = false;   // true 로 켜면 F12 콘솔에 구간별 ms·호출횟수 출력 (배포 시 이 블록 제거)
+var _excProfRows = [];
+var _excCallCnt = {};
+function excProf(label, fn) {
+  if (!EXC_PROF) return fn();
+  var t = performance.now();
+  var r = fn();
+  _excProfRows.push([label, +(performance.now() - t).toFixed(1)]);
+  return r;
+}
+function excCount(name) {
+  if (EXC_PROF) _excCallCnt[name] = (_excCallCnt[name] || 0) + 1;
+}
+function excProfReset() { _excProfRows = []; _excCallCnt = {}; }
+function excProfFlush(totalMs, bindMs) {
+  if (!EXC_PROF) return;
+  var seg = {};
+  _excProfRows.forEach(function(x) { seg[x[0]] = x[1] + " ms"; });
+  console.groupCollapsed("[과잉감축] 렌더 " + totalMs.toFixed(1) + "ms" +
+    (bindMs != null ? " + bind " + bindMs.toFixed(1) + "ms" : "") +
+    "  (tab=" + (state.excessTab === "mat" ? "원부자재" : "제·상품") + ")");
+  console.table(seg);
+  console.table(_excCallCnt);   // 함수 호출 횟수 — 중복 계산 확인용
+  console.groupEnd();
+  excProfReset();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 1. PSI 롤링 계산 — excessAdj 반영 (완제품)
 // ═══════════════════════════════════════════════════════════════════════════
 function calcPsiRows(item, planMap, months) {
@@ -41,6 +72,7 @@ function calcPsiRows(item, planMap, months) {
 // 2. 자재 소비량 맵: "compCode|plant" → [qty per RTF month]
 // ═══════════════════════════════════════════════════════════════════════════
 function buildMatConsumptionMap(useExcessAdj) {
+  excCount("buildMatConsumptionMap");
   var months        = getRtfMonths();
   var bomComponents = state.mappedData.bom_components || [];
 
@@ -630,8 +662,14 @@ function renderExcessFgTable(displayItems, months, globalPlanMap, hasTargetData)
 // 10. 메인 렌더
 // ═══════════════════════════════════════════════════════════════════════════
 function renderExcessAdjustment() {
+  excProfReset();
+  var _t0 = performance.now();
   try {
-    return _renderExcessAdjustmentInner();
+    var _html = _renderExcessAdjustmentInner();
+    var _now = performance.now();
+    window._excRenderMs = _now - _t0;  // 계산+문자열 생성 시간
+    window._excRenderEndTs = _now;     // bind 시작 시각과의 차 = 브라우저 innerHTML 반영 비용
+    return _html;
   } catch(e) {
     console.error("[과잉감축] 렌더 오류:", e);
     return "<section class='section-band'><div class='section-header'><h2>과잉감축 — 렌더 오류</h2>" +
@@ -647,7 +685,7 @@ function _renderExcessAdjustmentInner() {
       "<p>데이터 연결 필요 — 데이터점검 화면에서 RAW 파일을 선택하세요.</p></div></section>";
   }
 
-  var rtfItems     = computeRtfItems();
+  var rtfItems     = excProf("computeRtfItems(직접호출)", function(){ return computeRtfItems(); });
   var months       = getRtfMonths();
   var plantFilter  = state.excessPlant    || "all";
   var showOnlyExcess = state.excessShowOnly === true; // 기본값: 전체 표시
@@ -741,10 +779,14 @@ function _renderExcessAdjustmentInner() {
   "</div>";
 
   // 3시나리오 KPI 배너 (RTF·공급원인과 동일 기준: 전체재고·공시·관리, RTF/감축 delta 분해)
-  var bannerHtml = (typeof renderScenarioKpiBanner === "function") ? renderScenarioKpiBanner() : "";
+  var bannerHtml = excProf("KPI배너(scenario+matFlow)", function(){
+    return (typeof renderScenarioKpiBanner === "function") ? renderScenarioKpiBanner() : "";
+  });
 
   // AI 과잉재고 진단 패널 — 원인 분류 + 액션(오너)별 아코디언, 섹션별 권장안 적용 (제·상품 탭 전용)
-  var aiHtml = state.excessTab === "mat" ? "" : renderAiDiagPanel(hasTargetData);
+  var aiHtml = excProf("AI진단패널(classify)", function(){
+    return state.excessTab === "mat" ? "" : renderAiDiagPanel(hasTargetData);
+  });
 
   // 탭: 제·상품 (적정재고 기준) | 원부자재 (180일 기준)
   var excessTab = state.excessTab === "mat" ? "mat" : "fg";
@@ -756,9 +798,9 @@ function _renderExcessAdjustmentInner() {
   // 진단 패널은 탭별로 — 제·상품 진단(fg) / 원부자재 진단(mat)
   var bodyHtml = excessTab === "fg"
     ? aiHtml + priorityHtml + controls +
-      "<div class='exc-fg-area'>" + renderExcessFgFlatTable(displayItems, months, globalPlanMap) + "</div>"
-    : renderMatDiagPanel() +
-      "<div class='exc-fg-area'>" + renderExcessMatTable(months) + "</div>";
+      "<div class='exc-fg-area'>" + excProf("FG테이블생성", function(){ return renderExcessFgFlatTable(displayItems, months, globalPlanMap); }) + "</div>"
+    : excProf("원부자재진단패널", function(){ return renderMatDiagPanel(); }) +
+      "<div class='exc-fg-area'>" + excProf("원부자재테이블", function(){ return renderExcessMatTable(months); }) + "</div>";
 
   return "<div class='exc-screen'><div class='exc-inner'>" +
     bannerHtml +
@@ -873,6 +915,7 @@ var AI_CAUSE_META = {
 
 // AI 감축안의 각 품목을 원인 분류 → 액션 섹션(공급감축/계획보정/정책개선)으로 배분
 function classifyAiExcess() {
+  excCount("classifyAiExcess");
   var ai = computeAiExcessPlan();
   var tiMap = new Map();
   (state.mappedData.target_inv || []).forEach(function(r) { if (r.itemCode) tiMap.set(r.itemCode, r); });
@@ -1117,6 +1160,8 @@ function effectiveCutOf(it, secApplied) {
 
 // AI 관리 감축 키 전체 재구성 — 섹션 적용 + 품목 판정의 단일 반영 지점
 function syncAiFgAdj(clsArg) {
+  var _P = EXC_PROF ? performance.now() : 0;                       // [측정] 적용 경로(렌더 前)
+  var _c0 = EXC_PROF ? Object.assign({}, _excCallCnt) : null;
   var cls = clsArg || classifyAiExcess();
   Object.keys(state.aiExcessKeys || {}).forEach(function(k) { delete state.excessAdj[k]; });
   state.aiExcessKeys = {};
@@ -1135,8 +1180,18 @@ function syncAiFgAdj(clsArg) {
       });
     });
   });
+  var _tMat = EXC_PROF ? performance.now() : 0;
   syncAiMatPlan();
+  var _tSave = EXC_PROF ? performance.now() : 0;
   saveAiSession();
+  if (EXC_PROF) {
+    var _end = performance.now(), d = {};
+    Object.keys(_excCallCnt).forEach(function(k) { var n = _excCallCnt[k] - (_c0[k] || 0); if (n) d[k] = n; });
+    console.log("[과잉감축] syncAiFgAdj 총 " + (_end - _P).toFixed(1) + "ms" +
+      " (classify+분배 " + (_tMat - _P).toFixed(1) +
+      " / syncAiMatPlan " + (_tSave - _tMat).toFixed(1) +
+      " / saveSession " + (_end - _tSave).toFixed(1) + ")", d);
+  }
 }
 
 function setAiDecision(secId, it, status, qty, reason) {
@@ -1299,8 +1354,10 @@ function renderAiDiagPanel(hasTargetData) {
   function secBlock(def, sumHtml, bodyHtml, btnHtml) {
     var isOpen  = !!state.aiDiagOpen[def.id];
     var applied = !!state.aiSecApplied[def.id];
+    var focusable = (def.id === "supply" || def.id === "planfix");
     return "<div class='exc-aisec" + (applied ? " exc-aisec-on" : "") + "'>" +
-      "<div class='exc-aisec-head' data-sec='" + def.id + "'>" +
+      "<div class='exc-aisec-head' data-sec='" + def.id + "'" +
+        (focusable ? " title='클릭하면 이 원인의 품목이 아래 시뮬레이션 표에서 강조됩니다'" : "") + ">" +
         "<span class='exc-aisec-chev'>" + (isOpen ? "▾" : "▸") + "</span>" +
         "<span class='exc-aisec-no'>" + def.no + "</span>" +
         "<span class='exc-aisec-title'>" + def.title + "</span>" +
@@ -1799,9 +1856,14 @@ function renderAiDiagCharts(it, isCut, ov) {
 // 원부자재 과잉 관리 (180일 기준) — BOM matFlows 기반
 // ═══════════════════════════════════════════════════════════════════════════
 // 자재 월별 흐름 계산: 소비(BOM 소요, 제상품 감축 비례 반영) / 입고(matExcessAdj 반영)
+var _baseMatFlowCache = null, _baseMatFlowRef = null; // 무조정(base) 자재흐름 — BOM 안 바뀌면 재사용
 function calcMatFlowRows(fgAdj, matAdj) {
+  excCount("calcMatFlowRows");
   if (!(typeof BOM_STATUS !== "undefined" && state.bomStatus === BOM_STATUS.DONE &&
         state.bomResult && state.bomResult.matFlows)) return null;
+  // base 시나리오(조정 없음)는 bomResult가 그대로면 값이 동일 → 캐시 재사용
+  var isBase = !fgAdj && !matAdj;
+  if (isBase && _baseMatFlowCache && _baseMatFlowRef === state.bomResult) return _baseMatFlowCache;
   var months = getRtfMonths();
   var rows = [];
   state.bomResult.matFlows.forEach(function(f) {
@@ -1839,6 +1901,7 @@ function calcMatFlowRows(fgAdj, matAdj) {
                days.every(function(v) { return v === null || v <= MAT_SANITY_DAYS; });
     rows.push({ flow: f, cons: cons, intake: intake, origIntake: origIntake, ending: ending, days: days, sane: sane });
   });
+  if (isBase) { _baseMatFlowCache = rows; _baseMatFlowRef = state.bomResult; }
   return rows;
 }
 
@@ -2138,8 +2201,10 @@ function renderMatDiagPanel() {
   function secBlockM(def, sumHtml, bodyHtml, btnHtml) {
     var isOpen  = !!state.aiDiagOpen[def.id];
     var applied = !!state.aiSecApplied[def.id];
+    var focusable = (def.id === "supply" || def.id === "planfix");
     return "<div class='exc-aisec" + (applied ? " exc-aisec-on" : "") + "'>" +
-      "<div class='exc-aisec-head' data-sec='" + def.id + "'>" +
+      "<div class='exc-aisec-head' data-sec='" + def.id + "'" +
+        (focusable ? " title='클릭하면 이 원인의 품목이 아래 시뮬레이션 표에서 강조됩니다'" : "") + ">" +
         "<span class='exc-aisec-chev'>" + (isOpen ? "▾" : "▸") + "</span>" +
         "<span class='exc-aisec-no'>" + def.no + "</span>" +
         "<span class='exc-aisec-title'>" + def.title + "</span>" +
@@ -2900,12 +2965,42 @@ function renderExcessMatTable(months) {
     "<tbody>" + body + "</tbody></table></div>";
 }
 
+// AI 진단 섹션을 클릭(펼침)하면 그 원인의 품목을 시뮬(조정) 표에서 강조하고 나머지는 흐리게.
+// 상태만 state.aiFocusSec에 두고, 매 렌더 후 bindExcessAdjustment 끝에서 다시 호출해 강조를 복원한다.
+// (①supply·②planfix만 시뮬 표에 대응 — ③소진·④처분은 판매계획 없는 품목이라 시뮬 대상 아님)
+function applyAiSecFocus(root) {
+  root = root || document.querySelector("#screenRoot");
+  if (!root) return;
+  // 이전 강조 해제 — 전체 행 순회 없이 컨테이너 클래스 + 소수의 focus 행만 제거
+  root.querySelectorAll(".exc-mat-table.exc-mat-focusing").forEach(function(t) { t.classList.remove("exc-mat-focusing"); });
+  root.querySelectorAll(".exc-mat-row-focus").forEach(function(tr) { tr.classList.remove("exc-mat-row-focus"); });
+  root.querySelectorAll(".exc-aisec-head.exc-aisec-focus").forEach(function(h) { h.classList.remove("exc-aisec-focus"); });
+  var sec = state.aiFocusSec;
+  if (!sec || !_aiDiagCache || !_aiDiagCache.cls) return;
+  var head = root.querySelector(".exc-aisec-head[data-sec='" + sec + "']");
+  if (head) head.classList.add("exc-aisec-focus");
+  var secObj = _aiDiagCache.cls.sections[sec];
+  var items = (secObj && secObj.items) || [];
+  var tables = root.querySelectorAll(".exc-mat-table");
+  if (!items.length || !tables.length) return;
+  var keys = {};
+  items.forEach(function(it) { keys[it.itemCode + "|" + (it.plantCode || "")] = 1; });
+  // 흐림은 컨테이너 클래스 1개로 CSS가 처리 → 매칭 행에만 focus write (개별 dim write·트랜지션 없음)
+  tables.forEach(function(t) { t.classList.add("exc-mat-focusing"); });
+  root.querySelectorAll(".exc-mat-table tr[data-row-key]").forEach(function(tr) {
+    if (keys[tr.dataset.rowKey]) tr.classList.add("exc-mat-row-focus");
+  });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 11. 이벤트 바인딩
 // ═══════════════════════════════════════════════════════════════════════════
 function bindExcessAdjustment() {
   var root = document.querySelector("#screenRoot");
   if (!root) return;
+  var _bindT0 = performance.now();
+  // 렌더 문자열 반환 시각 ~ bind 시작 = 브라우저가 innerHTML을 실제 DOM으로 반영한 비용
+  var _injectMs = (EXC_PROF && window._excRenderEndTs != null) ? (_bindT0 - window._excRenderEndTs) : null;
 
   // AI 진단 — 전체적용(①②, MOQ구조·소진·처분 제외) / 전체해제 (명시 판정은 유지됨)
   var aiApplyBtn = root.querySelector(".exc-ai-apply");
@@ -2973,6 +3068,10 @@ function bindExcessAdjustment() {
       if (body) body.hidden = !state.aiDiagOpen[sec];
       var chev = head.querySelector(".exc-aisec-chev");
       if (chev) chev.textContent = state.aiDiagOpen[sec] ? "▾" : "▸";
+      // 섹션을 펼치면 그 원인의 품목을 아래 시뮬 표에서 부각 (시뮬 대상인 ①입고·생산축소·②판매계획현실화만 해당)
+      var focusable = (sec === "supply" || sec === "planfix");
+      state.aiFocusSec = (state.aiDiagOpen[sec] && focusable) ? sec : null;
+      applyAiSecFocus(root);
     });
   });
 
@@ -3113,6 +3212,16 @@ function bindExcessAdjustment() {
       }, 150);
     });
   });
+
+  // 렌더 직후 — 선택된 AI 진단 섹션이 있으면 시뮬 표 강조를 복원
+  applyAiSecFocus(root);
+
+  // 성능 측정 출력 — 계산(구간별) + innerHTML 반영 + 이벤트 바인딩
+  if (EXC_PROF) {
+    var _bindMs = performance.now() - _bindT0;
+    if (_injectMs != null) _excProfRows.push(["innerHTML 반영(브라우저)", +_injectMs.toFixed(1)]);
+    excProfFlush(window._excRenderMs || 0, _bindMs);
+  }
 }
 
 // ── 세션 복원 — 판정·조정·회의록을 localStorage에서 복구 (core.js 로드 이후 실행) ──

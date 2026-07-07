@@ -233,13 +233,17 @@ function _getRtfCacheKey() {
 function invalidateRtfCache() {
   _rtfItemsCache = null; _rtfItemsCacheKey = "";
   _rtfItemsBomCache = null; _rtfItemsBomRef = null;
+  _scenMemo = null; _scenMemoEpoch = -1;
   _salesPriceCache = null;
   _actualsAnchorCache = null; _actualsAnchorComputed = false;
   _actualsMetaCache = null;
+  _nabotaInvCache = null;
+  _nabotaFactorsCache = undefined;
   if (typeof invalidateRtfMonthsCache === "function") invalidateRtfMonthsCache();
 }
 
 function computeRtfItems(bomMapArg, allTypes, goodsAdj) {
+  if (typeof excCount === "function") excCount("computeRtfItems(calls)");
   const _bomMap = (bomMapArg !== undefined) ? bomMapArg : buildBomMaxProducibleMap();
   // 상품 공급(입고) 조정 override — 있으면 캐시 우회(베이스라인 오염 방지)
   const _goodsAdj = (goodsAdj && Object.keys(goodsAdj).length) ? goodsAdj : null;
@@ -254,6 +258,7 @@ function computeRtfItems(bomMapArg, allTypes, goodsAdj) {
       return _rtfItemsBomCache;
     }
   }
+  if (typeof excCount === "function") excCount("computeRtfItems(MISS-full계산)");
   // BOM 완료 시 자재 제약 맵, 미완료 시 null
   const planRows      = state.mappedData.plan_monthly;
   const inventoryRows = state.mappedData.inventory_base;
@@ -571,7 +576,7 @@ function getLeftColDefs(mode) {
   if (compressed) {
     // 기본: 발표용 — 핵심 컬럼만
     defs = [
-      { key: firstKey, label: firstLabel, width: GRID_COL_WIDTH, align: "center", isFirst: true },
+      { key: firstKey, label: firstLabel, width: 130, align: "center", isFirst: true },
       { key: "base",   label: "기초재고", width: GRID_COL_WIDTH, align: "right",  isBase: true, isLast: true },
     ];
   } else {
@@ -590,7 +595,7 @@ function getLeftColDefs(mode) {
       ];
     }
     defs = [
-      { key: firstKey, label: firstLabel, width: GRID_COL_WIDTH, align: "center", isFirst: true },
+      { key: firstKey, label: firstLabel, width: 130, align: "center", isFirst: true },
       ...mid,
       { key: "code",   label: "자재코드", width: GRID_COL_WIDTH, align: "center" },
       { key: "name",   label: "자재명",   width: NAME_COL_WIDTH, align: "left",  isName: true },
@@ -623,30 +628,45 @@ function getVisibleMonthColumns() {
   return state.rtfExpanded ? MONTH_COLUMNS : MONTH_COLUMNS.filter((m) => !EXTRA_COLUMNS.includes(m));
 }
 
+// 매트릭스 셀 축약 포맷 (좁은 셀 잘림 방지) — 금액: 100억↑ 정수·미만 소수1 / 수량: 만 단위
+function fmtMoneyC(won) {
+  if (!Number.isFinite(won)) return NEED_DATA;
+  if (won === 0) return "-";
+  var eok = won / 1e8;
+  var digits = Math.abs(eok) >= 100 ? 0 : 1; // 100억↑ 정수, 미만 소수1(불필요한 .0 제거)
+  return eok.toLocaleString("ko-KR", { maximumFractionDigits: digits, minimumFractionDigits: 0 }) + "억";
+}
+function fmtQtyC(qty) {
+  if (!Number.isFinite(qty)) return NEED_DATA;
+  if (Math.abs(qty) >= 10000)
+    return (qty / 10000).toLocaleString("ko-KR", { maximumFractionDigits: 1, minimumFractionDigits: 0 }) + "만";
+  return formatNumber(qty);
+}
+
 // 표시 모드: qty(수량) / amount(원가=×표준원가) / revenue(매출=×판가)
 function formatDisplayQtyMoney(qtyValue, costValue, revenueValue, noPlan = false) {
   if (noPlan) return NO_PLAN;
-  if (state.rtfDisplayMode === "amount")  return Number.isFinite(costValue)    ? formatMoney(costValue)    : NEED_DATA;
-  if (state.rtfDisplayMode === "revenue") return Number.isFinite(revenueValue) ? formatMoney(revenueValue) : NEED_DATA;
-  return Number.isFinite(qtyValue) ? formatNumber(qtyValue) : NEED_DATA;
+  if (state.rtfDisplayMode === "amount")  return Number.isFinite(costValue)    ? fmtMoneyC(costValue)    : NEED_DATA;
+  if (state.rtfDisplayMode === "revenue") return Number.isFinite(revenueValue) ? fmtMoneyC(revenueValue) : NEED_DATA;
+  return Number.isFinite(qtyValue) ? fmtQtyC(qtyValue) : NEED_DATA;
 }
 
 // 기말재고는 판가 환산 안 함 → 원가/매출 모드 모두 원가금액(표준원가) 표시
 function formatEnding(row) {
-  if (state.rtfDisplayMode === "qty") return Number.isFinite(row.endingQty) ? formatNumber(row.endingQty) : NEED_DATA;
-  return Number.isFinite(row.endingAmount) ? formatMoney(row.endingAmount) : NEED_DATA;
+  if (state.rtfDisplayMode === "qty") return Number.isFinite(row.endingQty) ? fmtQtyC(row.endingQty) : NEED_DATA;
+  return Number.isFinite(row.endingAmount) ? fmtMoneyC(row.endingAmount) : NEED_DATA;
 }
 
 function formatBaseForNode(node, compressed) {
   const qty = sumNullable(node.items.map((i) => i.baseQty));
   if (state.rtfDisplayMode === "qty") {
     if (!Number.isFinite(qty)) return compressed ? SHORT_TEXT[NEED_DATA] : NEED_DATA;
-    return formatNumber(qty);
+    return fmtQtyC(qty);
   }
   if (node.items.some((i) => !i.hasCost || !Number.isFinite(i.baseQty)))
     return compressed ? SHORT_TEXT[NEED_DATA] : NEED_DATA;
   const amount = sumNullable(node.items.map((i) => i.baseQty * i.standardCost));
-  return Number.isFinite(amount) ? formatMoney(amount) : (compressed ? SHORT_TEXT[NEED_DATA] : NEED_DATA);
+  return Number.isFinite(amount) ? fmtMoneyC(amount) : (compressed ? SHORT_TEXT[NEED_DATA] : NEED_DATA);
 }
 
 // ── 드릴다운 컨텍스트 빌더 ───────────────────────────────────────────────────
@@ -693,7 +713,7 @@ function renderMetricCell(row, metric, metricIndex, compressed, drillCtx, adjInf
     const mode  = state.rtfDisplayMode;
     const shVal = mode === "amount" ? row.shortageAmount : mode === "revenue" ? row.shortageRevenue : row.shortageQty;
     const hasS  = Number.isFinite(shVal) && shVal > 0;
-    const raw = hasS ? (mode === "qty" ? formatNumber(shVal) : formatMoney(shVal)) : "-";
+    const raw = hasS ? (mode === "qty" ? fmtQtyC(shVal) : fmtMoneyC(shVal)) : "-";
     // BOM 제약 셀: 계획 기준보다 부족이 증가한 경우 별도 표시
     const bomBadge = hasS && row.bomConstrained ? `<span class="rtf-bom-constrained-dot" title="BOM 자재 제약으로 부족 증가">▲</span>` : "";
     // tooltip: BOM 제약 시 계획 기준 원래 부족도 표시
@@ -717,12 +737,12 @@ function renderMetricCell(row, metric, metricIndex, compressed, drillCtx, adjInf
     return `<td class="rtf-metric-cell rtf-shortage-cell ${hasS ? "rtf-status-text shortage" : "rtf-neutral-text"} rtf-cell-right${mb}${adjCellCls}">${hasS ? escapeHtml(raw) + bomBadge + adjBadge : escapeHtml(raw)}</td>`;
   }
   if (metric === "매출") {
-    const raw = Number.isFinite(row.salesAmount) ? formatMoney(row.salesAmount) : NEED_DATA;
+    const raw = Number.isFinite(row.salesAmount) ? fmtMoneyC(row.salesAmount) : NEED_DATA;
     const disp = compressed ? (SHORT_TEXT[raw] || raw) : raw;
     return `<td class="rtf-metric-cell rtf-muted-metric rtf-cell-right${mb}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
   }
   if (metric === "매출차질예상") {
-    const raw = Number.isFinite(row.lostSalesAmount) ? formatMoney(row.lostSalesAmount) : NEED_DATA;
+    const raw = Number.isFinite(row.lostSalesAmount) ? fmtMoneyC(row.lostSalesAmount) : NEED_DATA;
     const disp = compressed ? (SHORT_TEXT[raw] || raw) : raw;
     return `<td class="rtf-metric-cell rtf-muted-metric rtf-cell-right${mb}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
   }
@@ -858,8 +878,8 @@ function renderHierarchyRow(node, leftColDefs, compressed, mode, rowspanMap) {
       ? `<button type="button" class="rtf-item-toggle" data-node-id="${escapeHtml(node.id)}">${state.expandedItemGroups.has(node.id) ? "-" : "+"}</button>`
       : "";
     const alignCls  = col.align === "left" ? "rtf-cell-left" : col.align === "right" ? "rtf-cell-right" : "rtf-cell-center";
-    const extraCls  = col.isName ? " rtf-col-name" : col.isLast ? " rtf-col-last-sticky" : "";
-    const titleAttr = col.isName ? ` title="${escapeHtml(node.label)}"` : "";
+    const extraCls  = col.isName ? " rtf-col-name" : col.isLast ? " rtf-col-last-sticky" : col.isFirst ? " rtf-col-firstlabel" : "";
+    const titleAttr = (col.isName || col.isFirst) ? ` title="${escapeHtml(node.label)}"` : "";
     const rowspan = rowspanMap?.spans.has(cellKey) ? ` rowspan="${rowspanMap.spans.get(cellKey)}"` : "";
     const mergeCls = rowspan ? " rtf-rowspan-cell" : "";
     const isTotalLabelCell = isTotal && colIndex === 0;
@@ -1077,7 +1097,142 @@ function totalInvAmountWon(items, mi, anchor) {
     if (Number.isFinite(mm.allowanceInv) && Number.isFinite(am.allowanceInv))
       delta += (mm.allowanceInv - am.allowanceInv) * 1e8;
   }
+  // 나보타(비점검) 재고 변동 — 앵커월 값은 이미 결산 총재고에 포함 → 델타만 반영(이중계상 없음)
+  var nb = getNabotaInv();
+  var nbA = nb[anchor.month], nbC = nb[getRtfMonths()[mi]];
+  if (nbA && nbC && Number.isFinite(nbA.invAmt) && Number.isFinite(nbC.invAmt))
+    delta += (nbC.invAmt - nbA.invAmt) * 1e8;
   return anchor.totalInvWon + delta;
+}
+
+// ── 나보타(비점검) 월별 집계 — 총재고 델타·각주용 ─────────────────────────────
+var _nabotaInvCache = null;
+function getNabotaInv() {
+  if (_nabotaInvCache) return _nabotaInvCache;
+  var map = {};
+  (state.mappedData.nabota_monthly || []).forEach(function(r) { map[r.month] = r; });
+  _nabotaInvCache = map;
+  return map;
+}
+// 앵커월(최신 실적) 기준 나보타 각주 문구 — 총재고 KPI 하단(전체재고일 때만)
+function nabotaKpiNote() {
+  var anchor = getActualsAnchor();
+  if (!anchor) return "";
+  var nb = getNabotaInv(), cur = nb[anchor.month];
+  if (!cur || !Number.isFinite(cur.invAmt)) return "";
+  var pm = anchor.month, py = +pm.slice(0, 4), pmo = +pm.slice(5, 7) - 1;
+  if (pmo < 1) { pmo = 12; py--; }
+  var prev = nb[py + "-" + String(pmo).padStart(2, "0")];
+  var mom = (prev && Number.isFinite(prev.invAmt)) ? cur.invAmt - prev.invAmt : null;
+  var momTxt = (mom === null) ? "" :
+    " (전월 " + (mom >= 0 ? "+" : "−") + Math.abs(Math.round(mom)) + "억)";
+  return "<div class='rtf-nabota-note' style='margin-top:5px;font-size:12.5px;color:#6b7280;'>" +
+    "※ 나보타 재고 약 " + Math.round(cur.invAmt) + "억" + momTxt +
+    " · 별도 관리·비점검 (총재고에 포함)</div>";
+}
+
+// 나보타 환산 계수 — 매출_RAW 나보타(1220) 평균 판가·원가율 (매출액→수량·원가 역산용)
+var _nabotaFactorsCache; // undefined=미계산, null=산출불가
+function getNabotaSalesFactors() {
+  if (_nabotaFactorsCache !== undefined) return _nabotaFactorsCache;
+  var net = 0, qty = 0, cost = 0;
+  (state.mappedData.sales_actual || []).forEach(function(r) {
+    var p = String(r.plant == null ? "" : r.plant);
+    if (p !== "1220" && p.indexOf("나보타") < 0) return;
+    if (Number.isFinite(r.netSales)) net += r.netSales;
+    if (Number.isFinite(r.paQty))    qty += r.paQty;
+    if (Number.isFinite(r.costAmt))  cost += r.costAmt;
+  });
+  _nabotaFactorsCache = (net > 0 && qty > 0)
+    ? { price: net / qty, costRatio: cost > 0 ? cost / net : 0.15 } // 판가(원/개), 원가율
+    : null;
+  return _nabotaFactorsCache;
+}
+
+// 나보타(비점검) 합성 매트릭스 행 — RTF판정 매트릭스에만 주입(총계 합산·행 표시).
+// 매출=나보타_RAW 매출액, 수량=매출÷평균판가, 원가=매출×평균원가율(없으면 출고제품만 폴백).
+// 재고/재고일수는 판정 대상 아님 → 기말재고(원가)만 재고금액, 나머지 비움.
+function buildNabotaMatrixItem(months) {
+  var nb = getNabotaInv();
+  if (!Object.keys(nb).length) return null;
+  var f = getNabotaSalesFactors();
+  var avgUnitCost = (f && f.price > 0) ? f.price * f.costRatio : null; // 평균 단위원가(원/개)
+  // 기초재고 = 첫 RTF월 직전월(없으면 첫월) 나보타 재고금액
+  var m0 = months[0], py = +m0.slice(0, 4), pmo = +m0.slice(5, 7) - 1;
+  if (pmo < 1) { pmo = 12; py--; }
+  var openM = py + "-" + String(pmo).padStart(2, "0");
+  var openWon = (nb[openM] && Number.isFinite(nb[openM].invAmt)) ? nb[openM].invAmt * 1e8
+              : (nb[m0] && Number.isFinite(nb[m0].invAmt) ? nb[m0].invAmt * 1e8 : null);
+  var baseQty = (avgUnitCost && Number.isFinite(openWon)) ? openWon / avgUnitCost : null;
+  var ms = months.map(function(m) {
+    var r = nb[m] || {};
+    var salesWon = Number.isFinite(r.salesAmt) ? r.salesAmt * 1e8 : null;
+    var qty  = (f && f.price > 0 && Number.isFinite(salesWon)) ? salesWon / f.price : null;
+    var cost = (f && Number.isFinite(salesWon)) ? salesWon * f.costRatio
+             : (Number.isFinite(r.outProdAmt) ? r.outProdAmt * 1e8 : null);
+    var endWon = Number.isFinite(r.invAmt) ? r.invAmt * 1e8 : null;
+    return {
+      month: m, salesQty: qty, supplyQty: null,
+      rtfQty: qty, rtfAmount: cost, rtfRevenue: salesWon,
+      endingQty: null, endingAmount: endWon,
+      shortageQty: 0, shortageAmount: 0, shortageRevenue: 0, lostSalesAmount: 0,
+      inventoryDays: null,
+      salesAmount: salesWon, salesPlanAmount: cost, salesRevenue: salesWon,
+      status: STATUS.OK, reason: "", noSalesPlan: false, bomConstrained: false, planShortageQty: 0,
+      isNabota: true,
+    };
+  });
+  return {
+    itemCode: "나보타", itemName: "나보타 (비점검·RTF완결)",
+    plantCode: "1220", plant: "나보타", businessUnit: "나보타",
+    itemType: "완제품", typeGroup: "완제품", itemGroup: "나보타",
+    baseQty: baseQty, standardCost: avgUnitCost,
+    hasCost: Number.isFinite(baseQty) && Number.isFinite(avgUnitCost),
+    hasInventory: true, hasRevenue: true,
+    isNabota: true, monthlyStatus: ms,
+  };
+}
+
+// ── 판매 총계(나보타 비점검 포함) 스트립 — RTF 매트릭스 상단 (B안) ─────────────
+// 매출·원가 모드: 점검 판매총계 + 나보타 완결블록. 수량 모드: 나보타 제외(각주).
+// 나보타는 판매계획이 없어 매트릭스엔 안 들어감 → 총계만 별도 명시(이중계상 없음).
+function renderNabotaSalesStrip(items, months) {
+  var nb = getNabotaInv();
+  if (!Object.keys(nb).length) return "";
+  var dm = state.rtfDisplayMode;
+  if (dm === "qty") {
+    return "<div class='rtf-nabota-strip' style='margin:10px 0;padding:8px 12px;border-left:3px solid #94a3b8;background:rgba(148,163,184,.09);font-size:13px;color:#475569;border-radius:4px;'>" +
+      "<b>판매 총계(수량)</b> — 나보타(비점검)는 수량 데이터가 없어 <b>제외</b>됩니다. 매출·원가 기준에서만 통으로 반영." +
+      "</div>";
+  }
+  function nbVal(m) {
+    var r = nb[m]; if (!r) return null;
+    var v = (dm === "revenue") ? r.salesAmt : r.outProdAmt;
+    return Number.isFinite(v) ? v * 1e8 : null;
+  }
+  if (!months.some(function(m) { return Number.isFinite(nbVal(m)); })) return "";
+  var modeLabel = (dm === "revenue") ? "매출" : "원가";
+  var cells = months.map(function(m, mi) {
+    var agg = aggregateMonth(items, mi);
+    var base = (dm === "revenue") ? agg.salesRevenue : agg.salesPlanAmount;
+    if (!Number.isFinite(base)) base = 0;
+    var nbv = nbVal(m);
+    var total = base + (Number.isFinite(nbv) ? nbv : 0);
+    return "<span style='display:inline-block;margin-right:16px;white-space:nowrap;'>" +
+      escapeHtml(monthLabel(m)) + " <b style='color:#0f172a;'>" + escapeHtml(formatMoney(total)) + "</b></span>";
+  }).join("");
+  var agg0 = aggregateMonth(items, 0);
+  var base0 = (dm === "revenue") ? agg0.salesRevenue : agg0.salesPlanAmount;
+  var nb0 = nbVal(months[0]);
+  var note = (Number.isFinite(base0) && Number.isFinite(nb0))
+    ? "└ " + escapeHtml(monthLabel(months[0])) + " = 점검 " + escapeHtml(formatMoney(base0)) +
+      " + 나보타 " + escapeHtml(formatMoney(nb0)) + " · 나보타는 RTF 대응 완료로 통 반영(비점검)"
+    : "";
+  return "<div class='rtf-nabota-strip' style='margin:10px 0;padding:9px 13px;border-left:3px solid #2563eb;background:rgba(37,99,235,.06);border-radius:4px;overflow-x:auto;'>" +
+    "<div style='font-size:12.5px;color:#2563eb;font-weight:700;margin-bottom:4px;'>판매 총계 (나보타 비점검 포함) · " + modeLabel + " 기준</div>" +
+    "<div style='font-size:14px;color:#0f172a;'>" + cells + "</div>" +
+    (note ? "<div style='font-size:12px;color:#64748b;margin-top:4px;'>" + note + "</div>" : "") +
+    "</div>";
 }
 
 // ── 결산 메타 (매출원가 누적 + 미착품·평가충당금 전망, 억 단위) ────────────────
@@ -1177,7 +1332,15 @@ function rtfDisclosureDays(items, mi) {
 }
 
 // ── 3시나리오 계산 (현재 → RTF조정후 → 감축후) — 과잉감축 배너·3단 띠 공용 ────
+// 렌더 경계 메모이즈 — computeScenarioItemSets는 한 렌더 안에서 배너·AI진단 등 여러 곳이
+// 같은 상태로 반복 호출한다(각 호출 = RTF 전체 재계산). 렌더 토큰이 같으면 결과 재사용.
+// 상태는 조정 핸들러가 바꾼 뒤 반드시 render()를 호출하므로(토큰 증가) 낡은 값이 나올 수 없다.
+var _renderEpoch = 0;
+var _scenMemo = null, _scenMemoEpoch = -1;
+function bumpRenderEpoch() { _renderEpoch++; }
+
 function computeScenarioItemSets() {
+  if (_scenMemo && _scenMemoEpoch === _renderEpoch) return _scenMemo;
   var hasRtfAdj = Object.keys(state.matSimAdj || {}).length > 0 ||
                   Object.keys(state.goodsSupplyAdj || {}).length > 0;
   var hasExcess = Object.keys(state.excessAdj || {}).length > 0;
@@ -1192,7 +1355,9 @@ function computeScenarioItemSets() {
   var finalItems = hasExcess
     ? computeRtfItems(adjBom, false, Object.assign({}, state.goodsSupplyAdj || {}, state.excessAdj || {}))
     : rtfAdj;
-  return { base: base, rtfAdj: rtfAdj, final: finalItems, hasRtfAdj: hasRtfAdj, hasExcess: hasExcess };
+  _scenMemo = { base: base, rtfAdj: rtfAdj, final: finalItems, hasRtfAdj: hasRtfAdj, hasExcess: hasExcess };
+  _scenMemoEpoch = _renderEpoch;
+  return _scenMemo;
 }
 
 // ── 3단 헤드라인(현재→RTF조정후→감축후) — 회의안건 상단 띠 공용 계산 ─────────
@@ -1328,7 +1493,7 @@ function renderScenarioKpiBanner() {
     "<table class='rtf-kpi-table'>" +
     "<thead>" + headerRow + "</thead>" +
     "<tbody>" + amtRow + discRow + mgmtRow + "</tbody>" +
-    "</table></div>";
+    "</table>" + (_isTotal ? nabotaKpiNote() : "") + "</div>";
 }
 
 // 헤드라인 재고: 결산 연결 시 전체재고, 미연결 시 완제품·상품(기존)로 폴백
@@ -1588,9 +1753,12 @@ function renderRtf() {
   const sectionTabs = state.rtfExpanded ? RTF_SECTION_OPTIONS.map((option) =>
     `<button type="button" class="rtf-section-tab ${activeSection.mode === option.mode ? "active" : ""}" data-rtf-section="${escapeHtml(option.mode)}">${escapeHtml(option.label)}</button>`
   ).join("") : "";
+  // 나보타(비점검) 완결 행을 매트릭스에만 주입 (KPI·요약·카드·인스펙션 화면은 미영향)
+  const nabotaItem  = buildNabotaMatrixItem(months);
+  const matrixItems = nabotaItem ? items.concat([nabotaItem]) : items;
   const sectionHtml = state.rtfExpanded
-    ? renderMatrixSection(activeSection.title, activeSection.mode, items, activeSection.sectionId)
-    : RTF_SECTION_OPTIONS.map((option) => renderMatrixSection(option.title, option.mode, items, option.sectionId)).join("");
+    ? renderMatrixSection(activeSection.title, activeSection.mode, matrixItems, activeSection.sectionId)
+    : RTF_SECTION_OPTIONS.map((option) => renderMatrixSection(option.title, option.mode, matrixItems, option.sectionId)).join("");
 
   const monthCardsHtml = renderRtfMonthCards(items, state.rtfViewMode === "adjusted" ? baseItems : null);
 
