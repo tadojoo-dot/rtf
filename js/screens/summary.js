@@ -265,9 +265,10 @@ function bindSummary() {
   var rtfMonths   = getRtfMonths();
   var rtfItemsArr = computeRtfItems(undefined, true);
 
-  var hasRtfAdj    = Object.keys(state.matSimAdj  || {}).length > 0;
+  var hasRtfAdj    = Object.keys(state.matSimAdj  || {}).length > 0 ||
+                     (typeof hasFgProdAdj === "function" && hasFgProdAdj());
   var hasExcessAdj = Object.keys(state.excessAdj  || {}).length > 0;
-  var matAdjBomMap = hasRtfAdj ? buildBomMaxProducibleMap(state.matSimAdj) : null;
+  var matAdjBomMap = hasRtfAdj ? buildBomMaxProducibleMap(state.matSimAdj, state.fgProdAdj) : null;
 
   // ── 실적 값 조회 ──────────────────────────────────────────────────────────
   function getActuals(month, metric) {

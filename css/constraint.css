@@ -1600,6 +1600,28 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
 /* 완제품 재고 서브라인 — 영향품목 표 부족 컬럼 (부족 없는 달, 회색 보조 숫자) */
 .cst-inv-sub { color: #6b7280; font-size: 12px; font-weight: 500; white-space: nowrap; }
 
+/* 완제품 조정 3행 (판매계획 / 생산계획 조정 / 부족·재고) — 원부자재와 통일된 조정 패턴 */
+.cst-sa-fgrow td { background: #eef2ff; }
+.cst-sa-fgrow .cst-sa-fglbl {
+  font-size: 13px; font-weight: 800; color: #3730a3; text-align: left;
+  padding: 6px 10px; white-space: nowrap;
+}
+.cst-sa-fgtag { font-size: 11px; font-weight: 700; color: #6366f1; margin-left: 4px; }
+.cst-sa-fgval { text-align: center; padding: 4px 8px; font-size: 13px; font-weight: 600; color: #334155; }
+.cst-sa-fgrow .cst-sa-input-cell { background: #e0e7ff; }
+.cst-sa-fgrow .cst-fgp-input {
+  width: 86px; border: 1px solid #818cf8; border-radius: 4px;
+  padding: 3px 5px; text-align: right; font-size: 14px; background: #fff;
+  display: block; margin: 0 auto;
+}
+.cst-sa-fgrow .cst-fgp-input:focus { outline: 2px solid #6366f1; outline-offset: 1px; }
+.cst-sa-fgsep td { height: 6px; background: #fff; border-bottom: 2px solid #c7d2fe; padding: 0; }
+.cst-fgp-reset {
+  font-size: 12px; padding: 3px 10px; border: 1px solid #d1d5db;
+  border-radius: 4px; background: #fff; cursor: pointer; color: #374151; white-space: nowrap;
+}
+.cst-fgp-reset:hover { background: #fef2f2; border-color: #fca5a5; color: #b91c1c; }
+
 /* 완제품 월별 재고 스트립 — FG 드릴다운 상단 (조정 반영, 수량·일수) */
 .cst-fgl-inv-strip {
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;

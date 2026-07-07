@@ -703,9 +703,14 @@ function _renderExcessAdjustmentInner() {
     var k = ic + "|" + pl + "|" + mo;
     globalPlanMap.set(k, (globalPlanMap.get(k) || 0) + (cleanNumber(r.supplyQty) || 0));
   });
+  // 완제품 생산계획 조정(fgProdAdj) — 과잉감축의 기준선(RTF조정후)에 반영
+  Object.keys(state.fgProdAdj || {}).forEach(function(k) {
+    if (globalPlanMap.has(k)) globalPlanMap.set(k, state.fgProdAdj[k]);
+  });
 
-  var hasRtfAdj    = Object.keys(state.matSimAdj || {}).length > 0;
-  var matAdjBomMap = hasRtfAdj ? buildBomMaxProducibleMap(state.matSimAdj) : null;
+  var hasRtfAdj    = Object.keys(state.matSimAdj || {}).length > 0 ||
+                     (typeof hasFgProdAdj === "function" && hasFgProdAdj());
+  var matAdjBomMap = hasRtfAdj ? buildBomMaxProducibleMap(state.matSimAdj, state.fgProdAdj) : null;
 
   // 전체 품목 + 초과 여부 플래그
   var allFgItems = rtfItems.filter(function(item) {

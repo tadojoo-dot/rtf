@@ -97,7 +97,9 @@ function shortNoteLabel(note) {
 // ── BOM 전개 엔진 ─────────────────────────────────────────────────────────────
 // demandField: 완제품 수요 기준 컬럼. 기본 "supplyQty"(공급계획=생산계획, 화면 전개용).
 // 요청양식 다운로드는 공급계획 회신 전 단계라 "salesQty"(판매계획)로 소요량을 선전개한다.
-function computeBomExpansion(demandField) {
+// prodOverrides: 완제품 생산계획 조정("code|plant|month" → 절대수량, 늘리기만) —
+//   공급원인 화면의 생산계획 조정 시나리오 전개용. 미전달 시 원계획 그대로.
+function computeBomExpansion(demandField, prodOverrides) {
   demandField = demandField || "supplyQty";
   var planRows      = state.mappedData.plan_monthly;
   var inventoryRows = state.mappedData.inventory_base;
@@ -160,6 +162,13 @@ function computeBomExpansion(demandField) {
     var key = code + "|" + cleanOptional(row.plant) + "|" + cleanOptional(row.month);
     prodPlanMap.set(key, (prodPlanMap.get(key) || 0) + (cleanNumber(row[demandField]) || 0));
   });
+  // 생산계획 조정 override — 계획에 존재하는 키만 절대값 교체 (자재 소요가 연쇄 재계산됨)
+  if (prodOverrides) {
+    Object.keys(prodOverrides).forEach(function(k) {
+      var v = cleanNumber(prodOverrides[k]);
+      if (v !== null && prodPlanMap.has(k)) prodPlanMap.set(k, v);
+    });
+  }
 
   // 하위 자재 공급계획: code|plant|month → { qty, unit }
   var compSupplyMap = new Map();

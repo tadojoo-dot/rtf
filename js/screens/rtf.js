@@ -35,12 +35,40 @@ var METRIC_DISPLAY_SHORT = { "판매계획":"판매", "Shortage":"부족" };
 // 복수 자재 중 가장 제약이 심한 병목 자재 기준(min)
 var _bomMaxProducibleCache = null; // adj 없는 기본 맵 캐시 (BOM 재전개 시 무효화)
 
-function buildBomMaxProducibleMap(adjOverrides) {
+// ── 완제품 생산계획 조정(fgProdAdj) 헬퍼 ─────────────────────────────────────
+// state.fgProdAdj: "code|plant|month" → 조정 생산수량 (늘리기만, 원계획 이상)
+function hasFgProdAdj() {
+  return !!(state.fgProdAdj && Object.keys(state.fgProdAdj).length > 0);
+}
+// 조정 후 시나리오용 공급 override 통합 (상품 입고 + 완제품 생산, extra는 감축 등 최우선)
+function rtfSupplyAdjAll(extra) {
+  var m = Object.assign({}, state.goodsSupplyAdj || {}, state.fgProdAdj || {});
+  return extra ? Object.assign(m, extra) : m;
+}
+// 생산계획 조정 반영 BOM 전개 (조정 없으면 원본 스냅샷 그대로 — 베이스라인 불변)
+var _bomResAdjCache = null, _bomResAdjSig = "", _bomResAdjBase = null;
+function getBomResultAdj(fgAdj) {
+  var adj = fgAdj || state.fgProdAdj;
+  if (!adj || !Object.keys(adj).length) return state.bomResult;
+  if (typeof computeBomExpansion !== "function") return state.bomResult;
+  var sig = JSON.stringify(adj);
+  if (_bomResAdjCache && _bomResAdjSig === sig && _bomResAdjBase === state.bomResult) return _bomResAdjCache;
+  _bomResAdjCache = computeBomExpansion(undefined, adj);
+  _bomResAdjSig   = sig;
+  _bomResAdjBase  = state.bomResult;
+  return _bomResAdjCache;
+}
+
+function buildBomMaxProducibleMap(adjOverrides, fgAdj) {
   if (state.bomStatus !== "done" || !state.bomResult || !state.bomResult.items) return null;
 
   // adj 없는 기본 호출은 캐시 사용 (탭 이동 시마다 재계산 방지)
   var hasAdj = adjOverrides && Object.keys(adjOverrides).length > 0;
-  if (!hasAdj && _bomMaxProducibleCache) return _bomMaxProducibleCache;
+  var hasFg  = fgAdj && Object.keys(fgAdj).length > 0;
+  if (!hasAdj && !hasFg && _bomMaxProducibleCache) return _bomMaxProducibleCache;
+  // 생산계획 조정 시 소요가 재전개된 스냅샷 기준으로 자재 캡 산출
+  var bomRes = hasFg ? getBomResultAdj(fgAdj) : state.bomResult;
+  if (!bomRes || !bomRes.items) return null;
 
   // 조정값 있을 때 원래 입고수량 맵 구축 (delta 계산용)
   var origSupplyMap = null;
@@ -58,7 +86,7 @@ function buildBomMaxProducibleMap(adjOverrides) {
   // 조정 시: 자재별 월간 잔여량 이월 (Pull In 후 남은 자재 → 다음 달로 누적)
   const extraCarryMap = new Map(); // matKey → 이전 달에서 넘어온 추가 잔여량
 
-  state.bomResult.items.forEach((bi) => {
+  bomRes.items.forEach((bi) => {
     if (!bi.monthlyData || !bi.parentItems) return;
     const matKey = bi.componentCode + "|" + (bi.plant || "");
 
@@ -122,7 +150,7 @@ function buildBomMaxProducibleMap(adjOverrides) {
     });
   });
 
-  if (!hasAdj) _bomMaxProducibleCache = map; // adj 없는 결과 캐시 저장
+  if (!hasAdj && !hasFg) _bomMaxProducibleCache = map; // adj 없는 결과 캐시 저장
   return map;
 }
 
@@ -233,6 +261,7 @@ function _getRtfCacheKey() {
 function invalidateRtfCache() {
   _rtfItemsCache = null; _rtfItemsCacheKey = "";
   _rtfItemsBomCache = null; _rtfItemsBomRef = null;
+  _bomResAdjCache = null; _bomResAdjSig = ""; _bomResAdjBase = null;
   _scenMemo = null; _scenMemoEpoch = -1;
   _salesPriceCache = null;
   _actualsAnchorCache = null; _actualsAnchorComputed = false;
@@ -1342,18 +1371,19 @@ function bumpRenderEpoch() { _renderEpoch++; }
 function computeScenarioItemSets() {
   if (_scenMemo && _scenMemoEpoch === _renderEpoch) return _scenMemo;
   var hasRtfAdj = Object.keys(state.matSimAdj || {}).length > 0 ||
-                  Object.keys(state.goodsSupplyAdj || {}).length > 0;
+                  Object.keys(state.goodsSupplyAdj || {}).length > 0 ||
+                  hasFgProdAdj();
   var hasExcess = Object.keys(state.excessAdj || {}).length > 0;
   var bomDone   = typeof BOM_STATUS !== "undefined" && state.bomStatus === BOM_STATUS.DONE &&
                   typeof buildBomMaxProducibleMap === "function";
   var baseBom   = bomDone ? buildBomMaxProducibleMap({}) : null;
-  var adjBom    = (bomDone && Object.keys(state.matSimAdj || {}).length > 0)
-    ? buildBomMaxProducibleMap(state.matSimAdj) : baseBom;
+  var adjBom    = (bomDone && (Object.keys(state.matSimAdj || {}).length > 0 || hasFgProdAdj()))
+    ? buildBomMaxProducibleMap(state.matSimAdj, state.fgProdAdj) : baseBom;
   var base   = computeRtfItems(baseBom);
-  var rtfAdj = hasRtfAdj ? computeRtfItems(adjBom, false, state.goodsSupplyAdj) : base;
+  var rtfAdj = hasRtfAdj ? computeRtfItems(adjBom, false, rtfSupplyAdjAll()) : base;
   // 감축후 = RTF조정 위에 감축 공급 override (같은 키는 감축이 우선)
   var finalItems = hasExcess
-    ? computeRtfItems(adjBom, false, Object.assign({}, state.goodsSupplyAdj || {}, state.excessAdj || {}))
+    ? computeRtfItems(adjBom, false, rtfSupplyAdjAll(state.excessAdj || {}))
     : rtfAdj;
   _scenMemo = { base: base, rtfAdj: rtfAdj, final: finalItems, hasRtfAdj: hasRtfAdj, hasExcess: hasExcess };
   _scenMemoEpoch = _renderEpoch;
@@ -1680,11 +1710,11 @@ function renderRtf() {
   _rtfBaseItemMap.clear();
   baseItems.forEach(function(item) { _rtfBaseItemMap.set(item.itemCode + "|" + item.plantCode, item); });
 
-  // 2. 조정후 items (matSimAdj[자재 증량] 또는 goodsSupplyAdj[상품 입고] 있을 때)
+  // 2. 조정후 items (matSimAdj[자재 증량] / goodsSupplyAdj[상품 입고] / fgProdAdj[생산계획 증량] 있을 때)
   const hasMatAdj   = Object.keys(state.matSimAdj || {}).length > 0;
   const hasGoodsAdj = Object.keys(state.goodsSupplyAdj || {}).length > 0;
-  const hasAdj = hasMatAdj || hasGoodsAdj;
-  const adjItems = hasAdj ? computeRtfItems(buildBomMaxProducibleMap(state.matSimAdj), false, state.goodsSupplyAdj) : null;
+  const hasAdj = hasMatAdj || hasGoodsAdj || hasFgProdAdj();
+  const adjItems = hasAdj ? computeRtfItems(buildBomMaxProducibleMap(state.matSimAdj, state.fgProdAdj), false, rtfSupplyAdjAll()) : null;
   if (!hasAdj && state.rtfViewMode === "adjusted") state.rtfViewMode = "current";
   if (hasAdj && !state._rtfToggleManual) state.rtfViewMode = "adjusted";
   state._rtfToggleManual = false;

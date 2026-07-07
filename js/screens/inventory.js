@@ -25,6 +25,9 @@ function computeAdjMonthly(item, matAdjBomMap) {
   var opening = (item.baseQty !== null && item.baseQty !== undefined) ? item.baseQty : 0;
   return months.map(function(month, mi) {
     var origSupply   = planMap.get(month) || 0;
+    // 완제품 생산계획 조정(fgProdAdj) — RTF조정후 기준선에 반영 (늘리기만)
+    var _fgpKey = item.itemCode + "|" + item.plantCode + "|" + month;
+    if (state.fgProdAdj && (_fgpKey in state.fgProdAdj)) origSupply = state.fgProdAdj[_fgpKey];
     var rtfAdjSupply = origSupply;
     if (matAdjBomMap) {
       var maxProd = matAdjBomMap.get(item.itemCode + "|" + item.plantCode + "|" + month);
@@ -63,6 +66,9 @@ function computeExcessMonthly(item, matAdjBomMap) {
   var opening = (item.baseQty !== null && item.baseQty !== undefined) ? item.baseQty : 0;
   return months.map(function(month, mi) {
     var origSupply   = planMap.get(month) || 0;
+    // 완제품 생산계획 조정(fgProdAdj) — RTF조정후 기준선에 반영 (늘리기만)
+    var _fgpKey = item.itemCode + "|" + item.plantCode + "|" + month;
+    if (state.fgProdAdj && (_fgpKey in state.fgProdAdj)) origSupply = state.fgProdAdj[_fgpKey];
     var rtfAdjSupply = origSupply;
     if (matAdjBomMap) {
       var maxProd = matAdjBomMap.get(item.itemCode + "|" + item.plantCode + "|" + month);
@@ -438,14 +444,15 @@ function renderInventoryForecast() {
     if (r.itemCode) targetMap.set(r.itemCode, r.targetDays);
   });
 
-  var hasMatAdj    = Object.keys(state.matSimAdj  || {}).length > 0;
+  var hasMatAdj    = Object.keys(state.matSimAdj  || {}).length > 0 ||
+                     (typeof hasFgProdAdj === "function" && hasFgProdAdj());
   var hasExcessAdj = Object.keys(state.excessAdj  || {}).length > 0;
   if (state.invViewMode === "rtf"      && !hasMatAdj)    state.invViewMode = "current";
   if (state.invViewMode === "excess"   && !hasExcessAdj) state.invViewMode = "current";
   if (state.invViewMode === "adjusted") state.invViewMode = hasMatAdj ? "rtf" : "current";
   var activeMode = state.invViewMode;
 
-  var matAdjBomMap = hasMatAdj ? buildBomMaxProducibleMap(state.matSimAdj) : null;
+  var matAdjBomMap = hasMatAdj ? buildBomMaxProducibleMap(state.matSimAdj, state.fgProdAdj) : null;
 
   // ── 3패널 요약 ────────────────────────────────────────────────────────────
   var totalBaseAmt = 0, totalRtfAmt = 0, totalExcessAmt = 0, totalTargetAmt = 0;
@@ -609,9 +616,10 @@ function bindInvChart() {
 
   var rtfMonths    = getRtfMonths();                         // 6~12월
   var rtfItemsArr  = computeRtfItems(undefined, true);
-  var hasRtfAdj    = Object.keys(state.matSimAdj  || {}).length > 0;
+  var hasRtfAdj    = Object.keys(state.matSimAdj  || {}).length > 0 ||
+                     (typeof hasFgProdAdj === "function" && hasFgProdAdj());
   var hasExcessAdj = Object.keys(state.excessAdj  || {}).length > 0;
-  var matAdjBomMap = hasRtfAdj ? buildBomMaxProducibleMap(state.matSimAdj) : null;
+  var matAdjBomMap = hasRtfAdj ? buildBomMaxProducibleMap(state.matSimAdj, state.fgProdAdj) : null;
   var hasActuals   = (state.mappedData.actuals_monthly || []).length > 0;
 
   // 1~5월 실적: actuals_monthly에서 plant="전체" 합산

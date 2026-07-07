@@ -73,8 +73,9 @@ function _buildChartBase() {
 
   var rtfMonths    = getRtfMonths();
   var rtfItemsArr  = computeRtfItems(undefined, true);
-  var matAdjBomMap = Object.keys(state.matSimAdj || {}).length > 0
-    ? buildBomMaxProducibleMap(state.matSimAdj) : null;
+  var matAdjBomMap = (Object.keys(state.matSimAdj || {}).length > 0 ||
+                      (typeof hasFgProdAdj === "function" && hasFgProdAdj()))
+    ? buildBomMaxProducibleMap(state.matSimAdj, state.fgProdAdj) : null;
 
   var lastActualIdx = -1;
   allMonths.forEach(function(m, i) {
