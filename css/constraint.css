@@ -1597,6 +1597,19 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
   white-space: nowrap;
 }
 
+/* 완제품 재고 서브라인 — 영향품목 표 부족 컬럼 (부족 없는 달, 회색 보조 숫자) */
+.cst-inv-sub { color: #6b7280; font-size: 12px; font-weight: 500; white-space: nowrap; }
+
+/* 완제품 월별 재고 스트립 — FG 드릴다운 상단 (조정 반영, 수량·일수) */
+.cst-fgl-inv-strip {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
+  background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px;
+  padding: 7px 12px; margin: 0 0 8px;
+}
+.cst-fgl-inv-lbl { color: #475569; font-size: 12.5px; font-weight: 800; margin-right: 4px; white-space: nowrap; }
+.cst-fgl-inv-cell { color: #334155; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.cst-fgl-inv-m { color: #94a3b8; font-size: 11.5px; font-weight: 700; margin-right: 4px; }
+
 /* 월별 점 스트립 */
 .cst-fg-month-strip {
   align-items: center;

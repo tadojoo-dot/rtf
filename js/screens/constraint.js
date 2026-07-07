@@ -1808,9 +1808,12 @@ function renderCstDetailExpanded(item, months, totalCols) {
   }).join("");
   var impSubHeads = months.map(function() {
     return "<th class=\"cst-imp-sub impact-month-metric-header\">생산계획</th>" +
-           "<th class=\"cst-imp-sub impact-month-metric-header\">부족</th>" +
+           "<th class=\"cst-imp-sub impact-month-metric-header\">부족/재고</th>" +
            "<th class=\"cst-imp-sub impact-month-metric-header\">자재 부족수량</th>";
   }).join("");
+
+  // 완제품 재고 (조정 반영) — 부족 없는 달에 수량·일수 표시
+  var _impInvMap = getCstAdjFgInvMap();
 
   var impRows = shownParents.map(function(p) {
     var unitReqNum = null;
@@ -1834,7 +1837,14 @@ function renderCstDetailExpanded(item, months, totalCols) {
       var salesQty    = salesByParentMonth.get(p.code + "|" + (p.plant || "") + "|" + month) || 0;
       var openingQty  = getParentOpeningQty(p.code, p.plant, mi);
       var rtfShortage = Math.max(0, salesQty - (openingQty + md.prodQty));
-      var rtfDisp = rtfShortage > 0 ? formatNumber(Math.round(rtfShortage)) : "-";
+      var rtfDisp;
+      if (rtfShortage > 0) {
+        rtfDisp = formatNumber(Math.round(rtfShortage));
+      } else {
+        // 부족 없는 달 — 완제품 기말재고 수량·일수 (회색 보조 표시)
+        var invTxt = cstFgInvText(_impInvMap && _impInvMap.get(p.code + "|" + (p.plant || "")), month);
+        rtfDisp = invTxt ? "<span class=\"cst-inv-sub\">" + escapeHtml(invTxt) + "</span>" : "-";
+      }
 
       // 자재 부족수량: 전체 자재 부족수량을 reqQty 비율로 안분
       var totalShortage = monthlyShortage.get(month);
@@ -1901,6 +1911,33 @@ function renderCstDetailExpanded(item, months, totalCols) {
     "<div class=\"cst-detail-inner cst-detail-v2\">" +
     summaryHtml + simHtml + impactHtml +
     "</div></td></tr>";
+}
+
+// ── 완제품 재고 조회 (조정 반영 RTF 기준 — RTF판정 화면과 동일 수치) ──────────
+var _cstAdjFgMemo = { epoch: -1, map: null };
+function getCstAdjFgInvMap() {
+  var ep = (typeof _renderEpoch !== "undefined") ? _renderEpoch : -1;
+  if (_cstAdjFgMemo.map && ep !== -1 && _cstAdjFgMemo.epoch === ep) return _cstAdjFgMemo.map;
+  if (state.bomStatus !== BOM_STATUS.DONE) return null;
+  if (typeof computeRtfItems !== "function" || typeof buildBomMaxProducibleMap !== "function") return null;
+  var items = computeRtfItems(buildBomMaxProducibleMap(state.matSimAdj || {}));
+  var map = new Map();
+  items.forEach(function(it) {
+    var msMap = new Map();
+    (it.monthlyStatus || []).forEach(function(ms) { if (ms && ms.month) msMap.set(ms.month, ms); });
+    map.set(it.itemCode + "|" + (it.plantCode || ""), msMap);
+  });
+  _cstAdjFgMemo = { epoch: ep, map: map };
+  return map;
+}
+
+// "4,200·32일" — 기말재고 수량·재고일수. 판매계획 0인 달은 일수 계산 불가라 "-"
+function cstFgInvText(msMap, month) {
+  if (!msMap) return null;
+  var ms = msMap.get(month);
+  if (!ms || !Number.isFinite(ms.endingQty)) return null;
+  var days = Number.isFinite(ms.inventoryDays) ? formatNumber(Math.round(ms.inventoryDays)) + "일" : "-";
+  return formatNumber(Math.round(ms.endingQty)) + "·" + days;
 }
 
 // ── 결과 표 본문 ─────────────────────────────────────────────────────────────
@@ -2617,7 +2654,18 @@ function renderCstRtfShortList(months) {
           ? "<div class=\"cst-fgl-no-mat\">이 완제품은 BOM이 다른 플랜트에 등록돼 있어 자재가 연결되지 않았습니다. <b>판매계획 플랜트 정정(원천)</b>이 필요합니다.</div>"
           : "<div class=\"cst-fgl-no-mat\">BOM에 이 완제품(Root)이 없습니다. BOM 파일을 확인하세요.</div>";
 
-    var detailRow = "<tr class=\"cst-fgl-detail-row\"><td colspan=\"4\" class=\"cst-fgl-detail-cell\">" + matContent + "</td></tr>";
+    // 완제품 월별 재고 스트립 (조정 반영 — shortFgs가 이미 조정 후 computeRtfItems 결과)
+    var _fgMsByMonth = new Map();
+    (fg.monthlyStatus || []).forEach(function(ms) { if (ms && ms.month) _fgMsByMonth.set(ms.month, ms); });
+    var invStripCells = months.map(function(m) {
+      var txt = cstFgInvText(_fgMsByMonth, m);
+      return "<span class=\"cst-fgl-inv-cell\"><span class=\"cst-fgl-inv-m\">" + escapeHtml(monthLabel(m)) + "</span>" +
+        (txt ? escapeHtml(txt) : "-") + "</span>";
+    }).join("");
+    var invStrip = "<div class=\"cst-fgl-inv-strip\"><span class=\"cst-fgl-inv-lbl\">완제품 재고 (조정 반영)</span>" +
+      invStripCells + "</div>";
+
+    var detailRow = "<tr class=\"cst-fgl-detail-row\"><td colspan=\"4\" class=\"cst-fgl-detail-cell\">" + invStrip + matContent + "</td></tr>";
     return summaryRow + detailRow;
   }).join("");
 
