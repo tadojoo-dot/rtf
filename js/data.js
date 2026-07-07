@@ -96,11 +96,12 @@ function mapTargetInvRows(rows) {
     }
     if (optCol < 0) break; // 이 레이아웃 아님 → 기존 로직으로
     // 월별 실적/예측 컬럼 탐색 (서브헤더 라벨 "YY.M" 기반 — 연도 하드코딩 없음, 열 추가·연도 경과에 견딤).
-    // S/F(예측) 그룹과 출고실적 그룹은 " S/F 평균" 컬럼을 경계로 구분 (앞=예측, 뒤=실적).
+    // S/F(예측) 그룹과 출고실적 그룹은 "S/F … 평균" 컬럼을 경계로 구분 (앞=예측, 뒤=실적).
+    // 라벨이 "S/F 3개월 평균"/"S/F 평균" 등으로 와도 매칭(사이 글자 허용) — 연도 라벨 실수에도 경계가 안 흔들림.
     // 실적은 최신 연도=당해(outCurYear), 그 직전 연도=전년(outPrevYear)으로 동적 분리.
     var sfAvgCol = -1;
     for (var sc0 = 0; sc0 < srow.length; sc0++) {
-      if (/S\/F\s*평균/.test(String(srow[sc0]))) sfAvgCol = sc0;
+      if (/S\/F.*평균/.test(String(srow[sc0]))) sfAvgCol = sc0;
     }
     var monthCols = [];
     for (var sc = 0; sc < srow.length; sc++) {
