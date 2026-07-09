@@ -365,8 +365,9 @@ function renderInvSection(mode, displayItems, adjCache) {
   var leftColDefs = getInvLeftColDefs(mode);
   var rtfMonths   = getRtfMonths();
 
-  // 과거 실적 월 표시 제거 — 전망(계획) 구간만 (2026-07-09 사용자 지시)
-  var actualMonths = [];
+  // 당월(최신 결산월)만 실적, 이후는 전망 (2026-07-09 사용자 지시)
+  var _anchor = (typeof getActualsAnchor === "function") ? getActualsAnchor() : null;
+  var actualMonths = (_anchor && rtfMonths.indexOf(_anchor.month) < 0) ? [_anchor.month] : [];
   var actualSet = new Set(actualMonths);
   var allMonths = actualMonths.concat(rtfMonths);
 
@@ -717,234 +718,156 @@ function bindInvChart() {
   if (!canvas) return;
   if (_invChartInst) { _invChartInst.destroy(); _invChartInst = null; }
 
-  // 전망(계획) 구간만 표시 — 과거 실적 제거 (2026-07-09 사용자 지시)
-  var rtfMonths    = getRtfMonths();
-  var allMonths    = rtfMonths.slice();
+  // X축 = 6월(당월 실적) + 7월~ 전망 (2026-07-09: 당월만 실적, 이후 전망)
+  var rtfMonths = getRtfMonths();
+  var anchor    = (typeof getActualsAnchor === "function") ? getActualsAnchor() : null;
+  var actMonth  = (anchor && rtfMonths.indexOf(anchor.month) < 0) ? anchor.month : null;
+  var allMonths = actMonth ? [actMonth].concat(rtfMonths) : rtfMonths.slice();
+  var actIdx    = actMonth ? 0 : -1;   // 실적 막대 위치
+  var fcstOff   = actMonth ? 1 : 0;    // 전망 시리즈가 시작되는 X 인덱스
+
   // 시리즈 = 공급원인·과잉감축 KPI 배너와 동일 기준(rtfHeadlineInv: 전체재고 = 결산 앵커+델타)
-  // 기존 품목별 computeAdjMonthly/computeExcessMonthly 월×품목 전량 재계산 제거 — 성능 개선 핵심
   var sc        = computeScenarioItemSets();
   var matDeltas = (typeof computeMatScenarioDeltas === "function") ? computeMatScenarioDeltas(rtfMonths) : null;
   var hasRtfAdj    = sc.hasRtfAdj;
   var hasExcessAdj = sc.hasExcess || !!(matDeltas && matDeltas.some(function(v) { return v; }));
 
+  // 전망 시리즈를 allMonths 길이에 맞춰 배치(실적월 자리는 null)
   function seriesOf(items, addMatDelta) {
-    return rtfMonths.map(function(m, mi) {
+    var arr = allMonths.map(function() { return null; });
+    rtfMonths.forEach(function(m, mi) {
       var v = rtfHeadlineInv(items, mi).amount;
       if (addMatDelta && matDeltas && Number.isFinite(v)) v += (matDeltas[mi] || 0);
-      return Number.isFinite(v) ? Math.round(v / 1e8) : null;
+      arr[fcstOff + mi] = Number.isFinite(v) ? Math.round(v / 1e8) : null;
     });
+    return arr;
   }
   var baseData   = seriesOf(sc.base, false);
   var rtfData    = hasRtfAdj    ? seriesOf(sc.rtfAdj, false) : null;
   var excessData = hasExcessAdj ? seriesOf(sc.final, true)   : null;
-  var hasAdjLine = !!(rtfData || excessData);
 
-  // 전망 시작 수직선 — 실적 구간이 없으므로 표시 안 함
+  // 실적(당월) 막대 — 실적월 자리에만 값
+  var actData = allMonths.map(function() { return null; });
+  if (actIdx >= 0 && anchor && Number.isFinite(anchor.totalInvWon))
+    actData[actIdx] = Math.round(anchor.totalInvWon / 1e8);
+
   var todayAnnotation = -1;
 
   var datasets = [];
+  if (actIdx >= 0) {
+    datasets.push({
+      label: "실적(당월)", data: actData,
+      backgroundColor: "#1e3a8a", borderColor: "#1e3a8a",
+      borderWidth: 0, borderRadius: 4, categoryPercentage: 0.7, barPercentage: 0.9,
+    });
+  }
   datasets.push({
-    label: "원계획",
-    data: baseData,
-    borderColor: hasAdjLine ? "#94a3b8" : "#475569",
-    backgroundColor: "rgba(100,116,139,0.08)",
-    fill: !hasAdjLine,
-    borderWidth: hasAdjLine ? 2 : 3.5,
-    borderDash: hasAdjLine ? [6, 4] : [],
-    pointRadius: hasAdjLine ? 3 : 5,
-    pointHoverRadius: 7,
-    tension: 0.3,
-    spanGaps: true,
+    label: "원계획", data: baseData,
+    backgroundColor: "#94a3b8", borderColor: "#94a3b8",
+    borderWidth: 0, borderRadius: 4, categoryPercentage: 0.7, barPercentage: 0.9,
   });
   if (rtfData) {
     datasets.push({
-      label: "RTF 조정후",
-      data: rtfData,
-      borderColor: "#28278f",
-      backgroundColor: "rgba(40,39,143,0.07)",
-      fill: !excessData,
-      borderWidth: 3,
-      pointRadius: 5,
-      pointHoverRadius: 7,
-      tension: 0.3,
-      spanGaps: true,
+      label: "RTF 조정후", data: rtfData,
+      backgroundColor: "#6366f1", borderColor: "#6366f1",
+      borderWidth: 0, borderRadius: 4, categoryPercentage: 0.7, barPercentage: 0.9,
     });
   }
   if (excessData) {
     datasets.push({
-      label: "감축후",
-      data: excessData,
-      borderColor: "#15803d",
-      backgroundColor: "rgba(21,128,61,0.10)",
-      fill: true,
-      borderWidth: 3.5,
-      pointRadius: 5,
-      pointHoverRadius: 7,
-      tension: 0.3,
-      spanGaps: true,
+      label: "감축후", data: excessData,
+      backgroundColor: "#16a34a", borderColor: "#16a34a",
+      borderWidth: 0, borderRadius: 4, categoryPercentage: 0.7, barPercentage: 0.9,
     });
   }
 
-  // ── 주 시나리오(가장 최종 조정) — 억 라벨·재고일수 배지 기준 (배너와 동일 일수) ──
-  var primaryDsIdx = datasets.length - 1;
-  var primaryColor = datasets[primaryDsIdx].borderColor;
-  var primaryItems = hasExcessAdj ? sc.final : (hasRtfAdj ? sc.rtfAdj : sc.base);
-  var primaryDays  = rtfMonths.map(function(m, mi) {
-    var d = rtfHeadlineInv(primaryItems, mi).days;
-    return Number.isFinite(d) ? Math.round(d) : null;
-  });
-
-  // ── 캔버스 플러그인: 억 레이블 + 재고일수 배지 ───────────────────────────
   var INV_FONT = '"Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 
-  function drawRoundRect(ctx, x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.lineTo(x + w - r, y);
-    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r);
-    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    ctx.lineTo(x + r, y + h);
-    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-    ctx.lineTo(x, y + r);
-    ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.closePath();
-  }
-
-  var labelsPlugin = {
-    id: "invLabels",
-    afterDraw: function(chart) {
+  // 각 막대 위 금액 뱃지(억) — 그룹 막대 전 시리즈
+  var barLabelsPlugin = {
+    id: "invBarLabels",
+    afterDatasetsDraw: function(chart) {
       var ctx = chart.ctx;
-      var meta = chart.getDatasetMeta(primaryDsIdx);
-      if (!meta || meta.hidden) return;
       ctx.save();
-
-      allMonths.forEach(function(month, i) {
-        var isFcst = rtfMonths.includes(month);
-        var el = meta.data[i];
-        if (!el) return;
-
-        var val = datasets[primaryDsIdx].data[i];
-        if (val === null || val === undefined) return;
-
-        // 억 레이블 (선 위)
-        ctx.font         = "bold 15px " + INV_FONT;
-        ctx.fillStyle    = isFcst ? primaryColor : "#1e3a8a";
-        ctx.textAlign    = "center";
-        ctx.textBaseline = "bottom";
-        ctx.fillText(val + "억", el.x, el.y - 6);
-
-        // 재고일수 배지 (선 아래) — 전망 구간만
-        if (!isFcst) return;
-        var dv = primaryDays[i];
-        if (dv === null || dv === undefined) return;
-        var text = dv + "일";
-        ctx.font = "bold 14px " + INV_FONT;
-        var tw = ctx.measureText(text).width + 16;
-        var th = 24;
-        var tx = el.x - tw / 2;
-        var ty = el.y + 8;
-        if (ty + th > chart.chartArea.bottom - 2) return;
-
-        ctx.fillStyle = hasExcessAdj
-          ? "rgba(21,128,61,0.10)" : hasRtfAdj
-          ? "rgba(40,39,143,0.10)" : "rgba(15,118,110,0.10)";
-        drawRoundRect(ctx, tx, ty, tw, th, 5);
-        ctx.fill();
-
-        ctx.strokeStyle = hasExcessAdj
-          ? "rgba(21,128,61,0.35)" : hasRtfAdj
-          ? "rgba(40,39,143,0.35)" : "rgba(15,118,110,0.35)";
-        ctx.lineWidth = 1;
-        drawRoundRect(ctx, tx, ty, tw, th, 5);
-        ctx.stroke();
-
-        ctx.fillStyle    = hasExcessAdj ? "#15803d" : hasRtfAdj ? "#28278f" : "#0f766e";
-        ctx.textBaseline = "middle";
-        ctx.fillText(text, el.x, ty + th / 2);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      chart.data.datasets.forEach(function(ds, di) {
+        var meta = chart.getDatasetMeta(di);
+        if (!meta || meta.hidden) return;
+        meta.data.forEach(function(el, i) {
+          var v = ds.data[i];
+          if (v === null || v === undefined || !el) return;
+          ctx.font      = "bold 11px " + INV_FONT;
+          ctx.fillStyle = ds.backgroundColor || "#334151";
+          ctx.fillText(v, el.x, el.y - 3);
+        });
       });
-
       ctx.restore();
     }
   };
 
-  // ── 전망시작 수직선 플러그인 ───────────────────────────────────────────────
-  var fcstLinePlugin = {
-    id: "fcstLine",
+  // 실적|전망 경계 세로 점선 + '전망' 라벨
+  var sepPlugin = {
+    id: "invSep",
     afterDraw: function(chart) {
-      if (todayAnnotation < 0) return;
+      if (actIdx < 0) return;
       var meta = chart.getDatasetMeta(0);
-      var el = meta && meta.data[todayAnnotation];
-      if (!el) return;
-      var ctx = chart.ctx;
-      var ca  = chart.chartArea;
+      var ca = chart.chartArea, ctx = chart.ctx;
+      var xScale = chart.scales.x;
+      if (!xScale) return;
+      var x = xScale.getPixelForValue(actIdx) + (xScale.getPixelForValue(actIdx + 1) - xScale.getPixelForValue(actIdx)) / 2;
       ctx.save();
       ctx.beginPath();
       ctx.setLineDash([5, 4]);
-      ctx.strokeStyle = "rgba(100,116,139,0.5)";
-      ctx.lineWidth   = 1.5;
-      ctx.moveTo(el.x, ca.top);
-      ctx.lineTo(el.x, ca.bottom);
-      ctx.stroke();
+      ctx.strokeStyle = "rgba(100,116,139,0.55)";
+      ctx.lineWidth = 1.5;
+      ctx.moveTo(x, ca.top); ctx.lineTo(x, ca.bottom); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.font      = "bold 11px Pretendard";
+      ctx.font = "bold 12px " + INV_FONT;
       ctx.fillStyle = "#94a3b8";
-      ctx.textAlign = "center";
-      ctx.fillText("▶ 전망", el.x, ca.top - 4);
+      ctx.textAlign = "left";
+      ctx.fillText("전망 ▶", x + 6, ca.top + 2);
+      ctx.textAlign = "right";
+      ctx.fillText("◀ 실적", x - 6, ca.top + 2);
       ctx.restore();
     }
   };
 
   _invChartInst = new Chart(canvas.getContext("2d"), {
-    type: "line",
+    type: "bar",
     data: { labels: allMonths.map(monthLabel), datasets: datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: { top: 28, bottom: 6, left: 8, right: 16 } },
+      layout: { padding: { top: 30, bottom: 6, left: 8, right: 16 } },
       plugins: {
         legend: {
-          position: "top",
-          align: "end",
-          labels: {
-            font: { size: 15, family: "Pretendard", weight: "700" },
-            padding: 20,
-            usePointStyle: true,
-            pointStyleWidth: 18,
-          },
+          position: "top", align: "end",
+          labels: { font: { size: 15, family: "Pretendard", weight: "700" }, padding: 18, usePointStyle: true, pointStyleWidth: 16 },
         },
         tooltip: {
-          backgroundColor: "rgba(15,23,42,0.85)",
-          titleFont: { size: 13, family: "Pretendard" },
-          bodyFont:  { size: 13, family: "Pretendard" },
+          backgroundColor: "rgba(15,23,42,0.88)",
+          titleFont: { size: 13.5, family: "Pretendard" },
+          bodyFont:  { size: 13.5, family: "Pretendard" },
           padding: 10,
-          callbacks: {
-            label: function(ctx) {
-              var v = ctx.parsed.y;
-              return "  " + ctx.dataset.label + ": " + (v !== null ? v + "억" : "-");
-            }
-          }
+          callbacks: { label: function(c) { var v = c.parsed.y; return "  " + c.dataset.label + ": " + (v != null ? v + "억" : "-"); } }
         }
       },
       scales: {
         x: {
-          grid: { color: "rgba(0,0,0,0.06)", drawBorder: false },
+          stacked: false,
+          grid: { display: false },
           ticks: { font: { size: 14.5, family: "Pretendard", weight: "700" }, color: "#374151" },
           border: { display: false },
         },
         y: {
-          grid: { color: "rgba(0,0,0,0.06)", drawBorder: false },
-          ticks: {
-            font: { size: 13, family: "Pretendard" },
-            color: "#6b7280",
-            callback: function(v) { return v + "억"; },
-            maxTicksLimit: 6,
-          },
+          grid: { color: "rgba(0,0,0,0.06)" },
+          ticks: { font: { size: 13, family: "Pretendard" }, color: "#6b7280", callback: function(v) { return v + "억"; }, maxTicksLimit: 6 },
           border: { display: false },
           beginAtZero: false,
         }
       }
     },
-    plugins: [labelsPlugin, fcstLinePlugin],
+    plugins: [barLabelsPlugin, sepPlugin],
   });
 }
