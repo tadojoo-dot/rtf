@@ -1377,6 +1377,17 @@ function renderAiDiagPanel(hasTargetData) {
     return "<button class='exc-aisec-apply" + (on ? " exc-aisec-apply-on" : "") + "' data-sec='" + secId + "'>" +
       (on ? "적용 해제" : "권장안 적용") + "</button>";
   }
+  // 품목 순차 점검 — 섹션 헤더에 진행(판정 수)과 [다음 품목] 버튼 (닫혀 있어도 점검 진행 가능)
+  function secCheckBar(secId) {
+    var items = (secId === "supply" || secId === "planfix") ? S[secId].items : np[secId];
+    if (!items || !items.length) return "";
+    var dec = 0;
+    items.forEach(function(it) { if (getAiDecision(it)) dec++; });
+    var doneAll = dec >= items.length;
+    return "<span class='exc-aisec-check'>점검 <b>" + dec + "</b>/" + items.length + "</span>" +
+      "<button class='exc-aisec-next' data-sec='" + secId + "'" + (doneAll ? " disabled" : "") + ">" +
+      (doneAll ? "✓ 점검 완료" : "다음 품목 →") + "</button>";
+  }
   function secBlock(def, sumHtml, bodyHtml, btnHtml) {
     var isOpen  = !!state.aiDiagOpen[def.id];
     var applied = !!state.aiSecApplied[def.id];
@@ -1389,7 +1400,7 @@ function renderAiDiagPanel(hasTargetData) {
         "<span class='exc-aisec-title'>" + def.title + "</span>" +
         "<span class='exc-aisec-owner'>" + def.owner + "</span>" +
         (applied ? "<span class='exc-aisec-badge'>✓ 적용됨</span>" : "") +
-        "<span class='exc-aisec-sum'>" + sumHtml + "</span>" + btnHtml +
+        "<span class='exc-aisec-sum'>" + sumHtml + "</span>" + secCheckBar(def.id) + btnHtml +
       "</div>" +
       "<div class='exc-aisec-body'" + (isOpen ? "" : " hidden") + ">" +
         "<div class='exc-aisec-desc'>" + def.desc + "</div>" + bodyHtml +
@@ -1558,12 +1569,9 @@ function openAiDiagPopup(secId, idx) {
   }
   if (_navIdx >= 0) state.excWalkIdx = _navIdx;
   var navHtml = _navIdx >= 0
-    ? "<span class='exc-diag-nav'>" +
-      "<button type='button' class='exc-diag-navbtn' id='excDiagPrev'" + (_navIdx <= 0 ? " disabled" : "") + ">← 이전</button>" +
-      "<span class='exc-diag-navpos'>" + (def ? def.no + " " + escapeHtml(def.title) + " " : "") +
-        "<b>" + _navSecPos + "</b>/" + _navSecTotal + "</span>" +
-      "<button type='button' class='exc-diag-navbtn' id='excDiagNext'" + (_navIdx >= _navQ.length - 1 ? " disabled" : "") + ">다음 →</button>" +
-      "</span>"
+    ? "<span class='exc-diag-nav'><span class='exc-diag-navpos'>" +
+      (def ? def.no + " " + escapeHtml(def.title) + " " : "") +
+      "<b>" + _navSecPos + "</b>/" + _navSecTotal + "</span></span>"
     : "";
 
   var opinion = isCut ? buildAiOpinion(it) : buildNoPlanOpinion(it);
@@ -1635,18 +1643,6 @@ function openAiDiagPopup(secId, idx) {
     "</div>";
   document.body.appendChild(ov);
 
-  // 이전/다음 품목 — 팝업 전환 (판정 없이도 이동 가능)
-  function navToQueue(idx) {
-    if (idx < 0 || idx >= _navQ.length) return;
-    var nx = _navQ[idx];
-    closeAiDiagPopup();
-    openAiDiagPopup(nx.secId, nx.srcIdx);
-  }
-  var navPrev = ov.querySelector("#excDiagPrev");
-  var navNext = ov.querySelector("#excDiagNext");
-  if (navPrev) navPrev.addEventListener("click", function() { navToQueue(_navIdx - 1); });
-  if (navNext) navNext.addEventListener("click", function() { navToQueue(_navIdx + 1); });
-
   // 닫기
   ov.addEventListener("click", function(e) { if (e.target === ov) closeAiDiagPopup(); });
   ov.querySelector(".exc-diag-close").addEventListener("click", closeAiDiagPopup);
@@ -1672,10 +1668,9 @@ function openAiDiagPopup(secId, idx) {
     var reason = (ov.querySelector(".exc-diag-reason").value || "").trim();
     closeAiDiagPopup();
     setAiDecision(secId, it, selStatus, qty, reason);
-    // 판정 즉시 다음 품목 팝업 자동 오픈 — 회의 템포 유지 (마지막 품목이면 종료)
-    if (_navIdx >= 0 && _navIdx < _navQ.length - 1) {
-      var nx = _navQ[_navIdx + 1];
-      openAiDiagPopup(nx.secId, nx.srcIdx);
+    // 판정 즉시 다음 미판정 품목 팝업 자동 오픈 — 회의 템포 유지 (섹션 끝나면 다음 섹션으로)
+    for (var _ai = _navIdx + 1; _ai >= 0 && _ai < _navQ.length; _ai++) {
+      if (!getAiDecision(_navQ[_ai].it)) { openAiDiagPopup(_navQ[_ai].secId, _navQ[_ai].srcIdx); break; }
     }
   });
   var clearBtn = ov.querySelector(".exc-diag-dec-clear");
@@ -3065,6 +3060,18 @@ function bindExcessAdjustment() {
   var _bindT0 = performance.now();
   // 렌더 문자열 반환 시각 ~ bind 시작 = 브라우저가 innerHTML을 실제 DOM으로 반영한 비용
   var _injectMs = (EXC_PROF && window._excRenderEndTs != null) ? (_bindT0 - window._excRenderEndTs) : null;
+
+  // 섹션 헤더 [다음 품목 →] — 그 섹션의 첫 미판정 품목 팝업 오픈 (헤더 펼침 클릭과 분리)
+  root.querySelectorAll(".exc-aisec-next").forEach(function(btn) {
+    btn.addEventListener("click", function(e) {
+      e.stopPropagation();
+      var secId = btn.dataset.sec;
+      var q = buildExcWalkQueue();
+      for (var i = 0; i < q.length; i++) {
+        if (q[i].secId === secId && !getAiDecision(q[i].it)) { openAiDiagPopup(secId, q[i].srcIdx); return; }
+      }
+    });
+  });
 
   // AI 진단 — 전체적용(①②, MOQ구조·소진·처분 제외) / 전체해제 (명시 판정은 유지됨)
   var aiApplyBtn = root.querySelector(".exc-ai-apply");

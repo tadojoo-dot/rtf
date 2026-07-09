@@ -744,3 +744,11 @@
   padding: 5px 12px; font-size: 13.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
 .exc-diag-navbtn:hover:not(:disabled) { background: #e0e7ff; }
 .exc-diag-navbtn:disabled { opacity: .4; cursor: default; }
+
+/* AI 진단 섹션 헤더 — 품목 점검 진행 + 다음 품목 버튼 */
+.exc-aisec-check { font-size: 13px; color: #475569; white-space: nowrap; margin-left: 8px; }
+.exc-aisec-check b { color: #4338ca; font-size: 14.5px; }
+.exc-aisec-next { border: 1px solid #c7d2fe; background: #fff; color: #4338ca; border-radius: 8px;
+  padding: 4px 11px; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.exc-aisec-next:hover:not(:disabled) { background: #e0e7ff; }
+.exc-aisec-next:disabled { border-color: #86efac; color: #15803d; background: #f0fdf4; cursor: default; }

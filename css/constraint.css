@@ -1779,3 +1779,7 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
 
 /* 회의 진행 바 — 현재 점검 품목 행 강조 */
 .cst-fgl-row.cst-fgl-walk-focus td { background: #eef2ff !important; }
+
+/* 부족품목 목록 — 점검완료 행 가라앉음 표시 */
+.cst-fgl-row.cst-fgl-checked td { opacity: .45; }
+.cst-fgl-row.cst-fgl-checked .cst-fgl-name::after { content: " ✓"; color: #15803d; font-weight: 800; opacity: 1; }
