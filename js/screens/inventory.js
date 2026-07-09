@@ -412,7 +412,7 @@ function renderInvSection(mode, displayItems, adjCache) {
 
   var modeLabel = mode === "plant" ? "플랜트별" : mode === "type" ? "유형별" : "사업부별";
   return "<div class=\"inv-section-hd\"><span>월별 재고현황 · " + modeLabel + "</span><span class=\"inv-section-unit\">단위: 억원, 일 &nbsp;|&nbsp; 재고일수 기준: 120일↑ 과잉, 90일↑ 주의</span></div>" +
-  "<div class=\"inv-table-wrap\"><table class=\"inv-h-table\" style=\"min-width:" + minWidth + "px;\">" +
+  "<div class=\"inv-table-wrap\"><table class=\"inv-h-table\" style=\"min-width:max(100%, " + minWidth + "px);\">" +
     "<thead>" +
       "<tr>" + leftHeaders + superHeader + "</tr>" +
       "<tr>" + monthHeader + "</tr>" +
@@ -753,30 +753,33 @@ function bindInvChart() {
 
   var todayAnnotation = -1;
 
+  // 3단 = 같은 인디고 색, 농도만 다르게 (원계획 옅음 → RTF조정 중간 → 과잉감축 진함)
+  var BAR = { base: "#c7d2fe", rtf: "#818cf8", excess: "#4338ca", act: "#0f172a" };
+  var LBL = { base: "#4338ca", rtf: "#3730a3", excess: "#312e81", act: "#0f172a" };
   var datasets = [];
   if (actIdx >= 0) {
     datasets.push({
-      label: "실적(당월)", data: actData,
-      backgroundColor: "#1e3a8a", borderColor: "#1e3a8a",
+      label: "당월 실적", data: actData, _lbl: LBL.act,
+      backgroundColor: BAR.act, borderColor: BAR.act,
       borderWidth: 0, borderRadius: 4, categoryPercentage: 0.7, barPercentage: 0.9,
     });
   }
   datasets.push({
-    label: "원계획", data: baseData,
-    backgroundColor: "#94a3b8", borderColor: "#94a3b8",
+    label: "원계획", data: baseData, _lbl: LBL.base,
+    backgroundColor: BAR.base, borderColor: BAR.base,
     borderWidth: 0, borderRadius: 4, categoryPercentage: 0.7, barPercentage: 0.9,
   });
   if (rtfData) {
     datasets.push({
-      label: "RTF 조정후", data: rtfData,
-      backgroundColor: "#6366f1", borderColor: "#6366f1",
+      label: "RTF 조정", data: rtfData, _lbl: LBL.rtf,
+      backgroundColor: BAR.rtf, borderColor: BAR.rtf,
       borderWidth: 0, borderRadius: 4, categoryPercentage: 0.7, barPercentage: 0.9,
     });
   }
   if (excessData) {
     datasets.push({
-      label: "감축후", data: excessData,
-      backgroundColor: "#16a34a", borderColor: "#16a34a",
+      label: "과잉감축", data: excessData, _lbl: LBL.excess,
+      backgroundColor: BAR.excess, borderColor: BAR.excess,
       borderWidth: 0, borderRadius: 4, categoryPercentage: 0.7, barPercentage: 0.9,
     });
   }
@@ -798,7 +801,7 @@ function bindInvChart() {
           var v = ds.data[i];
           if (v === null || v === undefined || !el) return;
           ctx.font      = "bold 11px " + INV_FONT;
-          ctx.fillStyle = ds.backgroundColor || "#334151";
+          ctx.fillStyle = ds._lbl || "#334151";
           ctx.fillText(v, el.x, el.y - 3);
         });
       });

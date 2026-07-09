@@ -131,7 +131,7 @@
 /* ── RTF식 계층 매트릭스 테이블 ── */
 .inv-h-table {
   border-collapse: separate; border-spacing: 0;
-  font-size: 15px; table-layout: fixed; width: max-content;
+  font-size: 15px; table-layout: fixed; width: 100%;
 }
 .inv-h-table th,
 .inv-h-table td {
