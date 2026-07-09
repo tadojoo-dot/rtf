@@ -262,7 +262,7 @@ function invalidateRtfCache() {
   _rtfItemsCache = null; _rtfItemsCacheKey = "";
   _rtfItemsBomCache = null; _rtfItemsBomRef = null;
   _bomResAdjCache = null; _bomResAdjSig = ""; _bomResAdjBase = null;
-  _scenMemo = null; _scenMemoEpoch = -1;
+  _scenMemo = null; _scenMemoEpoch = -1; _scenMemoSig = null;
   _salesPriceCache = null;
   _actualsAnchorCache = null; _actualsAnchorComputed = false;
   _actualsMetaCache = null;
@@ -1365,11 +1365,20 @@ function rtfDisclosureDays(items, mi) {
 // 같은 상태로 반복 호출한다(각 호출 = RTF 전체 재계산). 렌더 토큰이 같으면 결과 재사용.
 // 상태는 조정 핸들러가 바꾼 뒤 반드시 render()를 호출하므로(토큰 증가) 낡은 값이 나올 수 없다.
 var _renderEpoch = 0;
-var _scenMemo = null, _scenMemoEpoch = -1;
+var _scenMemo = null, _scenMemoEpoch = -1, _scenMemoSig = null;
 function bumpRenderEpoch() { _renderEpoch++; }
+
+// 시나리오 입력 서명 — 조정 4종의 내용이 같으면 렌더(탭 전환)가 바뀌어도 재계산 불필요.
+// 원천 데이터 교체·BOM 재전개는 invalidateRtfCache가 _scenMemo를 직접 비우므로 서명에 불포함.
+function _scenInputSig() {
+  return JSON.stringify([state.matSimAdj || {}, state.goodsSupplyAdj || {},
+    state.fgProdAdj || {}, state.excessAdj || {}]) + "|" + (state.bomStatus || "");
+}
 
 function computeScenarioItemSets() {
   if (_scenMemo && _scenMemoEpoch === _renderEpoch) return _scenMemo;
+  var _sig = _scenInputSig();
+  if (_scenMemo && _scenMemoSig === _sig) { _scenMemoEpoch = _renderEpoch; return _scenMemo; }
   var hasRtfAdj = Object.keys(state.matSimAdj || {}).length > 0 ||
                   Object.keys(state.goodsSupplyAdj || {}).length > 0 ||
                   hasFgProdAdj();
@@ -1387,6 +1396,7 @@ function computeScenarioItemSets() {
     : rtfAdj;
   _scenMemo = { base: base, rtfAdj: rtfAdj, final: finalItems, hasRtfAdj: hasRtfAdj, hasExcess: hasExcess };
   _scenMemoEpoch = _renderEpoch;
+  _scenMemoSig   = _sig;
   return _scenMemo;
 }
 
