@@ -902,16 +902,20 @@ function computeAiExcessPlan() {
 // AI 과잉재고 진단 — 원인 분류 + 액션(오너)별 권장안 그룹핑
 // 근거 데이터: 적정재고_RAW의 25년 월별 출고실적 · 26년 출고실적 · S/F 예측 · MOQ
 // ═══════════════════════════════════════════════════════════════════════════
-var AI_ACH_LOW     = 0.8;  // S/F 대비 실적 달성률 — 미만이면 판매부진
-var AI_PLAN_HIGH   = 1.3;  // 계획 월평균 ÷ 실적 월평균 — 초과면 계획과대
-var AI_PLAN_LOW    = 0.7;  // 미만이면 수요감소 (계획은 이미 낮췄으나 기존 재고 잔류)
+var AI_ACH_LOW     = 0.8;  // S/F 대비 실적 달성률 — 미만이면 출고부진
+var AI_ACH_HIGH    = 1.3;  // S/F 대비 실적 달성률 — 초과면 출고과대(계획보다 많이 나감)
+var AI_PLAN_HIGH   = 1.3;  // 계획 월평균 ÷ 실적 월평균 — 초과면 출고부진(계획을 못 따라갈 전망)
+var AI_MOQ_MONTHS  = 1.5;  // MOQ가 월평균판매의 이 배수(개월치) 이상이면 MOQ 구조적 제약으로 판단
 var AI_UNIT_SUSPECT = 20;  // 계획/실적 비율이 이 배수 밖이면 단위불일치 의심 → 교차비교 제외
 
+// 원인 라벨 — 재고전망 원인칼럼·과잉감축 진단 칩이 공유하는 단일 출처(라벨 불일치 방지).
+// 용어는 설명 없이도 바로 읽히도록: "기준초과" 대신 "재고과다"처럼 그 자체로 뜻이 통하는 말만 사용.
 var AI_CAUSE_META = {
-  under:      { label: "판매부진", cls: "under" },
-  overplan:   { label: "계획과대", cls: "overplan" },
-  demanddown: { label: "수요감소", cls: "down" },
-  overbase:   { label: "기준초과", cls: "base" },
+  moq:        { label: "MOQ제약", cls: "moq" },
+  under:      { label: "출고부진", cls: "under" },
+  demanddown: { label: "출고과대", cls: "down" },       // 재정의: 과거 실적이 계획보다 많이 나간 경우
+  overplan:   { label: "출고부진", cls: "overplan" },    // under와 같은 개념(계획 대비 실적 미달) — 담당만 다름
+  overbase:   { label: "재고과다", cls: "base" },
   noplan:     { label: "계획누락", cls: "noplan" },
   stopped:    { label: "판매중단", cls: "stopped" },
   dormant:    { label: "장기불용", cls: "dormant" },
@@ -955,25 +959,33 @@ function classifyAiExcess() {
     var ratio = runRate > 0 && it.planAvgSales > 0 ? it.planAvgSales / runRate : null;
     if (ratio !== null && (ratio > AI_UNIT_SUSPECT || ratio < 1 / AI_UNIT_SUSPECT)) ratio = null;
 
+    // MOQ가 월평균판매 대비 몇 개월치인지 — 크면 "최소발주만 해도 넘친다"는 구조적 근거
+    var moqMonths = (Number.isFinite(ti.moq) && ti.moq > 0 && it.planAvgSales > 0) ? ti.moq / it.planAvgSales : null;
+
     var secId;
-    if (ach !== null && ach < AI_ACH_LOW) {
+    if (moqMonths !== null && moqMonths > AI_MOQ_MONTHS) {
+      it.cause = "moq"; secId = "supply";
+      it.evidence = "MOQ(최소발주단위) " + formatNumber(Math.round(ti.moq)) + "개 = 월평균 판매 " +
+        formatNumber(Math.round(it.planAvgSales)) + "개의 " + moqMonths.toFixed(1) + "개월치";
+    } else if (ach !== null && ach < AI_ACH_LOW) {
       it.cause = "under"; secId = "supply";
       it.evidence = "S/F 대비 달성 " + Math.round(ach * 100) + "% (26년 " + bothCnt + "개월: 예측 " +
         formatNumber(Math.round(sfSum)) + " vs 실적 " + formatNumber(Math.round(actSum)) + ")";
+    } else if (ach !== null && ach > AI_ACH_HIGH) {
+      it.cause = "demanddown"; secId = "supply";
+      it.evidence = "S/F 대비 달성 " + Math.round(ach * 100) + "% (26년 " + bothCnt + "개월: 예측 " +
+        formatNumber(Math.round(sfSum)) + " vs 실적 " + formatNumber(Math.round(actSum)) + ") — 계획보다 많이 나감";
     } else if (ratio !== null && ratio > AI_PLAN_HIGH) {
       it.cause = "overplan"; secId = "planfix";
       it.evidence = "계획 월평균 " + formatNumber(Math.round(it.planAvgSales)) + " = 실적 월평균 " +
         formatNumber(Math.round(runRate)) + "의 " + ratio.toFixed(1) + "배";
-    } else if (ratio !== null && ratio < AI_PLAN_LOW) {
-      it.cause = "demanddown"; secId = "supply";
-      it.evidence = "향후 계획이 실적 월평균의 " + Math.round(ratio * 100) + "% — 수요 축소분 재고 잔류";
     } else {
       it.cause = "overbase"; secId = "supply";
       it.evidence = "적정 " + Math.round(it.targetDays) + "일 대비 재고일수 초과";
     }
     // 진단 팝업(차트·소견)용 근거 수치 보관
     it.diag = { ach: ach, sfSum: sfSum, actSum: actSum, bothCnt: bothCnt,
-                runRate: runRate, ratio: ratio,
+                runRate: runRate, ratio: ratio, moqMonths: moqMonths,
                 moq: Number.isFinite(ti.moq) ? ti.moq : null, ti: ti };
     sections[secId].items.push(it);
     sections[secId].totalAmt += it.cutAmt;
@@ -1062,9 +1074,10 @@ function computeNoPlanInventory() {
 // 뱃지·설명의 기준 수치는 임계값 상수(AI_ACH_LOW 등)에서 조립 — 상수를 바꾸면 문구도 자동 반영
 var AI_SECTION_DEFS = [
   { id: "supply",   no: "①", title: "입고·생산 축소",  owner: "재고가 품목별 적정일수 초과", group: "들어올 것을 줄인다",
-    desc: "기준: 월별 기말재고 > 품목별 적정재고일수(적정재고 파일). 원인 칩 — 판매부진: 26년 출고가 S/F 예측의 " +
-      Math.round(AI_ACH_LOW * 100) + "% 미만 / 수요감소: 향후 계획이 실적 월평균의 " +
-      Math.round(AI_PLAN_LOW * 100) + "% 미만 / 기준초과: 수요 이상신호 없이 적정일수만 초과. " +
+    desc: "기준: 월별 기말재고 > 품목별 적정재고일수(적정재고 파일). 원인 칩 — MOQ제약: 최소발주단위가 월평균판매의 " +
+      AI_MOQ_MONTHS + "개월치 이상(최소발주만 해도 초과) / 출고부진: 26년 출고가 S/F 예측의 " +
+      Math.round(AI_ACH_LOW * 100) + "% 미만 / 출고과대: 26년 출고가 S/F 예측의 " +
+      Math.round(AI_ACH_HIGH * 100) + "% 초과(계획보다 많이 나감) / 재고과다: 수요 이상신호 없이 적정일수만 초과. " +
       "담당: 공장·구매 — 입고·생산 취소·연기." },
   { id: "planfix",  no: "②", title: "판매계획 현실화", owner: "계획이 실적의 " + AI_PLAN_HIGH + "배 이상",
     desc: "기준: 향후 판매계획 월평균 ≥ 최근 출고실적 월평균(26년, 없으면 25년) × " + AI_PLAN_HIGH +
@@ -1092,6 +1105,12 @@ function buildAiOpinion(it) {
   var cutTxt = formatNumber(Math.round(it.cutQty)) + "개(" + formatMoney(it.cutAmt) + ")";
   var tdTxt = Math.round(it.targetDays) + "일";
   switch (it.cause) {
+    case "moq":
+      return "이 품목의 최소발주단위(MOQ)는 " + formatNumber(Math.round(d.moq)) + "개로, 월평균 판매량 " +
+        formatNumber(Math.round(it.planAvgSales)) + "개의 " + d.moqMonths.toFixed(1) + "개월치에 해당합니다. " +
+        "필요한 만큼만 발주해도 최소 물량이 이보다 커서 재고가 쌓일 수밖에 없는 구조입니다. " +
+        "판매·공급을 줄여서 해결되는 문제가 아니라 발주단위 자체를 구매·생산기획과 협의해야 합니다. " +
+        "다만 이미 들어온 재고에 대해서는 " + span + " 공급 " + cutTxt + " 감축을 병행 권장합니다.";
     case "under":
       return "이 품목은 26년 " + d.bothCnt + "개월 누적 출고가 S/F 예측의 " + Math.round(d.ach * 100) + "% 수준에 그쳤습니다" +
         "(예측 " + formatNumber(Math.round(d.sfSum)) + " vs 실적 " + formatNumber(Math.round(d.actSum)) + "). " +
@@ -1104,10 +1123,10 @@ function buildAiOpinion(it) {
         "계획이 실현되지 않으면 이 공급이 그대로 재고로 남을 가능성이 높습니다. " +
         "판매계획의 현실성 재검토를 마케팅·영업에 요청하고, 병행하여 " + span + " 공급 " + cutTxt + " 감축을 권장합니다.";
     case "demanddown":
-      return "향후 판매계획(월평균 " + formatNumber(Math.round(it.planAvgSales)) + ")이 최근 실적의 " +
-        Math.round(d.ratio * 100) + "% 수준으로, 수요 하향은 계획에 이미 반영되어 있습니다. " +
-        "다만 과거 수요 기준으로 확보된 재고가 남아 적정 " + tdTxt + "을 초과한 상태입니다. " +
-        "신규 공급을 " + cutTxt + " 줄여 기존 재고 소진을 우선하는 것을 권장합니다.";
+      return "이 품목은 26년 " + d.bothCnt + "개월 누적 출고가 S/F 예측의 " + Math.round(d.ach * 100) + "% 수준으로, " +
+        "계획했던 것보다 많이 나갔습니다(예측 " + formatNumber(Math.round(d.sfSum)) + " vs 실적 " + formatNumber(Math.round(d.actSum)) + "). " +
+        "이례적으로 높았던 과거 출고 수준에 맞춰 공급이 편성되면서, 그 여파로 재고가 적정 " + tdTxt + "을 초과했을 가능성이 높습니다. " +
+        span + " 공급을 " + cutTxt + " 줄여 평상시 수준으로 되돌리는 것을 권장합니다.";
     default: // overbase
       return "재고일수가 적정 " + tdTxt + "을 초과하고 있으나, 최근 실적·예측상 뚜렷한 수요 이상 신호는 없습니다. " +
         "공급 일정 조정만으로 적정 수준 복귀가 가능한 품목으로 판단됩니다. " +

@@ -374,7 +374,7 @@ function renderInvRow(node, leftColDefs, finalCache, allMonths, rtfMonths, actua
 }
 
 // 원인 태그 맵 (classifyAiExcess 재사용) — 품목코드 → {cause, amt}
-var INV_CAUSE_LBL = { under: "출고 부진", demanddown: "수요 감소", overbase: "기준 초과", overplan: "판매계획 과대" };
+// 원인 라벨은 AI_CAUSE_META(excess.js) 단일 출처 사용 — 과잉감축 화면과 문구 불일치 방지
 function buildInvCauseMap() {
   var m = {};
   try {
@@ -386,11 +386,12 @@ function buildInvCauseMap() {
   return m;
 }
 function invNodeCauseHtml(items, causeMap) {
+  var meta = (typeof AI_CAUSE_META !== "undefined") ? AI_CAUSE_META : {};
   var agg = {};
   items.forEach(function(it) { var c = causeMap[it.itemCode]; if (c && c.cause) agg[c.cause] = (agg[c.cause] || 0) + c.amt; });
   var best = null, bv = 0;
   Object.keys(agg).forEach(function(c) { if (agg[c] > bv) { bv = agg[c]; best = c; } });
-  return best ? "<span class=\"inv-cause-chip\">" + escapeHtml(INV_CAUSE_LBL[best] || best) + "</span>" : "";
+  return best ? "<span class=\"inv-cause-chip\">" + escapeHtml((meta[best] && meta[best].label) || best) + "</span>" : "";
 }
 
 // ── 섹션 렌더 ────────────────────────────────────────────────────────────────
