@@ -1775,3 +1775,7 @@ td.cst-imp-col-shade { background: rgba(20, 83, 45, 0.07); }
 .cst-gk-days .cst-gk-val { font-size: 14px; font-weight: 700; color: #475569; }
 .cst-gk-days .cst-gk-val, .cst-gk-days .cst-gk-lbl { background: #e0e7ff; }
 .cst-gk-mborder { border-left: 1px solid #c7d2fe; }
+
+
+/* 회의 진행 바 — 현재 점검 품목 행 강조 */
+.cst-fgl-row.cst-fgl-walk-focus td { background: #eef2ff !important; }

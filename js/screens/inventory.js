@@ -565,8 +565,109 @@ function renderInventoryForecast() {
     "<div class=\"inv-chart-section\"><canvas id=\"invForecastChart\"></canvas></div>";
 
   return "<div class=\"inv-screen\"><div class=\"inv-inner\">" +
-    comboHtml + controlsHtml + sectionHtml +
+    comboHtml + renderInvClosing() + controlsHtml + sectionHtml +
     "</div></div>";
+}
+
+// ── 오늘의 결정 요약 (클로징) — 판정·조정 기록의 자동 집계, 읽기 전용 ─────────
+function renderInvClosing() {
+  var decisions = state.aiDecisions || {};
+  var decKeys   = Object.keys(decisions);
+  var hasRtfAdj = Object.keys(state.matSimAdj || {}).length > 0 ||
+                  (typeof hasFgProdAdj === "function" && hasFgProdAdj());
+  if (!decKeys.length && !hasRtfAdj) {
+    return "<section class=\"inv-closing inv-closing-empty\">" +
+      "<span class=\"inv-closing-title\">오늘의 결정 요약</span>" +
+      "<span class=\"inv-closing-hint\">공급원인·과잉감축에서 조정/판정이 기록되면 여기에 자동 집계됩니다.</span>" +
+      "</section>";
+  }
+
+  // ── 판정 집계 + 부서(액션)별 확정 — classifyAiExcess 품목과 매칭 ──
+  var cls = null;
+  try { cls = (decKeys.length && typeof classifyAiExcess === "function") ? classifyAiExcess() : null; } catch (e) {}
+  var itemByKey = new Map();
+  if (cls) {
+    ["supply", "planfix"].forEach(function(secId) {
+      (((cls.sections || {})[secId] || {}).items || []).forEach(function(it) {
+        itemByKey.set(it.itemCode + "|" + (it.plantCode || ""), { it: it, secId: secId });
+      });
+    });
+    ["sellout", "disposal"].forEach(function(secId) {
+      (((cls.noPlan || {})[secId]) || []).forEach(function(it) {
+        itemByKey.set(it.itemCode + "|" + (it.plantCode || ""), { it: it, secId: secId });
+      });
+    });
+  }
+  var stCnt = { accept: 0, adjust: 0, reject: 0, hold: 0 };
+  var confirmedAmt = 0; // 확정 감축액 — KPI 반영 섹션(①②)의 수용·조정분만
+  var bySec = {};       // secId → { cnt, amt } (수용+조정만)
+  decKeys.forEach(function(k) {
+    var d = decisions[k];
+    if (!d || !stCnt.hasOwnProperty(d.status)) return;
+    stCnt[d.status]++;
+    if (d.status !== "accept" && d.status !== "adjust") return;
+    var hit = itemByKey.get(k);
+    var secId = (hit && hit.secId) || d.sec || "";
+    var amt = 0;
+    if (hit && (secId === "supply" || secId === "planfix")) {
+      var it = hit.it;
+      amt = d.status === "accept" ? (it.cutAmt || 0)
+          : (it.cutQty > 0 ? (it.cutAmt || 0) * Math.min(1, (Number(d.qty) || 0) / it.cutQty) : 0);
+      confirmedAmt += amt;
+    }
+    if (!bySec[secId]) bySec[secId] = { cnt: 0, amt: 0 };
+    bySec[secId].cnt++;
+    bySec[secId].amt += amt;
+  });
+
+  // ── RTF 조정 요약 — 생산계획·자재입고 조정 건수 + 품절 위험 변화 ──
+  var fgAdjItems = new Set(), matAdjItems = new Set();
+  Object.keys(state.fgProdAdj || {}).forEach(function(k) {
+    var p = k.split("|"); fgAdjItems.add(p[0] + "|" + p[1]);
+  });
+  Object.keys(state.matSimAdj || {}).forEach(function(k) {
+    var p = k.split("|"); matAdjItems.add(p[0] + "|" + p[1]);
+  });
+  var shortTxt = "";
+  try {
+    var h = (typeof computeHeadlineTriple === "function") ? computeHeadlineTriple() : null;
+    if (h && h.base && h.rtf && h.base.shortCnt !== h.rtf.shortCnt)
+      shortTxt = " · 품절위험 <b>" + h.base.shortCnt + "</b>→<b class=\"inv-cl-good\">" + h.rtf.shortCnt + "</b>품목";
+    else if (h && h.base) shortTxt = " · 품절위험 <b>" + h.base.shortCnt + "</b>품목";
+  } catch (e) {}
+
+  var SEC_OWNERS = [
+    { id: "supply",   label: "공장·구매 (입고·생산축소)" },
+    { id: "planfix",  label: "마케팅·영업 (판매계획 현실화)" },
+    { id: "sellout",  label: "마케팅 (재고 소진)" },
+    { id: "disposal", label: "사업부 (재고 처분)" },
+  ];
+  var ownerChips = SEC_OWNERS.map(function(s) {
+    var v = bySec[s.id];
+    if (!v || !v.cnt) return "";
+    return "<span class=\"inv-cl-chip\">" + escapeHtml(s.label) + " <b>" + v.cnt + "건</b>" +
+      (v.amt > 0 ? " <b class=\"inv-cl-good\">-" + escapeHtml(formatMoney(v.amt)) + "</b>" : "") + "</span>";
+  }).join("");
+
+  var decLine = decKeys.length
+    ? "<div class=\"inv-cl-row\"><span class=\"inv-cl-lbl\">판정</span>" +
+      "✅ 수용 <b>" + stCnt.accept + "</b> · 🔶 조정 <b>" + stCnt.adjust + "</b> · ❌ 불가 <b>" + stCnt.reject + "</b> · ⏸ 보류 <b>" + stCnt.hold + "</b>" +
+      (confirmedAmt > 0 ? " &nbsp;→&nbsp; 확정 감축 <b class=\"inv-cl-good\">-" + escapeHtml(formatMoney(confirmedAmt)) + "</b>" : "") +
+      "</div>"
+    : "";
+  var rtfLine = hasRtfAdj
+    ? "<div class=\"inv-cl-row\"><span class=\"inv-cl-lbl\">RTF 조정</span>" +
+      "생산계획 조정 <b>" + fgAdjItems.size + "</b>품목 · 자재입고 조정 <b>" + matAdjItems.size + "</b>자재" + shortTxt +
+      "</div>"
+    : "";
+  var ownerLine = ownerChips
+    ? "<div class=\"inv-cl-row\"><span class=\"inv-cl-lbl\">부서별 약속</span>" + ownerChips + "</div>"
+    : "";
+
+  return "<section class=\"inv-closing\">" +
+    "<span class=\"inv-closing-title\">오늘의 결정 요약</span>" +
+    "<div class=\"inv-cl-body\">" + decLine + rtfLine + ownerLine + "</div>" +
+    "</section>";
 }
 
 // ── 이벤트 바인딩 ──────────────────────────────────────────────────────────────

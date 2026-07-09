@@ -2541,6 +2541,67 @@ function renderCstCompareBanner() {
 }
 
 // ── 완제품별 클릭 → 자재 조정 리스트 ─────────────────────────────────────────
+// ── 회의 진행 바 (부족품목 순차 점검) — 큐는 renderCstRtfShortList에서 채움 ─────
+var _rtfWalkQueue = [];
+var RTF_WALK_LS_KEY = "rtfWalk.v1";
+
+function loadRtfWalk() {
+  if (state.rtfWalkDone) return;
+  state.rtfWalkDone = {};
+  state.rtfWalkIdx = 0;
+  try {
+    var raw = localStorage.getItem(RTF_WALK_LS_KEY);
+    if (raw) {
+      var s = JSON.parse(raw);
+      state.rtfWalkDone = s.done || {};
+      state.rtfWalkIdx  = s.idx  || 0;
+    }
+  } catch (e) {}
+}
+function saveRtfWalk() {
+  try {
+    localStorage.setItem(RTF_WALK_LS_KEY, JSON.stringify({
+      done: state.rtfWalkDone || {}, idx: state.rtfWalkIdx || 0,
+    }));
+  } catch (e) {}
+}
+
+function renderRtfWalkBar() {
+  if (!_rtfWalkQueue.length) return "";
+  loadRtfWalk();
+  var idx = Math.max(0, Math.min(state.rtfWalkIdx || 0, _rtfWalkQueue.length - 1));
+  state.rtfWalkIdx = idx;
+  var cur  = _rtfWalkQueue[idx];
+  var done = _rtfWalkQueue.filter(function(q) { return state.rtfWalkDone[q.key]; }).length;
+  var isDone = !!state.rtfWalkDone[cur.key];
+  var plantLabel = typeof displayPlantName === "function" ? displayPlantName(cur.plant) : cur.plant;
+  return "<div class=\"walkbar\">" +
+    "<span class=\"walkbar-title\">▶ 품목 점검</span>" +
+    "<span class=\"walkbar-count\"><b>" + done + "</b>/" + _rtfWalkQueue.length + "</span>" +
+    "<span class=\"walkbar-cur\">" +
+      "<span class=\"walkbar-plant\">" + escapeHtml(plantLabel || "-") + "</span> " +
+      "<b>" + escapeHtml(cur.code) + "</b> " + escapeHtml(cur.name) +
+      (isDone ? " <span class=\"walkbar-donechip\">✓ 완료</span>" : "") +
+    "</span>" +
+    "<button type=\"button\" class=\"walkbar-btn\" id=\"rtfWalkPrev\"" + (idx <= 0 ? " disabled" : "") + ">← 이전</button>" +
+    "<button type=\"button\" class=\"walkbar-btn\" id=\"rtfWalkNext\"" + (idx >= _rtfWalkQueue.length - 1 ? " disabled" : "") + ">다음 →</button>" +
+    "<button type=\"button\" class=\"walkbar-btn walkbar-btn-done" + (isDone ? " on" : "") + "\" id=\"rtfWalkDone\">" +
+      (isDone ? "✓ 완료 해제" : "✓ 점검완료") + "</button>" +
+    "</div>";
+}
+
+function rtfWalkGo(idx) {
+  if (!_rtfWalkQueue.length) return;
+  idx = Math.max(0, Math.min(idx, _rtfWalkQueue.length - 1));
+  state.rtfWalkIdx = idx;
+  var q = _rtfWalkQueue[idx];
+  state.cstDrilldown   = null;                  // 진행 바는 전체 큐 기준 — 필터 해제
+  state.cstRtfExpanded = new Set([q.key]);      // 현재 품목만 펼침
+  state._rtfWalkFocus  = q.key;
+  saveRtfWalk();
+  render("constraint");
+}
+
 function renderCstRtfShortList(months) {
   if (state.bomStatus !== BOM_STATUS.DONE || !state.bomResult) return "";
   if (typeof computeRtfItems !== "function") return "";
@@ -2554,6 +2615,21 @@ function renderCstRtfShortList(months) {
     // 생산계획 조정으로 부족이 해소된 품목도 목록 유지 (조정 확인·되돌리기 가능해야 함)
     var pfx = fg.itemCode + "|" + fg.plantCode + "|";
     return Object.keys(_fgpAdj).some(function(k) { return k.indexOf(pfx) === 0; });
+  });
+
+  // 회의 진행 바 큐 — 드릴다운 필터와 무관하게 전체 부족품목 기준 (플랜트 묶음 → 부족금액 큰 순)
+  _rtfWalkQueue = shortFgs.map(function(fg) {
+    var qty = 0;
+    fg.monthlyStatus.forEach(function(ms) { qty += ms.shortageQty || 0; });
+    return {
+      key: fg.itemCode + "|" + fg.plantCode,
+      code: fg.itemCode, name: fg.itemName || fg.itemCode, plant: fg.plantCode || "",
+      amt: (fg.hasCost && fg.standardCost) ? qty * fg.standardCost : 0, qty: qty,
+    };
+  });
+  _rtfWalkQueue.sort(function(a, b) {
+    if (a.plant !== b.plant) return String(a.plant).localeCompare(String(b.plant), "ko");
+    return (b.amt - a.amt) || (b.qty - a.qty);
   });
 
   // RTF에서 특정 완제품 부족 셀을 클릭해 넘어온 경우 → 그 완제품만 표시
@@ -2693,6 +2769,7 @@ function renderCstRtfShortList(months) {
     "<div class=\"cst-sec-title\">RTF 부족 완제품 · 원인 자재 조정 <span class=\"cst-sa-count\">" +
     shortFgs.length + "건</span>" +
     (hasAdj ? " <span class=\"mat-sim-badge\">조정 중</span>" : "") + resetBtn + "</div>" +
+    renderRtfWalkBar() +
     drillNotice +
     "<table class=\"cst-fgl-table\"><tbody>" + rows + "</tbody></table>" +
     "</section>";
@@ -3342,4 +3419,36 @@ function bindConstraint() {
       render("constraint");
     });
   });
+
+  // ── 회의 진행 바 — 이전/다음/점검완료 ──
+  var walkPrev = document.getElementById("rtfWalkPrev");
+  var walkNext = document.getElementById("rtfWalkNext");
+  var walkDone = document.getElementById("rtfWalkDone");
+  if (walkPrev) walkPrev.addEventListener("click", function() { rtfWalkGo((state.rtfWalkIdx || 0) - 1); });
+  if (walkNext) walkNext.addEventListener("click", function() { rtfWalkGo((state.rtfWalkIdx || 0) + 1); });
+  if (walkDone) walkDone.addEventListener("click", function() {
+    loadRtfWalk();
+    var q = _rtfWalkQueue[state.rtfWalkIdx || 0];
+    if (!q) return;
+    if (state.rtfWalkDone[q.key]) {
+      delete state.rtfWalkDone[q.key];          // 완료 해제 — 제자리 유지
+      saveRtfWalk();
+      render("constraint");
+    } else {
+      state.rtfWalkDone[q.key] = true;          // 완료 표시 후 다음 품목으로
+      var next = Math.min((state.rtfWalkIdx || 0) + 1, _rtfWalkQueue.length - 1);
+      rtfWalkGo(next);
+    }
+  });
+
+  // 진행 바 이동 직후 — 현재 품목 행으로 스크롤 + 강조
+  if (state._rtfWalkFocus) {
+    var focusKey = state._rtfWalkFocus;
+    state._rtfWalkFocus = null;
+    var focusRow = document.querySelector(".cst-fgl-row[data-fgkey=\"" + CSS.escape(focusKey) + "\"]");
+    if (focusRow) {
+      focusRow.scrollIntoView({ block: "center", behavior: "smooth" });
+      focusRow.classList.add("cst-fgl-walk-focus");
+    }
+  }
 }

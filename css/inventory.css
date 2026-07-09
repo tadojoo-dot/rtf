@@ -240,3 +240,19 @@
 
 /* 실적→전망 구분선 */
 .inv-fcst-sep  { border-left: 2px solid #6b7280 !important; }
+
+
+/* ── 오늘의 결정 요약 (클로징) ── */
+.inv-closing { display: flex; align-items: flex-start; gap: 14px;
+  background: #fff; border: 1px solid #e2e8f0; border-left: 4px solid #6366f1;
+  border-radius: 10px; padding: 12px 16px; margin: 12px 0; }
+.inv-closing-title { font-weight: 800; color: #4338ca; font-size: 14.5px; white-space: nowrap; padding-top: 2px; }
+.inv-closing-empty { align-items: center; }
+.inv-closing-hint { color: #94a3b8; font-size: 13px; }
+.inv-cl-body { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: #334155; }
+.inv-cl-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.inv-cl-row b { font-size: 15px; }
+.inv-cl-lbl { background: #f1f5f9; color: #475569; font-size: 12px; font-weight: 700;
+  border-radius: 6px; padding: 2px 8px; white-space: nowrap; }
+.inv-cl-good { color: #15803d; }
+.inv-cl-chip { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 3px 9px; font-size: 13px; }
