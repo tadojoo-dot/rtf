@@ -532,31 +532,18 @@ function renderInventoryForecast() {
     return Number.isFinite(d) && d > td;
   });
 
-  // ── 컨트롤 ───────────────────────────────────────────────────────────────
-  var viewBtns = [
-    { m: "current", label: "원계획",    disabled: false },
-    { m: "rtf",     label: "RTF 조정후",disabled: !hasMatAdj },
-    { m: "excess",  label: "감축 후",   disabled: !hasExcessAdj },
-  ].map(function(v) {
-    return "<button type=\"button\" class=\"inv-view-btn" + (activeMode === v.m ? " active" : "") + (v.disabled ? " disabled" : "") + "\"" +
-      (v.disabled ? " disabled" : "") + " data-inv-view=\"" + v.m + "\">" + v.label + "</button>";
+  // ── 컨트롤: 요인 분해 차원 토글 (사업부 / 품목군 / 플랜트) ──────────────────
+  var dcDim = state.invDecompDim || "bu";
+  var dcBtns = [["bu", "사업부별"], ["group", "품목군별"], ["plant", "플랜트별"]].map(function(d) {
+    return "<button type=\"button\" class=\"inv-dc-dimbtn" + (dcDim === d[0] ? " active" : "") + "\" data-inv-dcdim=\"" + d[0] + "\">" + d[1] + "</button>";
   }).join("");
-
-  var sectionBtns = INV_SECTION_OPTIONS.map(function(opt) {
-    return "<button type=\"button\" class=\"inv-section-btn" + (state.invSectionMode === opt.mode ? " active" : "") + "\" data-inv-section=\"" + opt.mode + "\">" + opt.label + "</button>";
-  }).join("");
-
   var controlsHtml =
     "<div class=\"inv-toolbar\">" +
-      "<div class=\"inv-view-toggle\">" + viewBtns + "</div>" +
-      "<div class=\"inv-section-tabs\">" + sectionBtns + "</div>" +
-      "<div class=\"inv-toolbar-right\">" +
-        "<button type=\"button\" class=\"inv-filter-btn" + (state.invFilter !== "excess" ? " active" : "") + "\" data-inv-filter=\"all\">전체</button>" +
-        "<button type=\"button\" class=\"inv-filter-btn" + (state.invFilter === "excess" ? " active" : "") + "\" data-inv-filter=\"excess\">과잉만</button>" +
-      "</div>" +
+      "<div class=\"inv-dc-dims\">" + dcBtns + "</div>" +
+      "<div class=\"inv-dc-legend\">재고일수 <b class=\"inv-dc-up\">▲증가</b>=재고 늘어남(품절방어 증산 등) · <b class=\"inv-dc-dn\">▼감소</b>=감축</div>" +
     "</div>";
 
-  var sectionHtml = renderInvSection(state.invSectionMode, displayItems, adjCache);
+  var sectionHtml = renderInvDecomp(dcDim, months);
 
   var comboHtml =
     "<div class=\"inv-combo-card\">" +
@@ -568,12 +555,116 @@ function renderInventoryForecast() {
         kpiExcess +
       "</div>" +
     "</div>" +
-    "<div class=\"inv-chart-section\"><canvas id=\"invForecastChart\"></canvas></div>" +
-    "<div class=\"inv-basis-note\">※ 상단 KPI·차트 = 전체재고(결산 기준 — RTF판정·공급원인·과잉감축 화면과 동일 수치) · 아래 표 = 제·상품 품목별 상세(원가 기준)</div>";
+    "<div class=\"inv-chart-section\"><canvas id=\"invForecastChart\"></canvas></div>";
 
   return "<div class=\"inv-screen\"><div class=\"inv-inner\">" +
     comboHtml + renderInvClosing() + controlsHtml + sectionHtml +
     "</div></div>";
+}
+
+// ── 재고 요인 분해표 — 왜 늘고/줄었나를 차원별로 설명 (원계획→RTF조정→과잉감축) ──
+// 시나리오 사이 변동은 판매계획 고정이라 100% 우리 공급 조정에 귀속 → 원인 추적 가능
+function renderInvDecomp(dim, months) {
+  var refMi = months.length - 1;               // 전망 마지막 월(연말 착지)
+  var refMonth = months[refMi];
+  var sc = computeScenarioItemSets();
+  function keyOf(it) { return it.itemCode + "|" + (it.plantCode || ""); }
+  var rtfMap = new Map(); sc.rtfAdj.forEach(function(it) { rtfMap.set(keyOf(it), it); });
+  var finMap = new Map(); sc.final.forEach(function(it) { finMap.set(keyOf(it), it); });
+
+  // 과잉 원인 태그 (classifyAiExcess 재사용) — 품목코드 → cause
+  var causeOf = {};
+  var CAUSE_LBL = { under: "출고 부진", demanddown: "수요 감소", overbase: "기준 초과", overplan: "판매계획 과대" };
+  try {
+    var cls = (typeof classifyAiExcess === "function") ? classifyAiExcess() : null;
+    if (cls) ["supply", "planfix"].forEach(function(s) {
+      (((cls.sections || {})[s] || {}).items || []).forEach(function(it) { causeOf[it.itemCode] = { cause: it.cause, amt: it.cutAmt || 0 }; });
+    });
+  } catch (e) {}
+
+  var dayMs = monthDays(refMonth);
+  function amtOf(it) { var m = it && it.monthlyStatus[refMi]; return (m && Number.isFinite(m.endingAmount)) ? m.endingAmount : 0; }
+  function qtyOf(it) { var m = it && it.monthlyStatus[refMi]; return (m && Number.isFinite(m.endingQty)) ? m.endingQty : 0; }
+
+  var groups = new Map();
+  var tot = { base: 0, rtf: 0, fin: 0, bq: 0, fq: 0, ds: 0 };
+  sc.base.forEach(function(bit) {
+    if (bit.typeGroup !== "완제품" && bit.typeGroup !== "상품") return;
+    var k = keyOf(bit), rit = rtfMap.get(k), fit = finMap.get(k);
+    var gkey = dim === "bu" ? (bit.businessUnit || "미분류")
+             : dim === "plant" ? (bit.plantCode ? (typeof displayPlantName === "function" ? displayPlantName(bit.plantCode) : bit.plantCode) : "미지정")
+             : (bit.itemGroup || "미분류");
+    var g = groups.get(gkey);
+    if (!g) { g = { name: gkey, base: 0, rtf: 0, fin: 0, bq: 0, fq: 0, ds: 0, causes: {} }; groups.set(gkey, g); }
+    var bA = amtOf(bit), rA = rit ? amtOf(rit) : bA, fA = fit ? amtOf(fit) : bA;
+    var bQ = qtyOf(bit), fQ = fit ? qtyOf(fit) : bQ;
+    var ms = bit.monthlyStatus[refMi] || {};
+    var ds = (ms.salesQty > 0) ? ms.salesQty / dayMs : 0;
+    g.base += bA; g.rtf += rA; g.fin += fA; g.bq += bQ; g.fq += fQ; g.ds += ds;
+    tot.base += bA; tot.rtf += rA; tot.fin += fA; tot.bq += bQ; tot.fq += fQ; tot.ds += ds;
+    var c = causeOf[bit.itemCode];
+    if (c && c.cause) g.causes[c.cause] = (g.causes[c.cause] || 0) + c.amt;
+  });
+
+  function domCause(causes) {
+    var best = null, bv = 0;
+    Object.keys(causes).forEach(function(c) { if (causes[c] > bv) { bv = causes[c]; best = c; } });
+    return best ? (CAUSE_LBL[best] || best) : "";
+  }
+  function daysOf(qty, ds) { return ds > 0 ? qty / ds : null; }
+
+  var rows = Array.from(groups.values()).sort(function(a, b) {
+    return (a.fin - a.base) - (b.fin - b.base);   // 감축 큰 순
+  });
+
+  function eok(v) { return formatNumber(Math.round(v / 1e8)) + "억"; }
+  function deltaEok(d) {
+    if (Math.round(d / 1e8) === 0) return "<span class='inv-dc-zero'>-</span>";
+    return "<span class='" + (d < 0 ? "inv-dc-dn" : "inv-dc-up") + "'>" + (d < 0 ? "▼" : "▲+") + formatNumber(Math.abs(Math.round(d / 1e8))) + "억</span>";
+  }
+  function daysCell(bD, fD) {
+    var bt = Number.isFinite(bD) ? Math.round(bD) : "-";
+    var ft = Number.isFinite(fD) ? Math.round(fD) : "-";
+    var arrowCls = "inv-dc-zero", arrow = "→";
+    if (Number.isFinite(bD) && Number.isFinite(fD)) {
+      if (fD > bD + 0.5) { arrowCls = "inv-dc-up"; arrow = "▲"; }
+      else if (fD < bD - 0.5) { arrowCls = "inv-dc-dn"; arrow = "▼"; }
+    }
+    return "<b>" + bt + "</b> <span class='" + arrowCls + "'>" + arrow + "</span> <b>" + ft + "</b>일";
+  }
+
+  var body = rows.map(function(g) {
+    var cause = domCause(g.causes);
+    var netUp = g.fin - g.base > 0.5e8;
+    var causeChip = cause
+      ? "<span class='inv-dc-cause'>" + escapeHtml(cause) + "</span>"
+      : (netUp ? "<span class='inv-dc-cause inv-dc-cause-def'>품절 방어 증산</span>" : "<span class='inv-dc-zero'>-</span>");
+    return "<tr>" +
+      "<td class='inv-dc-name'>" + escapeHtml(g.name) + "</td>" +
+      "<td class='inv-dc-cause-td'>" + causeChip + "</td>" +
+      "<td class='inv-dc-num'>" + eok(g.base) + "</td>" +
+      "<td class='inv-dc-num'>" + deltaEok(g.rtf - g.base) + "</td>" +
+      "<td class='inv-dc-num'>" + deltaEok(g.fin - g.rtf) + "</td>" +
+      "<td class='inv-dc-num inv-dc-fin'>" + eok(g.fin) + "</td>" +
+      "<td class='inv-dc-days'>" + daysCell(daysOf(g.bq, g.ds), daysOf(g.fq, g.ds)) + "</td>" +
+    "</tr>";
+  }).join("");
+
+  var totalRow = "<tr class='inv-dc-total'>" +
+    "<td class='inv-dc-name'>전체 합계</td><td></td>" +
+    "<td class='inv-dc-num'>" + eok(tot.base) + "</td>" +
+    "<td class='inv-dc-num'>" + deltaEok(tot.rtf - tot.base) + "</td>" +
+    "<td class='inv-dc-num'>" + deltaEok(tot.fin - tot.rtf) + "</td>" +
+    "<td class='inv-dc-num inv-dc-fin'>" + eok(tot.fin) + "</td>" +
+    "<td class='inv-dc-days'>" + daysCell(daysOf(tot.bq, tot.ds), daysOf(tot.fq, tot.ds)) + "</td></tr>";
+
+  var dimLbl = dim === "bu" ? "사업부" : dim === "plant" ? "플랜트" : "품목군";
+  return "<div class='inv-dc-wrap'><table class='inv-dc-table'><thead><tr>" +
+    "<th class='inv-dc-th-name'>" + dimLbl + "</th><th>원인</th>" +
+    "<th>원계획</th><th>+RTF조정</th><th>+과잉감축</th><th>최종</th><th>재고일수(원계획→최종)</th>" +
+    "</tr></thead><tbody>" + totalRow + body + "</tbody></table>" +
+    "<div class='inv-basis-note'>※ " + escapeHtml(monthLabel(refMonth)) + "말 기준 · 재고금액=원가 기준 · 변동은 우리 공급 조정에 귀속(판매계획 고정) · 원인=과잉감축 진단 최빈</div>" +
+    "</div>";
 }
 
 // ── 오늘의 결정 요약 (클로징) — 판정·조정 기록의 자동 집계, 읽기 전용 ─────────
@@ -683,26 +774,10 @@ function bindInventoryForecast() {
   var root = document.querySelector("#screenRoot");
   if (!root) return;
 
-  root.querySelectorAll("[data-inv-view]").forEach(function(btn) {
+  root.querySelectorAll("[data-inv-dcdim]").forEach(function(btn) {
     btn.addEventListener("click", function() {
-      if (btn.disabled || state.invViewMode === btn.dataset.invView) return;
-      state.invViewMode = btn.dataset.invView;
-      render("inventory-forecast");
-    });
-  });
-
-  root.querySelectorAll("[data-inv-section]").forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      if (state.invSectionMode === btn.dataset.invSection) return;
-      state.invSectionMode = btn.dataset.invSection;
-      render("inventory-forecast");
-    });
-  });
-
-  root.querySelectorAll("[data-inv-filter]").forEach(function(btn) {
-    btn.addEventListener("click", function() {
-      if (state.invFilter === btn.dataset.invFilter) return;
-      state.invFilter = btn.dataset.invFilter;
+      if (state.invDecompDim === btn.dataset.invDcdim) return;
+      state.invDecompDim = btn.dataset.invDcdim;
       render("inventory-forecast");
     });
   });

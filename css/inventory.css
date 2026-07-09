@@ -260,3 +260,28 @@
 /* 재고전망 차트 확대 + 기준 각주 */
 .inv-chart-section { height: 400px; }
 .inv-basis-note { margin: 6px 2px 12px; font-size: 12.5px; color: #94a3b8; }
+
+/* ── 재고 요인 분해표 (재고전망 하단) ── */
+.inv-toolbar { display: flex; align-items: center; gap: 16px; padding: 10px 14px 8px; flex-wrap: wrap; flex-shrink: 0; }
+.inv-dc-dims { display: inline-flex; gap: 4px; background: #f1f5f9; border-radius: 10px; padding: 3px; }
+.inv-dc-dimbtn { border: none; background: transparent; color: #64748b; border-radius: 8px; padding: 7px 16px; font-size: 14px; font-weight: 700; cursor: pointer; }
+.inv-dc-dimbtn.active { background: #28278f; color: #fff; }
+.inv-dc-legend { font-size: 12.5px; color: #94a3b8; }
+.inv-dc-legend b { font-weight: 700; }
+.inv-dc-wrap { flex: 1; min-height: 0; overflow: auto; padding: 0 14px 12px; }
+.inv-dc-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.inv-dc-table thead th { position: sticky; top: 0; z-index: 1; background: #f8fafc; color: #475569;
+  font-size: 13px; font-weight: 700; text-align: right; padding: 11px 14px; border-bottom: 2px solid #e5e7eb; white-space: nowrap; }
+.inv-dc-table thead th.inv-dc-th-name { text-align: left; }
+.inv-dc-table tbody td { padding: 10px 14px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
+.inv-dc-name { text-align: left; font-weight: 700; color: #1f2933; }
+.inv-dc-cause-td { text-align: left; }
+.inv-dc-cause { display: inline-block; background: #fef3c7; color: #92400e; border-radius: 6px; padding: 2px 8px; font-size: 12.5px; font-weight: 700; }
+.inv-dc-cause-def { background: #dbeafe; color: #1e40af; }
+.inv-dc-num { text-align: right; font-variant-numeric: tabular-nums; color: #334155; }
+.inv-dc-fin { font-weight: 800; color: #1f2933; }
+.inv-dc-days { text-align: right; font-variant-numeric: tabular-nums; color: #475569; }
+.inv-dc-up { color: #b91c1c; font-weight: 800; }
+.inv-dc-dn { color: #15803d; font-weight: 800; }
+.inv-dc-zero { color: #cbd5e1; }
+.inv-dc-total td { background: #f8fafc; font-weight: 800; font-size: 16px; border-bottom: 2px solid #e5e7eb; }
