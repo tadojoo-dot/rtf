@@ -447,17 +447,28 @@ function renderInventoryForecast() {
 
   var matAdjBomMap = hasMatAdj ? buildBomMaxProducibleMap(state.matSimAdj, state.fgProdAdj) : null;
 
-  // ── 3패널 요약 ────────────────────────────────────────────────────────────
-  var totalBaseAmt = 0, totalRtfAmt = 0, totalExcessAmt = 0, totalTargetAmt = 0;
-  var excessCount = 0, baseHasAmt = false, rtfHasAmt = false, excessHasAmt = false;
+  // ── 3패널 요약 — 공급원인·과잉감축 KPI 배너와 동일 기준(전체재고: 결산 앵커+델타) ──
+  // 기존 품목별 computeAdjMonthly/computeExcessMonthly 전량 재계산 제거(성능) —
+  // computeScenarioItemSets는 렌더당 1회 메모이즈, rtfHeadlineInv는 배너와 같은 함수라 수치 일치
+  var sc        = computeScenarioItemSets();
+  var matDeltas = (typeof computeMatScenarioDeltas === "function") ? computeMatScenarioDeltas(months) : null;
+  function headlineAmt(items, mi, addMatDelta) {
+    var v = rtfHeadlineInv(items, mi).amount;
+    if (addMatDelta && matDeltas && Number.isFinite(v)) v += (matDeltas[mi] || 0);
+    return v;
+  }
+  var totalBaseAmt   = headlineAmt(sc.base, 0, false);
+  var totalRtfAmt    = sc.hasRtfAdj ? headlineAmt(sc.rtfAdj, 0, false) : null;
+  var totalExcessAmt = (sc.hasExcess || (matDeltas && matDeltas[0])) ? headlineAmt(sc.final, 0, true) : null;
+  var baseHasAmt   = Number.isFinite(totalBaseAmt);
+  var rtfHasAmt    = Number.isFinite(totalRtfAmt);
+  var excessHasAmt = Number.isFinite(totalExcessAmt);
+
+  // 과잉 품목 수·적정재고 총액 (가벼운 집계 — 조정 시나리오 재계산 없음)
+  var totalTargetAmt = 0, excessCount = 0;
   rtfItems.forEach(function(item) {
     var ms0 = item.monthlyStatus && item.monthlyStatus[0];
     if (!ms0) return;
-    if (Number.isFinite(ms0.endingAmount)) { totalBaseAmt += ms0.endingAmount; baseHasAmt = true; }
-    var rtf0 = computeAdjMonthly(item, matAdjBomMap)[0];
-    if (Number.isFinite(rtf0.endingAmount)) { totalRtfAmt += rtf0.endingAmount; rtfHasAmt = true; }
-    var ex0 = computeExcessMonthly(item, matAdjBomMap)[0];
-    if (Number.isFinite(ex0.endingAmount)) { totalExcessAmt += ex0.endingAmount; excessHasAmt = true; }
     var targetDays = targetMap.get(item.itemCode);
     if (targetDays && item.hasCost && ms0.salesQty > 0)
       totalTargetAmt += (ms0.salesQty / monthDays(months[0])) * targetDays * item.standardCost;
@@ -466,8 +477,9 @@ function renderInventoryForecast() {
   });
 
   function fmtAmt(amt, has) { return has ? escapeHtml(formatMoney(amt)) : "-"; }
-  var rtfDelta    = (hasMatAdj && rtfHasAmt && baseHasAmt)      ? totalRtfAmt - totalBaseAmt : null;
-  var excessDelta = (hasExcessAdj && excessHasAmt && rtfHasAmt) ? totalExcessAmt - totalRtfAmt : null;
+  var rtfDelta    = (hasMatAdj && rtfHasAmt && baseHasAmt) ? totalRtfAmt - totalBaseAmt : null;
+  var excessDelta = (excessHasAmt && baseHasAmt)
+    ? totalExcessAmt - (rtfHasAmt ? totalRtfAmt : totalBaseAmt) : null;
   var m0Label     = escapeHtml(monthLabel(months[0])) + "말";
 
   function kpiItem(label, valStr, sub, deltaVal, isActive, isDisabled) {
@@ -555,7 +567,8 @@ function renderInventoryForecast() {
         kpiExcess +
       "</div>" +
     "</div>" +
-    "<div class=\"inv-chart-section\"><canvas id=\"invForecastChart\"></canvas></div>";
+    "<div class=\"inv-chart-section\"><canvas id=\"invForecastChart\"></canvas></div>" +
+    "<div class=\"inv-basis-note\">※ 상단 KPI·차트 = 전체재고(결산 기준 — RTF판정·공급원인·과잉감축 화면과 동일 수치) · 아래 표 = 제·상품 품목별 상세(원가 기준)</div>";
 
   return "<div class=\"inv-screen\"><div class=\"inv-inner\">" +
     comboHtml + renderInvClosing() + controlsHtml + sectionHtml +
@@ -707,150 +720,78 @@ function bindInvChart() {
   // 전망(계획) 구간만 표시 — 과거 실적 제거 (2026-07-09 사용자 지시)
   var rtfMonths    = getRtfMonths();
   var allMonths    = rtfMonths.slice();
-  var rtfItemsArr  = computeRtfItems(undefined, true);
-  var hasRtfAdj    = Object.keys(state.matSimAdj  || {}).length > 0 ||
-                     (typeof hasFgProdAdj === "function" && hasFgProdAdj());
-  var hasExcessAdj = Object.keys(state.excessAdj  || {}).length > 0;
-  var matAdjBomMap = hasRtfAdj ? buildBomMaxProducibleMap(state.matSimAdj, state.fgProdAdj) : null;
-  var hasActuals   = (state.mappedData.actuals_monthly || []).length > 0;
+  // 시리즈 = 공급원인·과잉감축 KPI 배너와 동일 기준(rtfHeadlineInv: 전체재고 = 결산 앵커+델타)
+  // 기존 품목별 computeAdjMonthly/computeExcessMonthly 월×품목 전량 재계산 제거 — 성능 개선 핵심
+  var sc        = computeScenarioItemSets();
+  var matDeltas = (typeof computeMatScenarioDeltas === "function") ? computeMatScenarioDeltas(rtfMonths) : null;
+  var hasRtfAdj    = sc.hasRtfAdj;
+  var hasExcessAdj = sc.hasExcess || !!(matDeltas && matDeltas.some(function(v) { return v; }));
 
-  // 1~5월 실적: actuals_monthly에서 plant="전체" 합산
-  function getActualInvAmt(month) {
-    if (!hasActuals) return null;
-    var rows = (state.mappedData.actuals_monthly || []).filter(function(r) {
-      return r.month === month && r.plant === "전체";
+  function seriesOf(items, addMatDelta) {
+    return rtfMonths.map(function(m, mi) {
+      var v = rtfHeadlineInv(items, mi).amount;
+      if (addMatDelta && matDeltas && Number.isFinite(v)) v += (matDeltas[mi] || 0);
+      return Number.isFinite(v) ? Math.round(v / 1e8) : null;
     });
-    if (!rows.length) return null;
-    var total = rows.reduce(function(s, r) { return s + (r.invAmt || 0); }, 0);
-    return Math.round(total / 100000000 * 10) / 10;
   }
-
-  function sumEndAmt(ri, getter) {
-    var total = 0;
-    rtfItemsArr.forEach(function(item) {
-      var v = getter(item, ri);
-      if (Number.isFinite(v)) total += v;
-    });
-    return Math.round(total / 100000000 * 10) / 10;
-  }
-
-  // 원계획: 1~5월=실적, 6~12월=계획
-  var baseData = allMonths.map(function(month) {
-    var ri = rtfMonths.indexOf(month);
-    if (ri < 0) return getActualInvAmt(month); // 1~5월
-    return sumEndAmt(ri, function(item) {
-      return item.monthlyStatus[ri] && item.monthlyStatus[ri].endingAmount;
-    });
-  });
-
-  // 실적선 제거 — 전망 구간만 그림 (과거 실적 표시 안 함)
-  var hasActLine = false;
-
-  // RTF 조정후: 1~5월=실적, 6~12월=RTF계산
-  var rtfData = (hasRtfAdj && matAdjBomMap) ? allMonths.map(function(month) {
-    var ri = rtfMonths.indexOf(month);
-    if (ri < 0) return getActualInvAmt(month);
-    return sumEndAmt(ri, function(item) {
-      var adj = computeAdjMonthly(item, matAdjBomMap)[ri];
-      return adj && Number.isFinite(adj.endingAmount) ? adj.endingAmount
-        : item.monthlyStatus[ri] && item.monthlyStatus[ri].endingAmount;
-    });
-  }) : null;
-
-  // 감축후: 1~5월=실적, 6~12월=excess계산
-  var excessData = hasExcessAdj ? allMonths.map(function(month) {
-    var ri = rtfMonths.indexOf(month);
-    if (ri < 0) return getActualInvAmt(month);
-    return sumEndAmt(ri, function(item) {
-      var ex = computeExcessMonthly(item, matAdjBomMap)[ri];
-      return ex && Number.isFinite(ex.endingAmount) ? ex.endingAmount
-        : item.monthlyStatus[ri] && item.monthlyStatus[ri].endingAmount;
-    });
-  }) : null;
+  var baseData   = seriesOf(sc.base, false);
+  var rtfData    = hasRtfAdj    ? seriesOf(sc.rtfAdj, false) : null;
+  var excessData = hasExcessAdj ? seriesOf(sc.final, true)   : null;
+  var hasAdjLine = !!(rtfData || excessData);
 
   // 전망 시작 수직선 — 실적 구간이 없으므로 표시 안 함
   var todayAnnotation = -1;
 
   var datasets = [];
-
-  // 원계획선 (6~12월 구간만 별도 표시)
   datasets.push({
     label: "원계획",
     data: baseData,
-    borderColor: hasActLine ? "#94a3b8" : "#64748b",
-    backgroundColor: "rgba(100,116,139,0.06)",
-    fill: !hasActLine,
-    borderWidth: hasActLine ? 1.5 : 2.5,
-    borderDash: hasActLine ? [5, 4] : [],
-    pointRadius: 3,
-    pointHoverRadius: 5,
+    borderColor: hasAdjLine ? "#94a3b8" : "#475569",
+    backgroundColor: "rgba(100,116,139,0.08)",
+    fill: !hasAdjLine,
+    borderWidth: hasAdjLine ? 2 : 3.5,
+    borderDash: hasAdjLine ? [6, 4] : [],
+    pointRadius: hasAdjLine ? 3 : 5,
+    pointHoverRadius: 7,
     tension: 0.3,
     spanGaps: true,
   });
-
   if (rtfData) {
     datasets.push({
       label: "RTF 조정후",
       data: rtfData,
       borderColor: "#28278f",
-      backgroundColor: "transparent",
-      fill: false,
-      borderWidth: 2.5,
-      pointRadius: 4,
-      pointHoverRadius: 6,
+      backgroundColor: "rgba(40,39,143,0.07)",
+      fill: !excessData,
+      borderWidth: 3,
+      pointRadius: 5,
+      pointHoverRadius: 7,
       tension: 0.3,
       spanGaps: true,
     });
   }
-
   if (excessData) {
     datasets.push({
       label: "감축후",
       data: excessData,
       borderColor: "#15803d",
-      backgroundColor: "transparent",
-      fill: false,
-      borderWidth: 2.5,
-      pointRadius: 4,
-      pointHoverRadius: 6,
+      backgroundColor: "rgba(21,128,61,0.10)",
+      fill: true,
+      borderWidth: 3.5,
+      pointRadius: 5,
+      pointHoverRadius: 7,
       tension: 0.3,
-      borderDash: [5, 3],
       spanGaps: true,
     });
   }
 
-  // ── 주 시나리오 결정 (가장 최종 조정된 것) ──────────────────────────────────
+  // ── 주 시나리오(가장 최종 조정) — 억 라벨·재고일수 배지 기준 (배너와 동일 일수) ──
   var primaryDsIdx = datasets.length - 1;
   var primaryColor = datasets[primaryDsIdx].borderColor;
-
-  // ── 주 시나리오 재고일수 계산 ─────────────────────────────────────────────
-  var primaryDays = allMonths.map(function(month) {
-    var ri = rtfMonths.indexOf(month);
-    // 1~5월: actuals
-    if (ri < 0) {
-      var rows = (state.mappedData.actuals_monthly || []).filter(function(r) {
-        return r.month === month && r.plant === "전체";
-      });
-      if (!rows.length) return null;
-      var vals = rows.filter(function(r) { return Number.isFinite(r.invDays); });
-      return vals.length ? Math.round(vals.reduce(function(s, r) { return s + r.invDays; }, 0) / vals.length) : null;
-    }
-    // 6~12월: 시나리오별
-    var tQty = 0, tSales = 0;
-    rtfItemsArr.forEach(function(item) {
-      var ms = item.monthlyStatus[ri]; if (!ms) return;
-      var endQty = ms.endingQty;
-      if (hasExcessAdj) {
-        var ex = computeExcessMonthly(item, matAdjBomMap)[ri];
-        if (ex && Number.isFinite(ex.endingQty)) endQty = ex.endingQty;
-      } else if (hasRtfAdj && matAdjBomMap) {
-        var adj = computeAdjMonthly(item, matAdjBomMap)[ri];
-        if (adj && Number.isFinite(adj.endingQty)) endQty = adj.endingQty;
-      }
-      if (Number.isFinite(endQty)) tQty += endQty;
-      if (ms.salesQty > 0) tSales += ms.salesQty / monthDays(month);
-    });
-    return tSales > 0 ? Math.round(tQty / tSales) : null;
+  var primaryItems = hasExcessAdj ? sc.final : (hasRtfAdj ? sc.rtfAdj : sc.base);
+  var primaryDays  = rtfMonths.map(function(m, mi) {
+    var d = rtfHeadlineInv(primaryItems, mi).days;
+    return Number.isFinite(d) ? Math.round(d) : null;
   });
 
   // ── 캔버스 플러그인: 억 레이블 + 재고일수 배지 ───────────────────────────
@@ -887,7 +828,7 @@ function bindInvChart() {
         if (val === null || val === undefined) return;
 
         // 억 레이블 (선 위)
-        ctx.font         = "bold 14px " + INV_FONT;
+        ctx.font         = "bold 15px " + INV_FONT;
         ctx.fillStyle    = isFcst ? primaryColor : "#1e3a8a";
         ctx.textAlign    = "center";
         ctx.textBaseline = "bottom";
@@ -898,7 +839,7 @@ function bindInvChart() {
         var dv = primaryDays[i];
         if (dv === null || dv === undefined) return;
         var text = dv + "일";
-        ctx.font = "bold 13px " + INV_FONT;
+        ctx.font = "bold 14px " + INV_FONT;
         var tw = ctx.measureText(text).width + 16;
         var th = 24;
         var tx = el.x - tw / 2;
@@ -966,10 +907,10 @@ function bindInvChart() {
           position: "top",
           align: "end",
           labels: {
-            font: { size: 13, family: "Pretendard", weight: "600" },
+            font: { size: 15, family: "Pretendard", weight: "700" },
             padding: 20,
             usePointStyle: true,
-            pointStyleWidth: 16,
+            pointStyleWidth: 18,
           },
         },
         tooltip: {
@@ -988,7 +929,7 @@ function bindInvChart() {
       scales: {
         x: {
           grid: { color: "rgba(0,0,0,0.06)", drawBorder: false },
-          ticks: { font: { size: 13, family: "Pretendard", weight: "600" }, color: "#374151" },
+          ticks: { font: { size: 14.5, family: "Pretendard", weight: "700" }, color: "#374151" },
           border: { display: false },
         },
         y: {
