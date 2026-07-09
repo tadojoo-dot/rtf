@@ -285,3 +285,12 @@
 .inv-dc-dn { color: #15803d; font-weight: 800; }
 .inv-dc-zero { color: #cbd5e1; }
 .inv-dc-total td { background: #f8fafc; font-weight: 800; font-size: 16px; border-bottom: 2px solid #e5e7eb; }
+
+/* ── 원인 칼럼 + 월별 셀 조정 병기 (재고전망 계층표) ── */
+.inv-cause-th { background: #24272b; color: #fff; font-size: 13px; text-align: center !important; min-width: 120px; }
+.inv-cause-cell { text-align: center !important; white-space: nowrap; }
+.inv-cause-chip { display: inline-block; background: #fef3c7; color: #92400e; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 700; }
+.inv-mc-adj { display: block; font-size: 11.5px; font-weight: 700; margin-top: 1px; }
+.inv-mc-cut { color: #15803d; }
+.inv-mc-up  { color: #b91c1c; }
+.inv-sh-legend { font-size: 11px; color: #adb5bd; font-weight: 400; margin-left: 6px; }

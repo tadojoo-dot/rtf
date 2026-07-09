@@ -297,7 +297,7 @@ function makeDrillRow(item, adjMonthly, totalCols, matAdjBomMapArg) {
 
 // ── 행 렌더 ──────────────────────────────────────────────────────────────────
 
-function renderInvRow(node, leftColDefs, adjCache, allMonths, rtfMonths, actualSet, rowspanMap) {
+function renderInvRow(node, leftColDefs, finalCache, allMonths, rtfMonths, actualSet, rowspanMap, causeHtml) {
   if (node.kind === "item") return "";
   var isTotal = node.kind === "total";
 
@@ -327,15 +327,29 @@ function renderInvRow(node, leftColDefs, adjCache, allMonths, rtfMonths, actualS
              "<td class=\"inv-mc inv-act-cell inv-act-empty\">-</td>";
     }
 
-    var rtfMi    = rtfMonths.indexOf(month);
-    var agg      = invNodeAgg(node.items, rtfMi, adjCache);
-    var days     = agg.inventoryDays;
-    var amt      = agg.endingAmount;
-    var daysDisp = Number.isFinite(days) ? Math.round(days) + "일" : "-";
-    var amtDisp  = Number.isFinite(amt)  ? formatMoney(amt)        : "-";
-    return "<td class=\"inv-mc inv-mc-days" + sepCls + daysCls(days) + "\">" + escapeHtml(daysDisp) + "</td>" +
-           "<td class=\"inv-mc inv-mc-amt\">" + escapeHtml(amtDisp) + "</td>";
+    var rtfMi     = rtfMonths.indexOf(month);
+    var baseAgg   = invNodeAgg(node.items, rtfMi, null);        // 원계획
+    var finalAgg  = invNodeAgg(node.items, rtfMi, finalCache);  // 최종(조정후)
+    var days      = baseAgg.inventoryDays, amt = baseAgg.endingAmount;
+    var fDays     = finalAgg.inventoryDays, fAmt = finalAgg.endingAmount;
+    var daysDisp  = Number.isFinite(days) ? Math.round(days) + "일" : "-";
+    var amtDisp   = Number.isFinite(amt)  ? formatMoney(amt)        : "-";
+
+    // 조정 효과 괄호: 최종(조정후) 값 + 원계획 대비 증감 (▼감축 초록 / ▲증가 빨강)
+    var daysParen = "", amtParen = "";
+    if (Number.isFinite(days) && Number.isFinite(fDays) && Math.abs(fDays - days) >= 1) {
+      var dd = fDays - days;
+      daysParen = "<span class=\"inv-mc-adj " + (dd < 0 ? "inv-mc-cut" : "inv-mc-up") + "\">(" + Math.round(fDays) + " " + (dd < 0 ? "▼" : "▲+") + Math.abs(Math.round(dd)) + ")</span>";
+    }
+    if (Number.isFinite(amt) && Number.isFinite(fAmt) && Math.abs(fAmt - amt) >= 0.5e8) {
+      var da = fAmt - amt;
+      amtParen = "<span class=\"inv-mc-adj " + (da < 0 ? "inv-mc-cut" : "inv-mc-up") + "\">(" + formatNumber(Math.round(fAmt / 1e8)) + "억 " + (da < 0 ? "▼" : "▲+") + formatNumber(Math.abs(Math.round(da / 1e8))) + ")</span>";
+    }
+    return "<td class=\"inv-mc inv-mc-days" + sepCls + daysCls(days) + "\">" + escapeHtml(daysDisp) + daysParen + "</td>" +
+           "<td class=\"inv-mc inv-mc-amt\">" + escapeHtml(amtDisp) + amtParen + "</td>";
   }).join("");
+
+  var causeCell = "<td class=\"inv-cause-cell\">" + (isTotal ? "" : (causeHtml || "")) + "</td>";
 
   var leftCells;
   if (isTotal) {
@@ -356,14 +370,35 @@ function renderInvRow(node, leftColDefs, adjCache, allMonths, rtfMonths, actualS
 
   var kindCls = isTotal ? "is-total" : (node.kind === "itemGroup" ? "is-itemgroup" : "is-group");
   return "<tr class=\"inv-h-row level-" + node.level + " " + kindCls + "\">" +
-    leftCells + metricCells + "</tr>";
+    leftCells + causeCell + metricCells + "</tr>";
+}
+
+// 원인 태그 맵 (classifyAiExcess 재사용) — 품목코드 → {cause, amt}
+var INV_CAUSE_LBL = { under: "출고 부진", demanddown: "수요 감소", overbase: "기준 초과", overplan: "판매계획 과대" };
+function buildInvCauseMap() {
+  var m = {};
+  try {
+    var cls = (typeof classifyAiExcess === "function") ? classifyAiExcess() : null;
+    if (cls) ["supply", "planfix"].forEach(function(s) {
+      (((cls.sections || {})[s] || {}).items || []).forEach(function(it) { m[it.itemCode] = { cause: it.cause, amt: it.cutAmt || 0 }; });
+    });
+  } catch (e) {}
+  return m;
+}
+function invNodeCauseHtml(items, causeMap) {
+  var agg = {};
+  items.forEach(function(it) { var c = causeMap[it.itemCode]; if (c && c.cause) agg[c.cause] = (agg[c.cause] || 0) + c.amt; });
+  var best = null, bv = 0;
+  Object.keys(agg).forEach(function(c) { if (agg[c] > bv) { bv = agg[c]; best = c; } });
+  return best ? "<span class=\"inv-cause-chip\">" + escapeHtml(INV_CAUSE_LBL[best] || best) + "</span>" : "";
 }
 
 // ── 섹션 렌더 ────────────────────────────────────────────────────────────────
 
-function renderInvSection(mode, displayItems, adjCache) {
+function renderInvSection(mode, displayItems, finalCache) {
   var leftColDefs = getInvLeftColDefs(mode);
   var rtfMonths   = getRtfMonths();
+  var causeMap    = buildInvCauseMap();
 
   // 당월(최신 결산월)만 실적, 이후는 전망 (2026-07-09 사용자 지시)
   var _anchor = (typeof getActualsAnchor === "function") ? getActualsAnchor() : null;
@@ -372,13 +407,14 @@ function renderInvSection(mode, displayItems, adjCache) {
   var allMonths = actualMonths.concat(rtfMonths);
 
   var leftW    = leftColDefs.reduce(function(s, c) { return s + c.width; }, 0);
-  var minWidth = leftW + allMonths.length * 140;
+  var minWidth = leftW + 150 + allMonths.length * 150;   // +150 = 원인 칼럼
 
   // ── 헤더 ────────────────────────────────────────────────────────────────
   var leftHeaders = leftColDefs.map(function(col) {
     var shadowCls = col.isLast ? " inv-col-last-sticky" : "";
     return "<th class=\"inv-sticky inv-th" + shadowCls + "\" style=\"left:" + col.left + "px;width:" + col.width + "px;\" rowspan=\"3\">" + escapeHtml(col.label) + "</th>";
   }).join("");
+  leftHeaders += "<th class=\"inv-th inv-cause-th\" rowspan=\"3\">원인</th>";
 
   // 슈퍼 헤더 (실적 / 전망 구분)
   var superHeader = "";
@@ -402,16 +438,17 @@ function renderInvSection(mode, displayItems, adjCache) {
   var nodes       = buildInvHierarchy(displayItems, mode);
   var rowspanMap  = buildInvRowspanMap(nodes);
   var bodyHtml    = nodes.map(function(node) {
-    return renderInvRow(node, leftColDefs, adjCache, allMonths, rtfMonths, actualSet, rowspanMap);
+    var causeHtml = (node.kind === "total") ? "" : invNodeCauseHtml(node.items, causeMap);
+    return renderInvRow(node, leftColDefs, finalCache, allMonths, rtfMonths, actualSet, rowspanMap, causeHtml);
   }).join("");
 
   if (!bodyHtml.trim()) {
-    var totalCols = leftColDefs.length + allMonths.length * 2;
+    var totalCols = leftColDefs.length + 1 + allMonths.length * 2;
     bodyHtml = "<tr><td colspan=\"" + totalCols + "\" style=\"text-align:center;padding:20px;color:#9ca3af;\">표시할 품목이 없습니다.</td></tr>";
   }
 
   var modeLabel = mode === "plant" ? "플랜트별" : mode === "type" ? "유형별" : "사업부별";
-  return "<div class=\"inv-section-hd\"><span>월별 재고현황 · " + modeLabel + "</span><span class=\"inv-section-unit\">단위: 억원, 일 &nbsp;|&nbsp; 재고일수 기준: 120일↑ 과잉, 90일↑ 주의</span></div>" +
+  return "<div class=\"inv-section-hd\"><span>월별 재고현황 · " + modeLabel + " <span class=\"inv-sh-legend\">큰 숫자=원계획 · 괄호=최종(조정후)·증감</span></span><span class=\"inv-section-unit\">단위: 억원, 일 &nbsp;|&nbsp; 재고일수 기준: 120일↑ 과잉, 90일↑ 주의</span></div>" +
   "<div class=\"inv-table-wrap\"><table class=\"inv-h-table\" style=\"min-width:max(100%, " + minWidth + "px);\">" +
     "<thead>" +
       "<tr>" + leftHeaders + superHeader + "</tr>" +
@@ -509,19 +546,11 @@ function renderInventoryForecast() {
     hasExcessAdj ? m0Label : "과잉감축 탭에서 입력",
     excessDelta, activeMode === "excess", !hasExcessAdj);
 
-  // ── adjCache ──────────────────────────────────────────────────────────────
-  var adjCache = null;
-  if (activeMode === "rtf") {
-    adjCache = new Map();
-    rtfItems.forEach(function(item) {
-      adjCache.set(item.itemCode + "|" + item.plantCode, computeAdjMonthly(item, matAdjBomMap));
-    });
-  } else if (activeMode === "excess") {
-    adjCache = new Map();
-    rtfItems.forEach(function(item) {
-      adjCache.set(item.itemCode + "|" + item.plantCode, computeExcessMonthly(item, matAdjBomMap));
-    });
-  }
+  // ── 최종(조정후) 캐시 — 월별 셀 괄호 병기용 (원계획=item.monthlyStatus 기본) ──
+  var finalCache = new Map();
+  rtfItems.forEach(function(item) {
+    finalCache.set(item.itemCode + "|" + item.plantCode, computeExcessMonthly(item, matAdjBomMap));
+  });
 
   // ── 필터 ─────────────────────────────────────────────────────────────────
   var displayItems = rtfItems.filter(function(item) {
@@ -532,18 +561,21 @@ function renderInventoryForecast() {
     return Number.isFinite(d) && d > td;
   });
 
-  // ── 컨트롤: 요인 분해 차원 토글 (사업부 / 품목군 / 플랜트) ──────────────────
-  var dcDim = state.invDecompDim || "bu";
-  var dcBtns = [["bu", "사업부별"], ["group", "품목군별"], ["plant", "플랜트별"]].map(function(d) {
-    return "<button type=\"button\" class=\"inv-dc-dimbtn" + (dcDim === d[0] ? " active" : "") + "\" data-inv-dcdim=\"" + d[0] + "\">" + d[1] + "</button>";
+  // ── 컨트롤: 계층 기준(사업부/플랜트/유형) + 과잉만 필터 ──────────────────────
+  var secMode = state.invSectionMode || "business";
+  var secBtns = [["business", "사업부별"], ["plant", "플랜트별"], ["type", "유형별"]].map(function(d) {
+    return "<button type=\"button\" class=\"inv-section-btn" + (secMode === d[0] ? " active" : "") + "\" data-inv-section=\"" + d[0] + "\">" + d[1] + "</button>";
   }).join("");
   var controlsHtml =
     "<div class=\"inv-toolbar\">" +
-      "<div class=\"inv-dc-dims\">" + dcBtns + "</div>" +
-      "<div class=\"inv-dc-legend\">재고일수 <b class=\"inv-dc-up\">▲증가</b>=재고 늘어남(품절방어 증산 등) · <b class=\"inv-dc-dn\">▼감소</b>=감축</div>" +
+      "<div class=\"inv-section-tabs\">" + secBtns + "</div>" +
+      "<div class=\"inv-toolbar-right\">" +
+        "<button type=\"button\" class=\"inv-filter-btn" + (state.invFilter !== "excess" ? " active" : "") + "\" data-inv-filter=\"all\">전체</button>" +
+        "<button type=\"button\" class=\"inv-filter-btn" + (state.invFilter === "excess" ? " active" : "") + "\" data-inv-filter=\"excess\">과잉만</button>" +
+      "</div>" +
     "</div>";
 
-  var sectionHtml = renderInvDecomp(dcDim, months);
+  var sectionHtml = renderInvSection(secMode, displayItems, finalCache);
 
   var comboHtml =
     "<div class=\"inv-combo-card\">" +
@@ -774,10 +806,18 @@ function bindInventoryForecast() {
   var root = document.querySelector("#screenRoot");
   if (!root) return;
 
-  root.querySelectorAll("[data-inv-dcdim]").forEach(function(btn) {
+  root.querySelectorAll("[data-inv-section]").forEach(function(btn) {
     btn.addEventListener("click", function() {
-      if (state.invDecompDim === btn.dataset.invDcdim) return;
-      state.invDecompDim = btn.dataset.invDcdim;
+      if (state.invSectionMode === btn.dataset.invSection) return;
+      state.invSectionMode = btn.dataset.invSection;
+      render("inventory-forecast");
+    });
+  });
+  root.querySelectorAll("[data-inv-filter]").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      var v = btn.dataset.invFilter;
+      if ((state.invFilter === "excess") === (v === "excess")) return;
+      state.invFilter = v;
       render("inventory-forecast");
     });
   });
