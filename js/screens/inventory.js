@@ -297,7 +297,7 @@ function makeDrillRow(item, adjMonthly, totalCols, matAdjBomMapArg) {
 
 // ── 행 렌더 ──────────────────────────────────────────────────────────────────
 
-function renderInvRow(node, leftColDefs, finalCache, allMonths, rtfMonths, actualSet, rowspanMap, causeHtml) {
+function renderInvRow(node, leftColDefs, finalCache, allMonths, rtfMonths, actualSet, rowspanMap, causeHtml, momMode) {
   if (node.kind === "item") return "";
   var isTotal = node.kind === "total";
 
@@ -327,7 +327,31 @@ function renderInvRow(node, leftColDefs, finalCache, allMonths, rtfMonths, actua
              "<td class=\"inv-mc inv-act-cell inv-act-empty\">-</td>";
     }
 
-    var rtfMi     = rtfMonths.indexOf(month);
+    var rtfMi = rtfMonths.indexOf(month);
+
+    // ── 전월대비 모드: 최종(조정후) 값의 이번달-전달 Δ만 표시 (첫 전망월은 비교불가 → '-') ──
+    if (momMode) {
+      if (rtfMi <= 0) {
+        return "<td class=\"inv-mc inv-mc-days inv-days-unset" + sepCls + "\">-</td>" +
+               "<td class=\"inv-mc inv-mc-amt\">-</td>";
+      }
+      var prevAgg = invNodeAgg(node.items, rtfMi - 1, finalCache);
+      var curAgg  = invNodeAgg(node.items, rtfMi, finalCache);
+      function deltaHtml(prev, cur, fmt) {
+        if (!Number.isFinite(prev) || !Number.isFinite(cur)) return "-";
+        var d = cur - prev;
+        if (Math.abs(fmt === "amt" ? d / 1e8 : d) < (fmt === "amt" ? 0.5 : 1)) return "<span class='inv-mc-flat'>-</span>";
+        var cls = d > 0 ? "inv-mc-up" : "inv-mc-cut";
+        var arrow = d > 0 ? "▲+" : "▼";
+        var txt = fmt === "amt" ? formatNumber(Math.round(Math.abs(d) / 1e8)) + "억" : Math.round(Math.abs(d)) + "일";
+        return "<span class='" + cls + "'>" + arrow + txt + "</span>";
+      }
+      var momDaysHtml = deltaHtml(prevAgg.inventoryDays, curAgg.inventoryDays, "days");
+      var momAmtHtml  = deltaHtml(prevAgg.endingAmount,  curAgg.endingAmount,  "amt");
+      return "<td class=\"inv-mc inv-mc-days" + sepCls + "\">" + momDaysHtml + "</td>" +
+             "<td class=\"inv-mc inv-mc-amt\">" + momAmtHtml + "</td>";
+    }
+
     var baseAgg   = invNodeAgg(node.items, rtfMi, null);        // 원계획
     var finalAgg  = invNodeAgg(node.items, rtfMi, finalCache);  // 최종(조정후)
     var days      = baseAgg.inventoryDays, amt = baseAgg.endingAmount;
@@ -394,9 +418,31 @@ function invNodeCauseHtml(items, causeMap) {
   return best ? "<span class=\"inv-cause-chip\">" + escapeHtml((meta[best] && meta[best].label) || best) + "</span>" : "";
 }
 
+// 전월대비 정렬 — 같은 부모(colVals[0]+[1]) 안의 품목군(level 2)만 재정렬(계층·병합 구조는 유지)
+function invMomSortNodes(nodes, finalCache, refMi) {
+  function deltaOf(node) {
+    var prev = invNodeAgg(node.items, refMi - 1, finalCache).inventoryDays;
+    var cur  = invNodeAgg(node.items, refMi, finalCache).inventoryDays;
+    return (Number.isFinite(prev) && Number.isFinite(cur)) ? (cur - prev) : -Infinity;
+  }
+  var out = [], i = 0;
+  while (i < nodes.length) {
+    if (nodes[i].kind !== "itemGroup") { out.push(nodes[i]); i++; continue; }
+    var parentKey = (nodes[i].colVals[0] || "") + "|" + (nodes[i].colVals[1] || "");
+    var run = [];
+    while (i < nodes.length && nodes[i].kind === "itemGroup" &&
+           ((nodes[i].colVals[0] || "") + "|" + (nodes[i].colVals[1] || "")) === parentKey) {
+      run.push(nodes[i]); i++;
+    }
+    run.sort(function(a, b) { return deltaOf(b) - deltaOf(a); });
+    out = out.concat(run);
+  }
+  return out;
+}
+
 // ── 섹션 렌더 ────────────────────────────────────────────────────────────────
 
-function renderInvSection(mode, displayItems, finalCache) {
+function renderInvSection(mode, displayItems, finalCache, momMode) {
   var leftColDefs = getInvLeftColDefs(mode);
   var rtfMonths   = getRtfMonths();
   var causeMap    = buildInvCauseMap();
@@ -431,16 +477,21 @@ function renderInvSection(mode, displayItems, finalCache) {
 
   var subHeader = allMonths.map(function(m) {
     var sepCls = (m === rtfMonths[0]) ? " inv-fcst-sep" : "";
-    return "<th class=\"inv-sh" + sepCls + "\">재고일수</th>" +
-           "<th class=\"inv-sh inv-sh-amt\">재고금액</th>";
+    var lbl1 = momMode ? "Δ재고일수" : "재고일수";
+    var lbl2 = momMode ? "Δ재고금액" : "재고금액";
+    return "<th class=\"inv-sh" + sepCls + "\">" + lbl1 + "</th>" +
+           "<th class=\"inv-sh inv-sh-amt\">" + lbl2 + "</th>";
   }).join("");
 
   // ── 바디 ─────────────────────────────────────────────────────────────────
-  var nodes       = buildInvHierarchy(displayItems, mode);
+  var nodes = buildInvHierarchy(displayItems, mode);
+  // 전월대비 모드: 같은 부모(사업부/플랜트/유형) 안에서 품목군을 "다음 계산가능 전월대비 증가 큰 순"으로 재정렬
+  var momRefMi = 1; // rtfMonths[1] vs rtfMonths[0] — 첫 전망월은 비교할 전월(품목군 단위 실적)이 없어 계산 불가
+  if (momMode && rtfMonths.length > momRefMi) nodes = invMomSortNodes(nodes, finalCache, momRefMi);
   var rowspanMap  = buildInvRowspanMap(nodes);
   var bodyHtml    = nodes.map(function(node) {
     var causeHtml = (node.kind === "total") ? "" : invNodeCauseHtml(node.items, causeMap);
-    return renderInvRow(node, leftColDefs, finalCache, allMonths, rtfMonths, actualSet, rowspanMap, causeHtml);
+    return renderInvRow(node, leftColDefs, finalCache, allMonths, rtfMonths, actualSet, rowspanMap, causeHtml, momMode);
   }).join("");
 
   if (!bodyHtml.trim()) {
@@ -449,7 +500,11 @@ function renderInvSection(mode, displayItems, finalCache) {
   }
 
   var modeLabel = mode === "plant" ? "플랜트별" : mode === "type" ? "유형별" : "사업부별";
-  return "<div class=\"inv-section-hd\"><span>월별 재고현황 · " + modeLabel + " <span class=\"inv-sh-legend\">큰 숫자=원계획 · 괄호=최종(조정후)·증감</span></span><span class=\"inv-section-unit\">단위: 억원, 일 &nbsp;|&nbsp; 재고일수 기준: 120일↑ 과잉, 90일↑ 주의</span></div>" +
+  var legendHtml = momMode
+    ? "<span class=\"inv-sh-legend\">Δ = 전월 대비(최종/조정후 기준) · " + escapeHtml(monthLabel(rtfMonths[momRefMi] || rtfMonths[0])) +
+      " 증가순 정렬 · 첫 전망월은 비교할 전월(품목군 단위)이 없어 '-'</span>"
+    : "<span class=\"inv-sh-legend\">큰 숫자=원계획 · 괄호=최종(조정후)·증감</span>";
+  return "<div class=\"inv-section-hd\"><span>월별 재고현황 · " + modeLabel + " " + legendHtml + "</span><span class=\"inv-section-unit\">단위: 억원, 일 &nbsp;|&nbsp; 재고일수 기준: 120일↑ 과잉, 90일↑ 주의</span></div>" +
   "<div class=\"inv-table-wrap\"><table class=\"inv-h-table\" style=\"min-width:max(100%, " + minWidth + "px);\">" +
     "<thead>" +
       "<tr>" + leftHeaders + superHeader + "</tr>" +
@@ -562,21 +617,27 @@ function renderInventoryForecast() {
     return Number.isFinite(d) && d > td;
   });
 
-  // ── 컨트롤: 계층 기준(사업부/플랜트/유형) + 과잉만 필터 ──────────────────────
+  // ── 컨트롤: 계층 기준(사업부/플랜트/유형) + 절대값/전월대비 + 과잉만 필터 ──────
   var secMode = state.invSectionMode || "business";
+  var momMode = !!state.invMomMode;
   var secBtns = [["business", "사업부별"], ["plant", "플랜트별"], ["type", "유형별"]].map(function(d) {
     return "<button type=\"button\" class=\"inv-section-btn" + (secMode === d[0] ? " active" : "") + "\" data-inv-section=\"" + d[0] + "\">" + d[1] + "</button>";
+  }).join("");
+  var momBtns = [["abs", "절대값"], ["mom", "전월대비"]].map(function(d) {
+    var on = (d[0] === "mom") === momMode;
+    return "<button type=\"button\" class=\"inv-mom-btn" + (on ? " active" : "") + "\" data-inv-mom=\"" + d[0] + "\">" + d[1] + "</button>";
   }).join("");
   var controlsHtml =
     "<div class=\"inv-toolbar\">" +
       "<div class=\"inv-section-tabs\">" + secBtns + "</div>" +
+      "<div class=\"inv-mom-tabs\">" + momBtns + "</div>" +
       "<div class=\"inv-toolbar-right\">" +
         "<button type=\"button\" class=\"inv-filter-btn" + (state.invFilter !== "excess" ? " active" : "") + "\" data-inv-filter=\"all\">전체</button>" +
         "<button type=\"button\" class=\"inv-filter-btn" + (state.invFilter === "excess" ? " active" : "") + "\" data-inv-filter=\"excess\">과잉만</button>" +
       "</div>" +
     "</div>";
 
-  var sectionHtml = renderInvSection(secMode, displayItems, finalCache);
+  var sectionHtml = renderInvSection(secMode, displayItems, finalCache, momMode);
 
   var comboHtml =
     "<div class=\"inv-combo-card\">" +
@@ -819,6 +880,14 @@ function bindInventoryForecast() {
       var v = btn.dataset.invFilter;
       if ((state.invFilter === "excess") === (v === "excess")) return;
       state.invFilter = v;
+      render("inventory-forecast");
+    });
+  });
+  root.querySelectorAll("[data-inv-mom]").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      var v = btn.dataset.invMom === "mom";
+      if (!!state.invMomMode === v) return;
+      state.invMomMode = v;
       render("inventory-forecast");
     });
   });

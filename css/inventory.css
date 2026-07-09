@@ -294,3 +294,11 @@
 .inv-mc-cut { color: #15803d; }
 .inv-mc-up  { color: #b91c1c; }
 .inv-sh-legend { font-size: 11px; color: #adb5bd; font-weight: 400; margin-left: 6px; }
+
+/* 재고전망 표 — 절대값/전월대비 토글 + Δ셀 스타일 */
+.inv-mom-tabs { display: flex; gap: 4px; }
+.inv-mom-btn { padding: 6px 18px; border-radius: 20px; border: 1px solid #d1d5db; background: #fff;
+  font-size: 13px; cursor: pointer; color: #374151; font-weight: 500; transition: background .1s, border-color .1s, color .1s; }
+.inv-mom-btn:not(.active):hover { background: #f0f4ff; border-color: #28278f; color: #28278f; }
+.inv-mom-btn.active { background: #28278f; color: #fff; border-color: #28278f; }
+.inv-mc-flat { color: #cbd5e1; }
