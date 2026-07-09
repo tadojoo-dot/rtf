@@ -167,12 +167,14 @@ function renderImpact() {
     return "<button type=\"button\" class=\"imp-type-btn" + (typeF === t ? " active" : "") + "\" data-type=\"" + t + "\">" + t + "</button>";
   }).join("");
 
-  function amtCell(v) { return "<td class=\"imp-num\">" + escapeHtml(formatMoney(v)) + "</td>"; }
+  // 억 단위 정수 + 천단위 콤마 (예: 2,638억)
+  function fmtEok(won) { return formatNumber(Math.round(won / 1e8)) + "억"; }
+  function amtCell(v) { return "<td class=\"imp-num\">" + escapeHtml(fmtEok(v)) + "</td>"; }
   function deltaCell(base, adj) {
     var d = adj - base;
-    if (Math.abs(d) < 0.5e8 && Math.round(d) === 0) return "<td class=\"imp-num imp-delta-zero\">-</td>";
+    if (Math.round(d / 1e8) === 0) return "<td class=\"imp-num imp-delta-zero\">-</td>";
     var cls = d < 0 ? "imp-delta-cut" : "imp-delta-up";
-    return "<td class=\"imp-num " + cls + "\">" + (d < 0 ? "▼ " : "▲ +") + escapeHtml(formatMoney(Math.abs(d))) + "</td>";
+    return "<td class=\"imp-num " + cls + "\">" + (d < 0 ? "▼ " : "▲ +") + escapeHtml(fmtEok(Math.abs(d))) + "</td>";
   }
 
   var bodyRows = rows.map(function(r) {

@@ -786,23 +786,34 @@ function bindInvChart() {
 
   var INV_FONT = '"Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif';
 
-  // 각 막대 위 금액 뱃지(억) — 그룹 막대 전 시리즈
+  // 각 막대 위: 금액(억) + 조정 막대는 원계획 대비 증감(±) — "얼마 줄었나"를 숫자로
   var barLabelsPlugin = {
     id: "invBarLabels",
     afterDatasetsDraw: function(chart) {
       var ctx = chart.ctx;
       ctx.save();
       ctx.textAlign = "center";
-      ctx.textBaseline = "bottom";
       chart.data.datasets.forEach(function(ds, di) {
         var meta = chart.getDatasetMeta(di);
         if (!meta || meta.hidden) return;
+        var isAdj = ds.label === "RTF 조정" || ds.label === "과잉감축";
         meta.data.forEach(function(el, i) {
           var v = ds.data[i];
           if (v === null || v === undefined || !el) return;
-          ctx.font      = "bold 11px " + INV_FONT;
+          // 절대 금액
+          ctx.font      = "bold 11.5px " + INV_FONT;
           ctx.fillStyle = ds._lbl || "#334151";
-          ctx.fillText(v, el.x, el.y - 3);
+          ctx.textBaseline = "bottom";
+          ctx.fillText(formatNumber(v), el.x, el.y - 3);
+          // 조정 막대: 원계획 대비 증감 (감축=초록, 증가=빨강)
+          if (isAdj && baseData[i] != null) {
+            var d = v - baseData[i];
+            if (Math.abs(d) >= 1) {
+              ctx.font      = "bold 10.5px " + INV_FONT;
+              ctx.fillStyle = d < 0 ? "#15803d" : "#b91c1c";
+              ctx.fillText((d < 0 ? "▼" : "▲+") + formatNumber(Math.abs(d)), el.x, el.y - 16);
+            }
+          }
         });
       });
       ctx.restore();
@@ -842,11 +853,11 @@ function bindInvChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: { top: 30, bottom: 6, left: 8, right: 16 } },
+      layout: { padding: { top: 34, bottom: 4, left: 8, right: 16 } },
       plugins: {
         legend: {
-          position: "top", align: "end",
-          labels: { font: { size: 15, family: "Pretendard", weight: "700" }, padding: 18, usePointStyle: true, pointStyleWidth: 16 },
+          position: "bottom", align: "center",
+          labels: { font: { size: 14.5, family: "Pretendard", weight: "700" }, padding: 16, usePointStyle: true, pointStyleWidth: 16, boxHeight: 8 },
         },
         tooltip: {
           backgroundColor: "rgba(15,23,42,0.88)",
