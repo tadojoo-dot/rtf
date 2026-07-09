@@ -734,3 +734,13 @@
 .exc-psi-flat.exc-mat-input-edited { background: #fef9c3; border-color: #eab308; font-weight: 700; }
 .exc-fgflat-td { text-align: center; font-weight: 700; color: #475569; white-space: nowrap; }
 .exc-fgflat-notd { color: #cbd5e1; }
+
+
+/* 진단 팝업 — 품목 순차 점검 네비 (협의 결과 줄 우측) */
+.exc-diag-nav { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+.exc-diag-navpos { font-size: 13.5px; color: #475569; white-space: nowrap; }
+.exc-diag-navpos b { color: #4338ca; font-size: 15px; }
+.exc-diag-navbtn { border: 1px solid #c7d2fe; background: #fff; color: #4338ca; border-radius: 8px;
+  padding: 5px 12px; font-size: 13.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.exc-diag-navbtn:hover:not(:disabled) { background: #e0e7ff; }
+.exc-diag-navbtn:disabled { opacity: .4; cursor: default; }

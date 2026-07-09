@@ -802,7 +802,7 @@ function _renderExcessAdjustmentInner() {
 
   // 진단 패널은 탭별로 — 제·상품 진단(fg) / 원부자재 진단(mat)
   var bodyHtml = excessTab === "fg"
-    ? renderExcWalkBar() + aiHtml + priorityHtml + controls +
+    ? aiHtml + priorityHtml + controls +
       "<div class='exc-fg-area'>" + excProf("FG테이블생성", function(){ return renderExcessFgFlatTable(displayItems, months, globalPlanMap); }) + "</div>"
     : excProf("원부자재진단패널", function(){ return renderMatDiagPanel(); }) +
       "<div class='exc-fg-area'>" + excProf("원부자재테이블", function(){ return renderExcessMatTable(months); }) + "</div>";
@@ -1297,53 +1297,6 @@ function buildExcWalkQueue() {
   return q;
 }
 
-function excWalkBarInner() {
-  var q = buildExcWalkQueue();
-  if (!q.length) return "";
-  var idx = Math.max(0, Math.min(state.excWalkIdx || 0, q.length - 1));
-  state.excWalkIdx = idx;
-  var cur  = q[idx];
-  var done = q.filter(function(e) { return getAiDecision(e.it); }).length;
-  var def  = findAiSecDef(cur.secId);
-  var d    = getAiDecision(cur.it);
-  return "<span class=\"walkbar-title\">▶ 품목 점검</span>" +
-    "<span class=\"walkbar-count\"><b>" + done + "</b>/" + q.length + "</span>" +
-    "<span class=\"walkbar-cur\">" +
-      (def ? "<span class=\"walkbar-plant\">" + def.no + " " + escapeHtml(def.title) + "</span> " : "") +
-      "<b>" + escapeHtml(cur.it.itemCode) + "</b> " + escapeHtml(cur.it.itemName || cur.it.itemCode) +
-      (d ? " <span class=\"walkbar-donechip\">" + (AI_DECISION_LABELS[d.status] || d.status) + "</span>" : "") +
-    "</span>" +
-    "<button type=\"button\" class=\"walkbar-btn\" id=\"excWalkPrev\"" + (idx <= 0 ? " disabled" : "") + ">← 이전</button>" +
-    "<button type=\"button\" class=\"walkbar-btn\" id=\"excWalkNext\"" + (idx >= q.length - 1 ? " disabled" : "") + ">다음 →</button>" +
-    "<button type=\"button\" class=\"walkbar-btn walkbar-btn-done\" id=\"excWalkOpen\">품목 열기</button>";
-}
-
-function renderExcWalkBar() {
-  var inner = excWalkBarInner();
-  return inner ? "<div class=\"walkbar\" id=\"excWalkBar\">" + inner + "</div>" : "";
-}
-
-function excWalkGo(idx) {
-  var q = buildExcWalkQueue();
-  if (!q.length) return;
-  idx = Math.max(0, Math.min(idx, q.length - 1));
-  state.excWalkIdx = idx;
-  saveAiSession();
-  var e = q[idx];
-  openAiDiagPopup(e.secId, e.srcIdx);
-  var bar = document.getElementById("excWalkBar");
-  if (bar) { bar.innerHTML = excWalkBarInner(); bindExcWalkBar(); }
-}
-
-function bindExcWalkBar() {
-  var prev = document.getElementById("excWalkPrev");
-  var next = document.getElementById("excWalkNext");
-  var open = document.getElementById("excWalkOpen");
-  if (prev) prev.addEventListener("click", function() { excWalkGo((state.excWalkIdx || 0) - 1); });
-  if (next) next.addEventListener("click", function() { excWalkGo((state.excWalkIdx || 0) + 1); });
-  if (open) open.addEventListener("click", function() { excWalkGo(state.excWalkIdx || 0); });
-}
-
 function renderAiDiagPanel(hasTargetData) {
   if (!hasTargetData) return "";
   var cls = classifyAiExcess();
@@ -1593,6 +1546,26 @@ function openAiDiagPopup(secId, idx) {
   var meta = AI_CAUSE_META[it.cause] || AI_CAUSE_META.overbase;
   var def = findAiSecDef(secId);
   var d = getAiDecision(it);
+
+  // 품목 순차 점검 네비 — 섹션순(①→④)·금액순 큐에서 현재 위치 (섹션 내 N/M 표기)
+  var _navQ = buildExcWalkQueue();
+  var _navIdx = -1, _navSecPos = 0, _navSecTotal = 0;
+  for (var _ni = 0; _ni < _navQ.length; _ni++) {
+    if (_navQ[_ni].secId === secId) {
+      _navSecTotal++;
+      if (_navQ[_ni].it === it) { _navIdx = _ni; _navSecPos = _navSecTotal; }
+    }
+  }
+  if (_navIdx >= 0) state.excWalkIdx = _navIdx;
+  var navHtml = _navIdx >= 0
+    ? "<span class='exc-diag-nav'>" +
+      "<button type='button' class='exc-diag-navbtn' id='excDiagPrev'" + (_navIdx <= 0 ? " disabled" : "") + ">← 이전</button>" +
+      "<span class='exc-diag-navpos'>" + (def ? def.no + " " + escapeHtml(def.title) + " " : "") +
+        "<b>" + _navSecPos + "</b>/" + _navSecTotal + "</span>" +
+      "<button type='button' class='exc-diag-navbtn' id='excDiagNext'" + (_navIdx >= _navQ.length - 1 ? " disabled" : "") + ">다음 →</button>" +
+      "</span>"
+    : "";
+
   var opinion = isCut ? buildAiOpinion(it) : buildNoPlanOpinion(it);
   var plantLabel = it.plantCode && typeof displayPlantName === "function" ? displayPlantName(it.plantCode) : (it.plantCode || "");
 
@@ -1651,6 +1624,7 @@ function openAiDiagPopup(secId, idx) {
       "<div class='exc-diag-decide'>" +
         "<span class='exc-diag-decide-label'>협의 결과</span>" + decBtns +
         "<span class='exc-diag-cur'>" + curDec + "</span>" +
+        navHtml +
       "</div>" +
       "<div class='exc-diag-inputs' hidden>" +
         "<span class='exc-diag-input-qty' hidden>확정 감축량 <input type='number' class='exc-diag-qty' min='0'" +
@@ -1660,6 +1634,18 @@ function openAiDiagPopup(secId, idx) {
       "</div>" +
     "</div>";
   document.body.appendChild(ov);
+
+  // 이전/다음 품목 — 팝업 전환 (판정 없이도 이동 가능)
+  function navToQueue(idx) {
+    if (idx < 0 || idx >= _navQ.length) return;
+    var nx = _navQ[idx];
+    closeAiDiagPopup();
+    openAiDiagPopup(nx.secId, nx.srcIdx);
+  }
+  var navPrev = ov.querySelector("#excDiagPrev");
+  var navNext = ov.querySelector("#excDiagNext");
+  if (navPrev) navPrev.addEventListener("click", function() { navToQueue(_navIdx - 1); });
+  if (navNext) navNext.addEventListener("click", function() { navToQueue(_navIdx + 1); });
 
   // 닫기
   ov.addEventListener("click", function(e) { if (e.target === ov) closeAiDiagPopup(); });
@@ -1686,6 +1672,11 @@ function openAiDiagPopup(secId, idx) {
     var reason = (ov.querySelector(".exc-diag-reason").value || "").trim();
     closeAiDiagPopup();
     setAiDecision(secId, it, selStatus, qty, reason);
+    // 판정 즉시 다음 품목 팝업 자동 오픈 — 회의 템포 유지 (마지막 품목이면 종료)
+    if (_navIdx >= 0 && _navIdx < _navQ.length - 1) {
+      var nx = _navQ[_navIdx + 1];
+      openAiDiagPopup(nx.secId, nx.srcIdx);
+    }
   });
   var clearBtn = ov.querySelector(".exc-diag-dec-clear");
   if (clearBtn) clearBtn.addEventListener("click", function() {
@@ -3074,9 +3065,6 @@ function bindExcessAdjustment() {
   var _bindT0 = performance.now();
   // 렌더 문자열 반환 시각 ~ bind 시작 = 브라우저가 innerHTML을 실제 DOM으로 반영한 비용
   var _injectMs = (EXC_PROF && window._excRenderEndTs != null) ? (_bindT0 - window._excRenderEndTs) : null;
-
-  // 회의 진행 바 — 이전/다음/품목 열기
-  bindExcWalkBar();
 
   // AI 진단 — 전체적용(①②, MOQ구조·소진·처분 제외) / 전체해제 (명시 판정은 유지됨)
   var aiApplyBtn = root.querySelector(".exc-ai-apply");

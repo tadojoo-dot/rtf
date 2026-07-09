@@ -365,15 +365,8 @@ function renderInvSection(mode, displayItems, adjCache) {
   var leftColDefs = getInvLeftColDefs(mode);
   var rtfMonths   = getRtfMonths();
 
-  // 실적 월 (actuals_monthly에 있는 월 중 RTF 전망 월 제외)
-  var actualsData  = state.mappedData.actuals_monthly || [];
+  // 과거 실적 월 표시 제거 — 전망(계획) 구간만 (2026-07-09 사용자 지시)
   var actualMonths = [];
-  if (actualsData.length) {
-    var monthSet = new Set(actualsData.map(function(r) { return r.month; }));
-    actualMonths = Array.from(monthSet)
-      .filter(function(m) { return rtfMonths.indexOf(m) < 0 && m.startsWith("2026"); })
-      .sort();
-  }
   var actualSet = new Set(actualMonths);
   var allMonths = actualMonths.concat(rtfMonths);
 
@@ -711,11 +704,9 @@ function bindInvChart() {
   if (!canvas) return;
   if (_invChartInst) { _invChartInst.destroy(); _invChartInst = null; }
 
-  // 1~12월 전체 레이블 축
-  var allMonths = [];
-  for (var m = 1; m <= 12; m++) allMonths.push("2026-" + (m < 10 ? "0" + m : "" + m));
-
-  var rtfMonths    = getRtfMonths();                         // 6~12월
+  // 전망(계획) 구간만 표시 — 과거 실적 제거 (2026-07-09 사용자 지시)
+  var rtfMonths    = getRtfMonths();
+  var allMonths    = rtfMonths.slice();
   var rtfItemsArr  = computeRtfItems(undefined, true);
   var hasRtfAdj    = Object.keys(state.matSimAdj  || {}).length > 0 ||
                      (typeof hasFgProdAdj === "function" && hasFgProdAdj());
@@ -752,18 +743,8 @@ function bindInvChart() {
     });
   });
 
-  // 실적선 (1~5월만, 6월 접합점 포함)
-  var actData = allMonths.map(function(month) {
-    var ri = rtfMonths.indexOf(month);
-    if (ri < 0) return getActualInvAmt(month);
-    if (month === rtfMonths[0]) return getActualInvAmt(month) !== null
-      ? getActualInvAmt(month) : sumEndAmt(0, function(item) {
-          return item.monthlyStatus[0] && item.monthlyStatus[0].endingAmount;
-        });
-    return null;
-  });
-
-  var hasActLine = actData.some(function(v) { return v !== null; });
+  // 실적선 제거 — 전망 구간만 그림 (과거 실적 표시 안 함)
+  var hasActLine = false;
 
   // RTF 조정후: 1~5월=실적, 6~12월=RTF계산
   var rtfData = (hasRtfAdj && matAdjBomMap) ? allMonths.map(function(month) {
@@ -787,26 +768,10 @@ function bindInvChart() {
     });
   }) : null;
 
-  // 오늘 기준선: 6월이 전망 시작점
-  var todayAnnotation = rtfMonths[0] ? allMonths.indexOf(rtfMonths[0]) : -1;
+  // 전망 시작 수직선 — 실적 구간이 없으므로 표시 안 함
+  var todayAnnotation = -1;
 
   var datasets = [];
-
-  // 실적선 (있을 때만)
-  if (hasActLine) {
-    datasets.push({
-      label: "실적",
-      data: actData,
-      borderColor: "#1e3a8a",
-      backgroundColor: "transparent",
-      fill: false,
-      borderWidth: 3,
-      pointRadius: 4,
-      pointHoverRadius: 6,
-      tension: 0.3,
-      spanGaps: false,
-    });
-  }
 
   // 원계획선 (6~12월 구간만 별도 표시)
   datasets.push({
