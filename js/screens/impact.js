@@ -101,54 +101,108 @@ function _toFullArr(series, rtfMonths, allMonths, joinIdx, joinVal) {
 
 // ── 렌더 ──────────────────────────────────────────────────────────────────────
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 조정총괄 — 세부 조정을 품목/품목군/사업부로 총정리 (원래 → 조정후 재고·증감)
+// 재고전망(월별 큰 그림)의 세부 버전. 기준월 = 전망 마지막 월(연말 착지 재고, 원가 기준)
+// ═══════════════════════════════════════════════════════════════════════════
 function renderImpact() {
-  var hasActuals = (state.mappedData.actuals_monthly || []).length > 0;
-  var hasPlan    = state.mappedData.plan_monthly.length > 0;
-
-  if (!hasPlan && !hasActuals) {
-    return "<section class=\"section-band\"><div class=\"section-header\"><h2>조정영향</h2>" +
+  var hasPlan = state.mappedData.plan_monthly.length > 0;
+  if (!hasPlan) {
+    return "<section class=\"section-band\"><div class=\"section-header\"><h2>조정총괄</h2>" +
       "<p>데이터 연결 필요 — 데이터점검 화면에서 RAW 파일을 선택해 주세요.</p></div></section>";
   }
 
-  var hasMatAdj    = Object.keys(state.matSimAdj  || {}).length > 0;
-  var hasExcessAdj = Object.keys(state.excessAdj  || {}).length > 0;
+  var months = getRtfMonths();
+  var refMi  = months.length - 1;              // 전망 마지막 월(연말 착지)
+  var sc     = computeScenarioItemSets();
+  var dim    = state.impactDim || "bu";         // bu | group | item
+  var typeF  = _impactType || "전체";
 
+  function keyOf(it) { return it.itemCode + "|" + (it.plantCode || ""); }
+  var finalMap = new Map();
+  sc.final.forEach(function(it) { finalMap.set(keyOf(it), it); });
+
+  // 품목별 원래/조정후 기말재고금액(원가) + 조정 여부(어느 월이든 base≠final)
+  var groups = new Map();
+  var tot = { base: 0, adj: 0, cnt: 0, adjCnt: 0 };
+  sc.base.forEach(function(bit) {
+    if (bit.typeGroup !== "완제품" && bit.typeGroup !== "상품") return;
+    if (typeF !== "전체" && bit.typeGroup !== typeF) return;
+    var fit = finalMap.get(keyOf(bit));
+    var bAmt = (bit.monthlyStatus[refMi] || {}).endingAmount;
+    var fAmt = fit ? (fit.monthlyStatus[refMi] || {}).endingAmount : bAmt;
+    if (!Number.isFinite(bAmt)) bAmt = 0;
+    if (!Number.isFinite(fAmt)) fAmt = bAmt;
+
+    var changed = false;
+    if (fit) {
+      for (var m = 0; m < months.length; m++) {
+        var b0 = (bit.monthlyStatus[m] || {}).endingAmount;
+        var f0 = (fit.monthlyStatus[m] || {}).endingAmount;
+        if (Number.isFinite(b0) && Number.isFinite(f0) && Math.abs(b0 - f0) > 1) { changed = true; break; }
+      }
+    }
+
+    var gkey = dim === "bu"    ? (bit.businessUnit || "미분류")
+             : dim === "group" ? (bit.itemGroup   || "미분류")
+             : keyOf(bit);
+    var gname = dim === "item" ? (bit.itemName || bit.itemCode) : gkey;
+    var g = groups.get(gkey);
+    if (!g) { g = { name: gname, code: bit.itemCode, bu: bit.businessUnit || "", base: 0, adj: 0, cnt: 0, adjCnt: 0 }; groups.set(gkey, g); }
+    g.base += bAmt; g.adj += fAmt; g.cnt++; if (changed) g.adjCnt++;
+    tot.base += bAmt; tot.adj += fAmt; tot.cnt++; if (changed) tot.adjCnt++;
+  });
+
+  // 정렬: 증감(감축액) 큰 순
+  var rows = Array.from(groups.values()).sort(function(a, b) {
+    return (a.adj - a.base) - (b.adj - b.base);
+  });
+  // 품목 차원은 조정된 것만 (총괄이므로 변경분 집중), 그 외 전체
+  if (dim === "item") rows = rows.filter(function(r) { return r.adjCnt > 0; });
+
+  var dimBtns = [["bu", "사업부별"], ["group", "품목군별"], ["item", "품목별"]].map(function(d) {
+    return "<button type=\"button\" class=\"imp-dim-btn" + (dim === d[0] ? " active" : "") + "\" data-dim=\"" + d[0] + "\">" + d[1] + "</button>";
+  }).join("");
   var typeBtns = ["전체", "완제품", "상품"].map(function(t) {
-    return "<button type=\"button\" class=\"imp-filter-btn" + (t === _impactType ? " active" : "") +
-           "\" data-type=\"" + t + "\">" + t + "</button>";
+    return "<button type=\"button\" class=\"imp-type-btn" + (typeF === t ? " active" : "") + "\" data-type=\"" + t + "\">" + t + "</button>";
   }).join("");
 
-  function leg(cls, label) {
-    return "<span class=\"imp-leg " + cls + "\">" + escapeHtml(label) + "</span>";
+  function amtCell(v) { return "<td class=\"imp-num\">" + escapeHtml(formatMoney(v)) + "</td>"; }
+  function deltaCell(base, adj) {
+    var d = adj - base;
+    if (Math.abs(d) < 0.5e8 && Math.round(d) === 0) return "<td class=\"imp-num imp-delta-zero\">-</td>";
+    var cls = d < 0 ? "imp-delta-cut" : "imp-delta-up";
+    return "<td class=\"imp-num " + cls + "\">" + (d < 0 ? "▼ " : "▲ +") + escapeHtml(formatMoney(Math.abs(d))) + "</td>";
   }
 
-  var legend1 = [
-    leg("imp-leg-actual", "실적 재고금액"), leg("imp-leg-base", "원계획 재고금액"),
-    leg("imp-leg-days-actual", "실적 재고일수"), leg("imp-leg-days-base", "원계획 재고일수"),
-    hasMatAdj    ? leg("imp-leg-rtf",    "RTF조정후 재고일수") : "",
-    hasExcessAdj ? leg("imp-leg-excess", "감축후 재고일수")    : "",
-  ].filter(Boolean).join("");
+  var bodyRows = rows.map(function(r) {
+    var nameCell = dim === "item"
+      ? "<td class=\"imp-name\"><span class=\"imp-code\">" + escapeHtml(r.code) + "</span> " + escapeHtml(r.name) +
+        (r.bu ? " <span class=\"imp-bu\">" + escapeHtml(r.bu) + "</span>" : "") + "</td>"
+      : "<td class=\"imp-name\">" + escapeHtml(r.name) + "</td>";
+    return "<tr>" + nameCell + amtCell(r.base) + amtCell(r.adj) + deltaCell(r.base, r.adj) +
+      "<td class=\"imp-cnt\">" + (r.adjCnt > 0 ? "<b>" + r.adjCnt + "</b>/" + r.cnt : r.cnt) + "</td></tr>";
+  }).join("");
 
-  var legend2 = [
-    leg("imp-leg-sales", "판매금액 (짙=실적, 연=전망)"),
-    leg("imp-leg-supply", "공급금액 (짙=실적, 연=전망)"),
-    hasMatAdj ? leg("imp-leg-rtf", "RTF조정후 공급") : "",
-  ].filter(Boolean).join("");
+  var totalRow = "<tr class=\"imp-total-row\">" +
+    "<td class=\"imp-name\">전체 합계</td>" + amtCell(tot.base) + amtCell(tot.adj) + deltaCell(tot.base, tot.adj) +
+    "<td class=\"imp-cnt\"><b>" + tot.adjCnt + "</b>/" + tot.cnt + "</td></tr>";
+
+  var refLabel = escapeHtml(monthLabel(months[refMi])) + "말";
 
   return "<div class=\"imp-screen\"><div class=\"imp-inner\">" +
-    "<div class=\"imp-controls\"><div class=\"imp-filter-group\">" + typeBtns + "</div></div>" +
-    "<div class=\"imp-chart-card\">" +
-      "<div class=\"imp-chart-header\"><span class=\"imp-chart-title\">재고금액 · 재고일수</span>" +
-      "<span class=\"imp-chart-note\">막대=재고금액(좌축) · 선=재고일수(우축)</span></div>" +
-      "<div class=\"imp-chart-legend\">" + legend1 + "</div>" +
-      "<div class=\"imp-chart-wrap\"><canvas id=\"impChart1\"></canvas></div>" +
+    "<div class=\"imp-head\">" +
+      "<h2 class=\"imp-h2\">조정 총괄</h2>" +
+      "<span class=\"imp-sub\">세부 조정을 차원별로 정리 — 원래 → 조정 후 재고금액 (" + refLabel + " 기준 · 원가)</span>" +
     "</div>" +
-    "<div class=\"imp-chart-card\">" +
-      "<div class=\"imp-chart-header\"><span class=\"imp-chart-title\">판매금액 · 공급금액</span>" +
-      "<span class=\"imp-chart-note\">막대=금액(억) · 실적=짙은색 · 전망=연한색</span></div>" +
-      "<div class=\"imp-chart-legend\">" + legend2 + "</div>" +
-      "<div class=\"imp-chart-wrap\"><canvas id=\"impChart2\"></canvas></div>" +
+    "<div class=\"imp-controls\">" +
+      "<div class=\"imp-dim-group\">" + dimBtns + "</div>" +
+      "<div class=\"imp-type-group\">" + typeBtns + "</div>" +
     "</div>" +
+    "<div class=\"imp-table-wrap\"><table class=\"imp-table\"><thead><tr>" +
+      "<th class=\"imp-th-name\">" + (dim === "bu" ? "사업부" : dim === "group" ? "품목군" : "품목") + "</th>" +
+      "<th>원래 재고</th><th>조정 후 재고</th><th>증감</th><th>조정품목</th>" +
+    "</tr></thead><tbody>" + totalRow + bodyRows + "</tbody></table></div>" +
   "</div></div>";
 }
 
@@ -157,6 +211,13 @@ function renderImpact() {
 function bindImpact() {
   var root = document.querySelector("#screenRoot");
   if (!root) return;
+  root.querySelectorAll("[data-dim]").forEach(function(btn) {
+    btn.addEventListener("click", function() {
+      if (state.impactDim === btn.dataset.dim) return;
+      state.impactDim = btn.dataset.dim;
+      render("impact");
+    });
+  });
   root.querySelectorAll("[data-type]").forEach(function(btn) {
     btn.addEventListener("click", function() {
       if (_impactType === btn.dataset.type) return;
@@ -164,9 +225,6 @@ function bindImpact() {
       render("impact");
     });
   });
-  var base = _buildChartBase();
-  _initChart1(base);
-  _initChart2(base);
 }
 
 // ── Chart ①: 재고금액(막대) + 재고일수(선, 이중Y축) ──────────────────────────
