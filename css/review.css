@@ -1,0 +1,144 @@
+/* ── 재고 총괄장 (재고전망) ──────────────────────────────────────────────────
+   톤 기준 = 회의체계 화면: 딥네이비 히어로 밴드 + 하늘색 액센트 + 흰 카드 + 큰 타이포.
+   색은 전부 base.css 토큰. 새 색을 여기서 만들지 말 것. */
+
+.rv { display: flex; flex-direction: column; gap: 14px; padding: 4px 0 40px; }
+
+/* ── 히어로 (회의체계와 동일한 네이비 밴드) ── */
+.rv-hero { background: var(--navy); border-radius: 12px; padding: 24px 28px 0; color: #fff; }
+.rv-hero-top { display: flex; justify-content: space-between; align-items: flex-start;
+               gap: 20px; flex-wrap: wrap; padding-bottom: 18px; }
+.rv-eyebrow { font-size: 12px; font-weight: 700; letter-spacing: .08em;
+              color: var(--navy-sky); margin-bottom: 8px; }
+.rv-title { margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -.01em; color: #fff; }
+.rv-title span { font-weight: 600; color: var(--navy-sub); }
+.rv-hero-note { font-size: 13px; line-height: 1.7; color: var(--navy-sub); text-align: right; }
+
+.rv-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+           gap: 1px; background: rgba(255,255,255,.15);
+           border-top: 1px solid rgba(255,255,255,.15); }
+.rv-kpi { background: var(--navy); padding: 18px 20px 22px; }
+.rv-kpi-lead .rv-kpi-v { color: var(--navy-sky); }
+.rv-kpi-l { font-size: 12.5px; font-weight: 700; color: var(--navy-sub); letter-spacing: .03em; }
+.rv-kpi-v { margin-top: 8px; font-size: 34px; font-weight: 800; line-height: 1.05;
+            letter-spacing: -.03em; color: #fff;
+            font-variant-numeric: tabular-nums; }
+.rv-kpi-v small { font-size: 16px; font-weight: 700; color: var(--navy-sub); margin-left: 3px; }
+.rv-kpi-f { margin-top: 8px; font-size: 13px; color: var(--navy-body); }
+
+/* 네이비 위에서는 의미색을 밝게 (딥그린·벽돌빨강은 어두워서 안 읽힘) */
+.rv-hero .rv-up   { color: #fca5a5; font-weight: 800; }
+.rv-hero .rv-down { color: #86efac; font-weight: 800; }
+
+/* ── AI 진단 스트립 ── */
+.rv-diag { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+           background: var(--surface); border: 1px solid var(--line);
+           border-radius: 10px; padding: 12px 16px; }
+.rv-diag-lbl { font-size: 12px; font-weight: 800; color: var(--brand); letter-spacing: .06em;
+               padding-right: 12px; border-right: 1px solid var(--line); white-space: nowrap; }
+.rv-chip { display: inline-flex; align-items: baseline; gap: 7px;
+           border: 1px solid var(--line); background: var(--surface-2);
+           border-radius: 999px; padding: 7px 14px; font-size: 13px; color: var(--ink-2); }
+.rv-chip b { font-weight: 800; color: var(--ink); }
+.rv-chip-hot    { border-color: var(--warn);   background: #fdf1e3; }
+.rv-chip-hot b  { color: var(--warn-ink); }
+.rv-chip-warn   { border-color: var(--warn);   background: #fdf1e3; }
+.rv-chip-warn b { color: var(--warn-ink); }
+.rv-chip-danger   { border-color: var(--danger); background: #fbe9e9; }
+.rv-chip-danger b { color: var(--danger); }
+
+/* ── AI 소견 ── */
+.rv-op { background: var(--surface); border: 1px solid var(--line);
+         border-left: 4px solid var(--warn); border-radius: 0 10px 10px 0;
+         padding: 14px 18px; font-size: 14.5px; line-height: 1.75; color: var(--ink-2); }
+.rv-op b { color: var(--ink); font-weight: 800; }
+
+/* ── 카드 ── */
+.rv-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.rv-bar { display: flex; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.rv-seg { display: inline-flex; background: var(--surface-2); border: 1px solid var(--line);
+          border-radius: 8px; padding: 2px; gap: 2px; }
+.rv-seg button { border: 0; background: transparent; color: var(--muted);
+                 font-size: 13px; font-weight: 700; padding: 7px 16px;
+                 border-radius: 6px; cursor: pointer; }
+.rv-seg button.on { background: var(--surface); color: var(--brand); box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+
+.rv-scroll { overflow-x: auto; }
+
+/* ── 표 ── */
+.rv-tbl { width: 100%; border-collapse: collapse; font-size: 14px;
+          font-variant-numeric: tabular-nums; }
+.rv-tbl thead th { position: sticky; top: 0; z-index: 2;
+                   background: var(--surface-2); color: var(--ink-2);
+                   font-size: 12px; font-weight: 800; letter-spacing: .03em;
+                   text-align: center; vertical-align: middle;
+                   padding: 11px 12px; white-space: nowrap;
+                   border-bottom: 2px solid var(--line-2);
+                   border-left: 1px solid var(--line); }
+.rv-tbl thead th:first-child { text-align: left; border-left: 0; }
+.rv-th-name  { min-width: 300px; }
+.rv-th-pct   { min-width: 120px; }
+.rv-th-cause { min-width: 190px; text-align: left !important; }
+
+.rv-tbl tbody td { height: 42px; padding: 0 12px;
+                   text-align: center; vertical-align: middle; white-space: nowrap;
+                   border-bottom: 1px solid var(--line);
+                   border-left: 1px solid var(--line); }
+.rv-tbl tbody td:first-child { text-align: left; border-left: 0; background: var(--surface); }
+.rv-n { font-variant-numeric: tabular-nums; }
+
+/* 컬럼 그룹 구분 — 세로 영역이 안 갈리면 눈이 행을 놓친다 */
+.rv-gsep { border-left: 2px solid var(--line-2) !important; }
+.rv-band { background: var(--surface-2); }
+
+/* 위계: 유형(lv0) → 품목군(lv1) → 품목(lv2) */
+.rv-l0 td { background: var(--surface-2); font-weight: 800; font-size: 15px; height: 48px;
+            border-top: 2px solid var(--line-2); }
+.rv-l0 td:first-child { background: var(--surface-2); }
+.rv-l1 td { font-weight: 600; }
+.rv-l1 td:first-child { padding-left: 30px; }
+.rv-l2 td { color: var(--ink-2); font-size: 13px; height: 38px; }
+.rv-l2 td:first-child { padding-left: 58px; }
+
+.rv-hot  td, .rv-hot  td:first-child { background: #fdf1e3; }
+.rv-hot  td:first-child { box-shadow: inset 4px 0 0 var(--warn); }
+.rv-crit td, .rv-crit td:first-child { background: #fbe9e9; }
+.rv-crit td:first-child { box-shadow: inset 4px 0 0 var(--danger); }
+
+.rv-adj td   { color: var(--muted); font-size: 13px; background: var(--surface); }
+.rv-l-note   { text-align: left !important; }
+.rv-total td { font-weight: 800; font-size: 15px; height: 52px;
+               background: var(--surface); border-top: 3px solid var(--ink); border-bottom: 0; }
+
+.rv-tw  { display: inline-flex; align-items: center; gap: 8px; }
+.rv-tog { width: 18px; height: 18px; flex: none; display: inline-flex;
+          align-items: center; justify-content: center;
+          border: 1px solid var(--line-2); border-radius: 5px; background: var(--surface);
+          color: var(--ink-2); font-size: 12px; font-weight: 800; line-height: 1; cursor: pointer; }
+.rv-tog-x { border-color: transparent; background: transparent; cursor: default; }
+
+/* 비중 — 숫자보다 막대가 한눈에 들어온다 */
+.rv-pbar   { display: inline-block; width: 54px; height: 7px; border-radius: 4px;
+             background: var(--line); overflow: hidden; vertical-align: middle; margin-right: 8px; }
+.rv-pbar i { display: block; height: 100%; background: var(--sc-rtf); border-radius: 4px; }
+.rv-pct    { font-size: 12.5px; color: var(--muted); font-weight: 700; }
+
+.rv-up   { color: var(--danger); font-weight: 800; }
+.rv-down { color: var(--good);   font-weight: 800; }
+.rv-mut  { color: var(--muted); font-weight: 500; }
+
+.rv-mos   { font-weight: 800; }
+.rv-mos-g { color: var(--good); }
+.rv-mos-w { color: var(--warn-ink); }
+.rv-mos-x { color: var(--danger); }
+
+.rv-badge { display: inline-block; font-size: 11.5px; font-weight: 800;
+            padding: 3px 8px; border-radius: 6px; margin-right: 5px; white-space: nowrap; }
+.rv-b-warn   { background: #fdf1e3; color: var(--warn-ink); border: 1px solid var(--warn); }
+.rv-b-danger { background: #fbe9e9; color: var(--danger);   border: 1px solid var(--danger); }
+
+.rv-spark { vertical-align: middle; }
+
+.rv-note { font-size: 12.5px; line-height: 1.75; color: var(--muted);
+           padding: 13px 16px; border-top: 1px solid var(--line); }
+.rv-note b { color: var(--ink-2); font-weight: 700; }

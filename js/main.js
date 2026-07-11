@@ -740,7 +740,9 @@ function render(menuId) {
     "rtf":                 renderRtf,
     "summary":             renderSummary,
     "constraint":          renderConstraint,
-    "inventory-forecast":  renderInventoryForecast,
+    // 재고전망 = 재고 총괄장 (6월 결산 리뷰 + 하반기 3단 전망).
+    // 기존 renderInventoryForecast는 남겨둠(롤백용) — 결산자료가 없으면 안내문을 띄운다.
+    "inventory-forecast":  renderInventoryReview,
     "inventory-variance":  () => renderExcessAdjustment(),
     "bom-sim":             renderBomSim,
     "download":            renderDownload,
@@ -760,7 +762,7 @@ function render(menuId) {
     if (menu[0] === "rtf")                 bindRtf();
     if (menu[0] === "constraint")          bindConstraint();
     if (menu[0] === "minutes")             bindMinutes();
-    if (menu[0] === "inventory-forecast")  bindInventoryForecast();
+    if (menu[0] === "inventory-forecast")  bindInventoryReview();
     if (menu[0] === "inventory-variance")  bindExcessAdjustment();
     if (menu[0] === "bom-sim")             bindBomSim();
     if (menu[0] === "impact")              bindImpact();

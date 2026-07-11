@@ -221,7 +221,9 @@ async function loadClosingData(force) {
         byItem.set(code, it);
       }
       if (!it.type && s.type) it.type = s.type;
-      if (!it.std  && s.std)  it.std  = s.std;
+      // 표준원가는 기중 가격변경으로 월마다 다르다 → 최신(마지막 월) 값으로 덮어쓴다.
+      // 1월 원가를 쓰면 전망 매출원가 분모가 틀어져 6→7월 재고일수가 25일 튄다.
+      if (s.std) it.std = s.std;
       it.mon[mi] = {
         base: s.base, end: s.end,
         sale: s.sale,       // 판매 = 매출원가. 3평판·재고일수 분모
@@ -255,18 +257,24 @@ async function loadClosingData(force) {
 
 // 3평판 = 최근 3개월 평균 판매(금액). 회사 표준 용어.
 // 금액 기준이라 품목군·유형으로 그대로 합산 가능 (수량은 단위가 달라 롤업 불가).
+//
+// ⚠ 분모는 유형에 따라 다르다:
+//   · 제·상품  → 판매(금액). 코스트센터출고(샘플·데모·무상공급)는 판매가 아니다.
+//   · 원부자재 → 판매되지 않고 생산에 투입된다 → 생산출고(금액).
+//     판매를 분모로 쓰면 원부자재 전량이 "소진 불가(∞)"로 잡히는 오진이 난다.
 function closingAvg3Sale(item, endIdx) {
   if (!item || !item.mon) return null;
+  var isFg = (item.type === "완제품" || item.type === "상품");
   var end = (endIdx === undefined) ? item.mon.length - 1 : endIdx;
   var sum = 0, cnt = 0;
   for (var i = Math.max(0, end - 2); i <= end; i++) {
     var m = item.mon[i];
-    if (m) { sum += m.sale; cnt++; }
+    if (m) { sum += (isFg ? m.sale : m.prodOut); cnt++; }
   }
   return cnt ? sum / cnt : null;
 }
 
-// 재고월수(3평판) = 기말재고금액 ÷ 3평판. 판매 0이면 Infinity(=소진 불가).
+// 재고월수 = 기말재고금액 ÷ 3평판(또는 평균 생산출고). 출고 0이면 Infinity(=소진 불가).
 function closingMonthsOfSupply(item, endIdx) {
   var end = (endIdx === undefined) ? item.mon.length - 1 : endIdx;
   var m = item.mon[end];

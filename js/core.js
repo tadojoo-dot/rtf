@@ -57,6 +57,9 @@ const state = {
   },
   // 결산자료(1~6월 자재수불) — closing.js가 fetch로 자동 로드. 재고전망 리뷰의 원천.
   closing: null,
+  revTab:  "fg",          // 재고 총괄장: "fg"(제·상품) | "mat"(원부자재)
+  revView: "sum",         // "sum"(요약 뷰) | "mon"(월별 뷰)
+  revOpen: new Set(),     // 펼쳐진 트리 노드 id (유형 > 품목군 > 품목)
   rtfExpanded: false,
   expandedItemGroups: new Set(),
   rtfDisplayMode: "qty",

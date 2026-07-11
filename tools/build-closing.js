@@ -142,7 +142,10 @@ function main() {
       let it = byItem.get(k);
       if (!it) { it = { c: k, n: s.name, t: s.type, s: 0, m: MONTHS.map(() => null) }; byItem.set(k, it); }
       if (!it.t && s.type) it.t = s.type;
-      if (!it.s && s.std)  it.s = R(s.std);
+      // 표준원가는 기중 가격변경이 있어 월마다 다르다. 전망(판매계획 × 표준원가)의 분모는
+      // 가장 최근 값이어야 한다 — 1월 원가를 쓰면 6→7월에 재고일수가 25일 튄다.
+      // MONTHS를 오름차순으로 돌므로 매번 덮어쓰면 마지막(최신) 월 값이 남는다.
+      if (s.std) it.s = R(s.std);
       it.m[mi] = [R(s.base), R(s.end), R(s.sale), R(s.ccOut), R(s.buyIn), R(s.prodIn), R(s.prodOut)];
     });
   });
