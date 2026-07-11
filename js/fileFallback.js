@@ -525,7 +525,7 @@
           shortageAmount = shortageQty > 0 && item.hasCost ? shortageQty * item.standardCost : null;
           lostSalesAmount = shortageAmount;
           endingAmount = item.hasCost ? Math.max(0, endingQty) * item.standardCost : null;
-          inventoryDays = salesQty > 0 && endingQty >= 0 ? (endingQty / salesQty) * 30 : null;
+          // inventoryDays는 미래 판매가 필요하므로 map 완료 후 forward 소진 커버리지로 후처리
           if (shortageQty > 0) status = STATUS.SHORTAGE;
           else if (endingQty < salesQty) status = STATUS.WARN;
           else status = STATUS.OK;
@@ -533,6 +533,17 @@
 
         return { month, salesQty, supplyQty, rtfQty, rtfAmount, endingQty, endingAmount, shortageQty, shortageAmount, lostSalesAmount, inventoryDays, salesAmount, status, reason, noSalesPlan };
       });
+      // 재고일수(C안) = 당월 기말재고가 향후 판매계획으로 순차 소진되기까지의 달력일수
+      try {
+        item.monthlyStatus.forEach((r, idx) => {
+          if (!(Number.isFinite(r.endingQty) && r.endingQty >= 0)) { r.inventoryDays = null; return; }
+          r.inventoryDays = (typeof _fwdCoverageDays === "function")
+            ? _fwdCoverageDays(r.endingQty, item.monthlyStatus, idx)
+            : (r.salesQty > 0 ? (r.endingQty / r.salesQty) * 30 : null);
+        });
+      } catch (_e) {
+        item.monthlyStatus.forEach((r) => { r.inventoryDays = (r.salesQty > 0 && r.endingQty >= 0) ? (r.endingQty / r.salesQty) * 30 : null; });
+      }
       return item;
     }).filter((item) => item.typeGroup === "상품" || item.typeGroup === "완제품");
   }
@@ -717,7 +728,7 @@
       return `<td class="rtf-metric-cell ${val !== "-" ? "rtf-status-text shortage" : "rtf-neutral-text"}${mb}">${escapeHtml(val)}</td>`;
     }
     if (metric === "기말재고") return `<td class="rtf-metric-cell rtf-muted-metric${mb}">${escapeHtml(formatEnding(row))}</td>`;
-    if (metric === "재고일수") return `<td class="rtf-metric-cell rtf-muted-metric${mb}">${escapeHtml(Number.isFinite(row.inventoryDays) ? `${formatNumber(row.inventoryDays, 1)}일` : "판단불가")}</td>`;
+    if (metric === "재고일수") return `<td class="rtf-metric-cell rtf-muted-metric${mb}">${escapeHtml(Number.isFinite(row.inventoryDays) ? `${Math.round(row.inventoryDays)}일` : "판단불가")}</td>`;
     return `<td class="rtf-metric-cell${mb}">-</td>`;
   }
 

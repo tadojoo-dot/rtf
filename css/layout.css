@@ -164,6 +164,28 @@
   margin-left: auto;
 }
 
+/* 상태 스냅샷 컨트롤 (우측 도구 영역) */
+.snap-control {
+  display: inline-flex; align-items: center; gap: 6px; margin-left: 10px;
+  padding-left: 10px; border-left: 1px solid #e5e7eb;
+}
+.snap-save-btn {
+  padding: 5px 12px; border-radius: 7px; cursor: pointer;
+  background: #4338ca; color: #fff; border: 1px solid #4338ca;
+  font-size: 13px; font-weight: 700; white-space: nowrap;
+}
+.snap-save-btn:hover { background: #3730a3; }
+.snap-select {
+  max-width: 220px; padding: 5px 8px; border-radius: 7px;
+  border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.snap-del-btn {
+  padding: 5px 9px; border-radius: 7px; cursor: pointer;
+  background: #fff; border: 1px solid #d1d5db; color: #6b7280; font-size: 13px;
+}
+.snap-del-btn:hover { background: #fef2f2; border-color: #fca5a5; color: #b91c1c; }
+
 .topbar-status {
   display: inline-flex;
   align-items: center;

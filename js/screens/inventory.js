@@ -11,6 +11,23 @@ var _invChartInst   = null; // Chart.js 인스턴스
 
 // ── 계산 함수 ─────────────────────────────────────────────────────────────────
 
+// 재고일수(C안) = 당월 기말재고가 향후 판매계획을 순차 차감해 소진되기까지의 달력일수.
+// 예) 기말 1,000·차월 판매 3,000 → 차월 중 소진 → (1000/3000)×차월일수 ≈ 10일.
+// 판매 없는 달은 재고 유지(시간만 경과). 미래월이 없으면(마지막 전망월) 산정 불가(null).
+function _fwdCoverageDays(endingQty, rows, fromIdx) {
+  if (!(endingQty > 0)) return 0;
+  var remaining = endingQty, days = 0, sawFuture = false;
+  for (var i = fromIdx + 1; i < rows.length; i++) {
+    sawFuture = true;
+    var s = rows[i].salesQty || 0;
+    var md = monthDays(rows[i].month);
+    if (s <= 0) { days += md; continue; }
+    if (remaining <= s) return days + (remaining / s) * md;
+    remaining -= s; days += md;
+  }
+  return sawFuture ? days : null;
+}
+
 function computeAdjMonthly(item, matAdjBomMap) {
   var planMap = new Map();
   state.mappedData.plan_monthly.forEach(function(r) {
@@ -23,7 +40,7 @@ function computeAdjMonthly(item, matAdjBomMap) {
 
   var months  = getRtfMonths();
   var opening = (item.baseQty !== null && item.baseQty !== undefined) ? item.baseQty : 0;
-  return months.map(function(month, mi) {
+  var _rows = months.map(function(month, mi) {
     var origSupply   = planMap.get(month) || 0;
     // 완제품 생산계획 조정(fgProdAdj) — RTF조정후 기준선에 반영 (늘리기만)
     var _fgpKey = item.itemCode + "|" + item.plantCode + "|" + month;
@@ -40,17 +57,18 @@ function computeAdjMonthly(item, matAdjBomMap) {
     var endingQty     = Math.max(0, available - salesQty);
     var shortageQty   = Math.max(0, salesQty - available);
     var endingAmount  = (item.hasCost && item.standardCost) ? endingQty * item.standardCost : null;
-    var inventoryDays = salesQty > 0 ? endingQty / (salesQty / monthDays(month)) : null;
     opening = endingQty;
     return {
       month, origSupply, rtfAdjSupply, adjSupply, salesQty,
-      endingQty, endingAmount, shortageQty, inventoryDays,
+      endingQty, endingAmount, shortageQty, inventoryDays: null,
       isDanger:      shortageQty > 0,
       isRtfAdjusted: Math.abs(rtfAdjSupply - origSupply) > 0.01,
       isInvAdjusted: adjKey in state.invSupplyAdj,
       isAdjusted:    Math.abs(adjSupply - origSupply) > 0.01,
     };
   });
+  _rows.forEach(function(r, mi) { r.inventoryDays = _fwdCoverageDays(r.endingQty, _rows, mi); });
+  return _rows;
 }
 
 function computeExcessMonthly(item, matAdjBomMap) {
@@ -64,7 +82,7 @@ function computeExcessMonthly(item, matAdjBomMap) {
   });
   var months  = getRtfMonths();
   var opening = (item.baseQty !== null && item.baseQty !== undefined) ? item.baseQty : 0;
-  return months.map(function(month, mi) {
+  var _rows = months.map(function(month, mi) {
     var origSupply   = planMap.get(month) || 0;
     // 완제품 생산계획 조정(fgProdAdj) — RTF조정후 기준선에 반영 (늘리기만)
     var _fgpKey = item.itemCode + "|" + item.plantCode + "|" + month;
@@ -81,16 +99,17 @@ function computeExcessMonthly(item, matAdjBomMap) {
     var endingQty     = Math.max(0, available - salesQty);
     var shortageQty   = Math.max(0, salesQty - available);
     var endingAmount  = (item.hasCost && item.standardCost) ? endingQty * item.standardCost : null;
-    var inventoryDays = salesQty > 0 ? endingQty / (salesQty / monthDays(month)) : null;
     opening = endingQty;
     return {
       month, origSupply, rtfAdjSupply, finalSupply, salesQty,
-      endingQty, endingAmount, shortageQty, inventoryDays,
+      endingQty, endingAmount, shortageQty, inventoryDays: null,
       isDanger:         shortageQty > 0,
       isRtfAdjusted:    Math.abs(rtfAdjSupply - origSupply) > 0.01,
       isExcessAdjusted: adjKey in state.excessAdj,
     };
   });
+  _rows.forEach(function(r, mi) { r.inventoryDays = _fwdCoverageDays(r.endingQty, _rows, mi); });
+  return _rows;
 }
 
 function getBaseMonthDays(item) {
@@ -193,8 +212,8 @@ function buildInvRowspanMap(nodes) {
 // ── 노드 집계 ─────────────────────────────────────────────────────────────────
 
 function invNodeAgg(nodeItems, mi, adjCache) {
-  var month = getRtfMonths()[mi];
-  var totalEndQty = 0, totalEndAmt = 0, totalSalesQty = 0, hasAmt = false;
+  var months = getRtfMonths();
+  var totalEndQty = 0, totalEndAmt = 0, hasAmt = false;
   nodeItems.forEach(function(item) {
     var key  = item.itemCode + "|" + item.plantCode;
     var data = adjCache ? (adjCache.get(key) || [])[mi] : null;
@@ -203,9 +222,17 @@ function invNodeAgg(nodeItems, mi, adjCache) {
     var endAmt = data ? data.endingAmount : (ms ? ms.endingAmount : null);
     if (Number.isFinite(endQty)) totalEndQty += endQty;
     if (Number.isFinite(endAmt)) { totalEndAmt += endAmt; hasAmt = true; }
-    if (ms && Number.isFinite(ms.salesQty)) totalSalesQty += ms.salesQty;
   });
-  var inventoryDays = totalSalesQty > 0 ? totalEndQty / (totalSalesQty / monthDays(month)) : null;
+  // forward 소진 커버리지(C안): 그룹 기말재고가 향후 그룹 판매로 순차 소진되기까지의 달력일수
+  var rows = months.map(function(m, j) {
+    var t = 0;
+    nodeItems.forEach(function(item) {
+      var ms = item.monthlyStatus ? item.monthlyStatus[j] : null;
+      if (ms && Number.isFinite(ms.salesQty)) t += ms.salesQty;
+    });
+    return { month: m, salesQty: t };
+  });
+  var inventoryDays = _fwdCoverageDays(totalEndQty, rows, mi);
   return {
     inventoryDays: Number.isFinite(inventoryDays) ? inventoryDays : null,
     endingAmount:  hasAmt ? totalEndAmt : null,

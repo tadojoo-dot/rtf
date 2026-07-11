@@ -347,7 +347,7 @@
 .exc-gauge-tgt { position: absolute; top: -3px; width: 2px; height: 10px; background: #374151; border-radius: 1px; }
 
 /* 뱃지 */
-.rtf-adj-badge    { display: inline-block; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 6px; margin-left: 4px; vertical-align: middle; }
+.rtf-adj-badge    { display: block; width: fit-content; margin: 1px 0 0 auto; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 6px; }
 .rtf-adj-improved { background: #dcfce7; color: #15803d; }
 .exc-adj-worse    { background: #fee2e2; color: #b91c1c; }
 
@@ -476,10 +476,28 @@
 }
 .exc-ai-panel-head {
   display: flex; align-items: center; gap: 10px; padding: 11px 16px;
-  background: linear-gradient(90deg, #eef2ff 0%, #f8fafc 100%);
-  border-bottom: 1px solid #e2e8f0;
+  background: linear-gradient(90deg, #1e293b 0%, #28278f 100%);
+  border-bottom: 1px solid #17194a;
 }
-.exc-ai-panel-head .exc-ai-text { font-size: 15.5px; }
+.exc-ai-panel-head .exc-ai-text { font-size: 15.5px; color: #e7eaf3; }
+.exc-ai-panel-head .exc-ai-text strong { color: #ffffff; }
+.exc-ai-panel-head .exc-ai-text strong.exc-ai-good { color: #6ee7a0; }
+.exc-ai-panel-head .exc-ai-conf { color: #b4b8f7; }
+.exc-ai-panel-head .exc-aisec-none { color: #aab2c4; }
+.exc-ai-panel-head .exc-ai-apply { background: #6366f1; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.exc-ai-panel-head .exc-ai-apply:hover { background: #818cf8; }
+.exc-ai-panel-head .exc-ai-clear { background: rgba(255,255,255,.12); color: #e7eaf3; border-color: rgba(255,255,255,.28); }
+.exc-ai-panel-head .exc-ai-clear:hover { background: rgba(255,255,255,.22); color: #fff; }
+/* AI 진단 패널 접기 — 접으면 헤드(요약 바)만 남고 시뮬 표가 위로 올라옴 */
+.exc-ai-collapse {
+  margin-left: 8px; flex-shrink: 0; white-space: nowrap; cursor: pointer;
+  background: rgba(255,255,255,.14); color: #e7eaf3;
+  border: 1px solid rgba(255,255,255,.3); border-radius: 6px;
+  padding: 5px 12px; font-size: 13px; font-weight: 700;
+}
+.exc-ai-collapse:hover { background: rgba(255,255,255,.26); color: #fff; }
+.exc-ai-panel.exc-ai-collapsed > *:not(.exc-ai-panel-head) { display: none; }
+.exc-ai-panel.exc-ai-collapsed .exc-ai-panel-head { border-bottom: none; }
 .exc-aisec { border-top: 1px solid #eef1f6; }
 .exc-aisec-head {
   display: flex; align-items: center; gap: 9px; padding: 8px 16px;
@@ -687,10 +705,11 @@
 .exc-mat-scroll { overflow: auto; flex: 1; min-height: 0; contain: layout; }
 .exc-mat-table { border-collapse: collapse; width: 100%; font-size: 12px; }
 .exc-mat-table th {
-  background: #f1f5f9; color: #475569; padding: 5px 8px;
-  border: 1px solid #e2e8f0; font-weight: 700; white-space: nowrap;
+  background: #1e293b; color: #cbd5e1; padding: 5px 8px;
+  border: 1px solid #334155; font-weight: 700; white-space: nowrap;
   position: sticky; top: 0; z-index: 2;
 }
+.exc-mat-table thead tr:first-child th { background: #17194a; color: #ffffff; }
 .exc-mat-table thead tr:nth-child(2) th { top: 27px; }
 .exc-mat-mo-hd { text-align: center; }
 .exc-mat-sub { font-size: 11px; font-weight: 600; }

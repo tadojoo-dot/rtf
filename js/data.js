@@ -60,6 +60,15 @@ async function processFiles(files) {
   }
 
   render(state.currentMenuId);
+
+  // 결산자료(1~6월)는 업로드가 아니라 폴더에서 fetch로 읽는다 → 백그라운드로 로드 후 재렌더.
+  // item_master가 매핑된 뒤여야 품목군 조인이 되므로 이 시점에 시작.
+  if (typeof loadClosingData === "function") {
+    loadClosingData().then(function(c) {
+      if (c && c.errors && c.errors.length) console.warn("[결산자료]", c.errors);
+      render(state.currentMenuId);
+    }).catch(function(e) { console.error("[결산자료 로드 실패]", e); });
+  }
 }
 
 async function parseWorkbook(file) {
@@ -84,18 +93,27 @@ function mapTargetInvRows(rows) {
   for (var hr = 0; hr < Math.min(rows.length, 10); hr++) {
     var hrow = rows[hr] || [];
     if (String(hrow[0]).trim() !== "내역" || String(hrow[1]).trim() !== "자재") continue;
-    var srow = rows[hr + 1] || []; // 서브헤더 행 (S/F 26.1… / 25.1… / 수량·금액 등)
-    var optCol = -1, rangeCol = -1, svcCol = -1, moqCol = -1, cycleCol = -1, avgOutCol = -1;
-    for (var hc = 0; hc < hrow.length; hc++) {
-      var hv = String(hrow[hc]).trim();
-      if (hv === "적정재고") optCol = hc;
-      else if (hv.indexOf("적정재고(구간)") === 0) rangeCol = hc;
-      else if (hv.indexOf("서비스") >= 0) svcCol = hc;
-      else if (hv === "MOQ") moqCol = hc;
-      else if (hv.indexOf("공급주기") >= 0) cycleCol = hc;
-      else if (hv.indexOf("12개월 평균") >= 0) avgOutCol = hc;
-    }
+    // 그룹 헤더(적정재고/적정재고(구간)/서비스/MOQ/공급주기/12개월평균)는 "내역/자재" 행과 같은 행에
+    // 있는 레이아웃도, 바로 위 행(병합셀 상위 그룹행)에 있는 레이아웃도 있음(월별 파일마다 다름) —
+    // 두 행 다 검색해서 있는 쪽을 채택(같은 행 우선, 없으면 위 행).
+    var hrowAbove = rows[hr - 1] || [];
+    var findGroupCol = function(pred) {
+      for (var i = 0; i < hrow.length; i++) { if (pred(String(hrow[i]).trim())) return i; }
+      for (var j = 0; j < hrowAbove.length; j++) { if (pred(String(hrowAbove[j]).trim())) return j; }
+      return -1;
+    };
+    var optCol   = findGroupCol(function(hv) { return hv === "적정재고"; });
+    var rangeCol = findGroupCol(function(hv) { return hv.indexOf("적정재고(구간)") === 0; });
+    var svcCol   = findGroupCol(function(hv) { return hv.indexOf("서비스") >= 0; });
+    var moqCol   = findGroupCol(function(hv) { return hv === "MOQ"; });
+    var cycleCol = findGroupCol(function(hv) { return hv.indexOf("공급주기") >= 0; });
+    var avgOutCol= findGroupCol(function(hv) { return hv.indexOf("12개월 평균") >= 0; });
     if (optCol < 0) break; // 이 레이아웃 아님 → 기존 로직으로
+    // 서브헤더 행(월라벨 "YY.M"·S/F평균)도 "내역/자재" 행 자체에 있을 수도, 바로 다음 행에 있을 수도 있음 —
+    // 월라벨 패턴이 실제로 있는 쪽을 채택.
+    var srowCandidate = rows[hr + 1] || [];
+    var hrowHasMonths = hrow.some(function(v) { return /^\d{2}\.\d{1,2}$/.test(String(v).trim()); });
+    var srow = hrowHasMonths ? hrow : srowCandidate; // 서브헤더 행 (S/F 26.1… / 25.1… / 수량·금액 등)
     // 월별 실적/예측 컬럼 탐색 (서브헤더 라벨 "YY.M" 기반 — 연도 하드코딩 없음, 열 추가·연도 경과에 견딤).
     // S/F(예측) 그룹과 출고실적 그룹은 "S/F … 평균" 컬럼을 경계로 구분 (앞=예측, 뒤=실적).
     // 라벨이 "S/F 3개월 평균"/"S/F 평균" 등으로 와도 매칭(사이 글자 허용) — 연도 라벨 실수에도 경계가 안 흔들림.
@@ -227,19 +245,23 @@ function mapNabotaRows(rows) {
     }
     return null;
   }
-  var invR      = findRow(function(l) { return l === "재고금액"; });
-  var intakeR   = findRow(function(l) { return l.indexOf("입고") >= 0; });
-  var outR      = findRow(function(l) { return l.indexOf("출고") >= 0 && l.indexOf("제품") < 0; }); // 출고(전체)
-  var outProdR  = findRow(function(l) { return l.indexOf("출고") >= 0 && l.indexOf("제품") >= 0; }); // 출고(제품만)=판매원가
+  var invR       = findRow(function(l) { return l === "재고금액"; });
+  var intakeR    = findRow(function(l) { return l.indexOf("입고") >= 0 && l.indexOf("제품") < 0; });
+  var outR       = findRow(function(l) { return l.indexOf("출고") >= 0 && l.indexOf("제품") < 0; }); // 출고(전체)
+  var outProdR   = findRow(function(l) { return l.indexOf("출고") >= 0 && l.indexOf("제품") >= 0; }); // 출고(제품만)=판매원가
+  var invProdR   = findRow(function(l) { return l === "재고금액(제품만)"; });
+  var intakeProdR= findRow(function(l) { return l === "입고금액(제품만)"; });
   var salesR    = findRow(function(l) { return l === "매출액"; });
   var daysR     = findRow(function(l) { return l.indexOf("재고일수") >= 0; });
   return monthCols.map(function(mc) {
     return {
       month:      mc.month,
-      invAmt:     invR      ? cleanNumber(invR[mc.col])      : null, // 억, 재고금액(총재고 델타용)
+      invAmt:     invR      ? cleanNumber(invR[mc.col])      : null, // 억, 재고금액(총재고 델타용, 원료·자재·재공품·제품 전체)
       intakeAmt:  intakeR   ? cleanNumber(intakeR[mc.col])   : null, // 억
       outAmt:     outR      ? cleanNumber(outR[mc.col])      : null, // 억, 출고(전체)
       outProdAmt: outProdR  ? cleanNumber(outProdR[mc.col])  : null, // 억, 출고(제품만)=판매원가(원가 모드)
+      invProdAmt:    invProdR    ? cleanNumber(invProdR[mc.col])    : null, // 억, 재고금액(제품만) — RTF매트릭스 나보타행 기말재고용
+      intakeProdAmt: intakeProdR ? cleanNumber(intakeProdR[mc.col]) : null, // 억, 입고금액(제품만)
       salesAmt:   salesR    ? cleanNumber(salesR[mc.col])    : null, // 억, 매출액(매출 모드)
       invDays:    daysR     ? cleanNumber(daysR[mc.col])     : null,
     };
@@ -247,25 +269,29 @@ function mapNabotaRows(rows) {
 }
 
 function mapRawData(rawFiles) {
-  const tables = { item_master:[], inventory_base:[], plan_monthly:[], bom_components:[], business_mapping:[], target_inv:[], actuals_monthly:[], actuals_meta:[], sales_actual:[], nabota_monthly:[] };
+  const tables = { item_master:[], inventory_base:[], plan_monthly:[], bom_components:[], business_mapping:[], target_inv:[], actuals_monthly:[], actuals_meta:[], sales_actual:[], nabota_monthly:[], sales_history:[] };
   Object.values(rawFiles).filter((f) => f.parseSuccess).forEach((file) => {
-    const rows = file.sheets?.[0]?.rows ?? [];
-    if (file.rawType === "salesSupplyPlan")   tables.plan_monthly.push(...mapPlanRows(rows));
-    if (file.rawType === "materialInventory") tables.inventory_base.push(...mapMaterialInventoryRows(rows));
-    if (file.rawType === "wipInventory")      tables.inventory_base.push(...mapWipInventoryRows(rows));
-    if (file.rawType === "itemMaster") {
-      const itemRows = mapItemMasterRows(rows);
-      tables.item_master.push(...itemRows);
-      tables.business_mapping.push(...itemRows);
-    }
-    if (file.rawType === "bom")             tables.bom_components.push(...mapBomRows(rows));
-    if (file.rawType === "targetInventory") tables.target_inv.push(...mapTargetInvRows(rows));
-    if (file.rawType === "salesActual")     tables.sales_actual.push(...mapSalesActualRows(rows));
-    if (file.rawType === "actualMonthly") {
-      tables.actuals_monthly.push(...mapActualsRows(rows));
-      tables.actuals_meta.push(...mapActualsMetaRows(rows));
-    }
-    if (file.rawType === "nabota")          tables.nabota_monthly.push(...mapNabotaRows(rows));
+    // 파일당 시트 전부 순회 (예: 판매계획_공급계획_RAW = 완제품상품/원부자재 두 시트) —
+    // 각 map*Rows는 자기 헤더를 스스로 찾아 매칭 안 되면 [] 반환하므로 무관한 시트는 안전하게 무시됨.
+    (file.sheets ?? []).forEach((sheet) => {
+      const rows = sheet?.rows ?? [];
+      if (file.rawType === "salesSupplyPlan")   { tables.plan_monthly.push(...mapPlanRows(rows)); tables.sales_history.push(...mapSalesHistoryRows(rows)); }
+      if (file.rawType === "materialInventory") tables.inventory_base.push(...mapMaterialInventoryRows(rows));
+      if (file.rawType === "wipInventory")      tables.inventory_base.push(...mapWipInventoryRows(rows));
+      if (file.rawType === "itemMaster") {
+        const itemRows = mapItemMasterRows(rows);
+        tables.item_master.push(...itemRows);
+        tables.business_mapping.push(...itemRows);
+      }
+      if (file.rawType === "bom")             tables.bom_components.push(...mapBomRows(rows));
+      if (file.rawType === "targetInventory") tables.target_inv.push(...mapTargetInvRows(rows));
+      if (file.rawType === "salesActual")     tables.sales_actual.push(...mapSalesActualRows(rows));
+      if (file.rawType === "actualMonthly") {
+        tables.actuals_monthly.push(...mapActualsRows(rows));
+        tables.actuals_meta.push(...mapActualsMetaRows(rows));
+      }
+      if (file.rawType === "nabota")          tables.nabota_monthly.push(...mapNabotaRows(rows));
+    });
   });
   return tables;
 }
@@ -291,6 +317,29 @@ function mapPlanRows(rows) {
   );
 }
 
+// 과거월 판매계획·실적 이력 (W열~ `{월}_판매계획`+`{월}_실적` 쌍) — AI 차질 원인 소견용.
+// 실적 컬럼이 있는 월(과거)만 추출. 원부자재 시트 등 실적 없는 시트는 [] 반환(안전).
+function mapSalesHistoryRows(rows) {
+  const headerIndex = findPlanHeaderIndex(rows);
+  if (headerIndex < 0) return [];
+  const header = rows[headerIndex];
+  const idx = indexer(header);
+  const histMonths = [...new Set(header.flatMap((cell) => {
+    const m = normalizeHeader(cell).match(/^(\d{4}-\d{2})_실적$/);
+    return m ? [m[1]] : [];
+  }))].sort();
+  if (!histMonths.length) return [];
+  return rows.slice(headerIndex + 1).filter((row) => get(row, idx("자재"))).flatMap((row) =>
+    histMonths.map((month) => ({
+      month,
+      plant:     normalizePlant(get(row, idx("플랜트"))),
+      itemCode:  normalizeCode(get(row, idx("자재"))),
+      planQty:   cleanNumber(get(row, idx(`${month}_판매계획`))),
+      actualQty: cleanNumber(get(row, idx(`${month}_실적`))),
+    })),
+  );
+}
+
 function mapMaterialInventoryRows(rows) {
   const headerIndex = findHeaderIndex(rows, ["자재","표준원가","기초(수량)"]);
   if (headerIndex < 0) return [];
@@ -304,13 +353,13 @@ function mapMaterialInventoryRows(rows) {
     itemName:     get(row, idx("자재 내역")),
     unit:         get(row, idx("Unit")),
     standardCost: toNumber(get(row, idx("표준원가"))),
-    baseQty:      toNumber(get(row, idx("기초(수량)"))),
-    baseAmount:   firstNumber(row, [idx("기초(금액)합계"), idx("기초(금액)")]),
+    baseQty:      toNumber(get(row, idx("기말(수량)"))),
+    baseAmount:   firstNumber(row, [idx("기말(금액)합계"), idx("기말(금액)")]),
   }));
 }
 
 function mapWipInventoryRows(rows) {
-  const headerIndex = findHeaderIndex(rows, ["자재코드","재공기초금액"]);
+  const headerIndex = findHeaderIndex(rows, ["자재코드","재공기말금액"]);
   if (headerIndex < 0) return [];
   const header = rows[headerIndex];
   const idx = indexer(header);
@@ -323,7 +372,7 @@ function mapWipInventoryRows(rows) {
     unit:         get(row, idx("단위")),
     standardCost: 0,
     baseQty:      0,
-    baseAmount:   firstNumber(row, [idx("재공기초금액"), idx("재공기말금액")]),
+    baseAmount:   firstNumber(row, [idx("재공기말금액"), idx("재공기초금액")]),
   }));
 }
 
@@ -376,6 +425,7 @@ function mapSalesActualRows(rows) {
     netSales: toNumber(get(row, idx("순매출액(공시)"))),
     paQty:    toNumber(get(row, idx("총수량(PA)"))),
     costAmt:  toNumber(get(row, idx("원가금액"))), // 나보타 평균 원가율 산출용
+    unitCost: toNumber(get(row, idx("단위당원가"))), // 기초재고 미연결 품목 표준원가 대체용
   }));
 }
 
@@ -485,7 +535,9 @@ function mapActualsMetaRows(rows) {
     return null;
   }
 
-  var cogsRow   = findRow("매출원가(누적)", false);
+  var cogsRow    = findRow("매출원가(누적)", false);
+  var cogsMonRow = findRow("매출원가(당월)", false);
+  var totalRow   = findRow("합계", false);
   // 미착품·평가충당금 전망은 하단 테이블에 입력 → 마지막 등장 행 우선
   var michakRow = findRow("미착품", true);
   var allowRow  = findRow("(평가충당금)", true);
@@ -493,11 +545,16 @@ function mapActualsMetaRows(rows) {
   return Object.keys(monthStart).map(function(month) {
     return {
       month:        month,
-      cumCogs:      blockValue(cogsRow, month),   // 매출원가 누적 (억)
-      michakInv:    blockValue(michakRow, month), // 미착품 재고 (억)
-      allowanceInv: blockValue(allowRow, month),  // 평가충당금 (억, 음수)
+      cumCogs:      blockValue(cogsRow, month),    // 매출원가 누적 (억)
+      // 재고일수 분모 = 당월 매출원가. 결산_raw의 "출고금액"은 원부자재 사내 소비(생산출고)를
+      // 포함해 이중계상 → 재고일수가 절반으로 축소됨. 사외 유출은 매출원가뿐이므로 이 값을 씀.
+      monthCogs:    blockValue(cogsMonRow, month), // 매출원가 당월 (억)
+      totalInv:     blockValue(totalRow, month),   // 공시기준 총재고 (억)
+      michakInv:    blockValue(michakRow, month),  // 미착품 재고 (억)
+      allowanceInv: blockValue(allowRow, month),   // 평가충당금 (억, 음수)
     };
   }).filter(function(r) {
-    return r.cumCogs !== null || r.michakInv !== null || r.allowanceInv !== null;
+    return r.cumCogs !== null || r.monthCogs !== null ||
+           r.michakInv !== null || r.allowanceInv !== null;
   });
 }

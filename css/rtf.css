@@ -231,7 +231,7 @@
 .rtf-kpi-month-hd {
   background: #4b5563; color: #f9fafb;
   font-size: 16px; font-weight: 700;
-  padding: 10px 18px; text-align: center;
+  padding: 10px 30px; text-align: center;
   border-right: 1px solid #6b7280;
 }
 .rtf-kpi-month-hd:last-child { border-right: none; }
@@ -246,7 +246,7 @@
 }
 /* 값 셀 */
 .rtf-kpi-val {
-  text-align: center; padding: 10px 18px;
+  text-align: center; padding: 10px 30px;
   border-top: 1px solid #e5e7eb;
   border-right: 1px solid #e5e7eb;
   background: #fff;
@@ -257,9 +257,9 @@
 .rtf-kpi-main { font-size: 20px; font-weight: 800; color: #1f2933; }
 
 /* 행 구분: 전체재고(주인공, 크게·흰색) / 재고일수(보조, 작게·옅은 회색 밴드) */
-.rtf-kpi-r-amt .rtf-kpi-val   { background: #fff; padding: 13px 18px; }
+.rtf-kpi-r-amt .rtf-kpi-val   { background: #fff; padding: 13px 30px; }
 .rtf-kpi-r-amt .rtf-kpi-main  { font-size: 25px; font-weight: 800; color: #1f2933; letter-spacing: -0.5px; }
-.rtf-kpi-r-days .rtf-kpi-val  { background: #f1f5f9; padding: 8px 18px; }
+.rtf-kpi-r-days .rtf-kpi-val  { background: #f1f5f9; padding: 8px 30px; }
 .rtf-kpi-r-days .rtf-kpi-main { font-size: 16px; font-weight: 700; color: #475569; }
 .rtf-kpi-r-days .rtf-kpi-row-lbl { background: #e2e8f0; }
 
@@ -459,10 +459,11 @@
   padding: 10px 16px;
 }
 
-/* ── 가로 스크롤 영역 ── */
+/* ── 스크롤 영역 (세로 틀고정을 위해 표 자체를 고정 높이 스크롤박스로) ── */
 .rtf-h-scroll {
   max-width: 100%;
-  overflow-x: auto;
+  max-height: 75vh;
+  overflow: auto;
 }
 
 /* ── 메인 매트릭스 테이블 ── */
@@ -496,7 +497,7 @@
   white-space: nowrap;
 }
 
-/* ── 헤더 ── */
+/* ── 헤더 (틀고정: .rtf-h-scroll 박스 기준 상단 고정, 헤더 2줄이라 줄별 top) ── */
 .rtf-h-matrix-table thead th {
   background: #24272b;
   color: #fff;
@@ -506,7 +507,11 @@
   padding: 7px 10px;
   text-align: center !important;
   vertical-align: middle !important;
+  position: sticky;
+  z-index: 4;
 }
+.rtf-h-matrix-table thead tr:first-child th { top: 0; }
+.rtf-h-matrix-table thead tr:last-child th  { top: 38px; }
 
 .rtf-h-matrix-table .rtf-month-head {
   background: #24272b;
@@ -565,7 +570,7 @@
   z-index: 3;
 }
 
-.rtf-h-matrix-table thead .rtf-sticky { z-index: 5; }
+.rtf-h-matrix-table thead .rtf-sticky { z-index: 6; }
 .rtf-h-matrix-table tbody .rtf-sticky { background: inherit; }
 
 /* 좌측 컬럼 — 위치·폭은 inline style로 관리, 시각 스타일만 유지 */
@@ -573,6 +578,8 @@
 /* 사업부/플랜트/유형 라벨: 잘림 방지 — 줄바꿈 허용(긴 이름 2줄) */
 .rtf-col-firstlabel  { white-space: normal !important; word-break: break-all; overflow: visible; text-overflow: clip; line-height: 1.2; }
 .rtf-col-last-sticky { border-right: 1px solid #cbd3dc !important; }
+/* "데이터없음"/"재고없음" 같은 안내문구는 셀 폭 대비 길어서 잘리므로 절반 크기로 */
+.rtf-cell-note-sm { font-size: 65% !important; }
 
 /* ── 셀 정렬 ── */
 .rtf-cell-center { text-align: center !important; }
@@ -838,10 +845,11 @@
 .rtf-adj-cell-improved { background: #f0fdf4 !important; }
 .rtf-adj-badge {
   border-radius: 3px;
-  display: inline-block;
+  display: block;
+  width: fit-content;
+  margin: 1px 0 0 auto;   /* 숫자 아래 줄, 오른쪽 정렬(auto-left) */
   font-size: 10px;
   font-weight: 700;
-  margin-left: 4px;
   padding: 0 3px;
 }
 .rtf-adj-badge.rtf-adj-improved { background: #dcfce7; color: #15803d; }

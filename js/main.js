@@ -1,5 +1,82 @@
 ﻿// ── 탭 렌더 ──────────────────────────────────────────────────────────────────
 // 스토리 탭(번호+그룹 라벨) / 도구 탭(우측, 번호 없음) 분리
+// ── 상태 스냅샷 (조정·점검 전체를 시점별로 저장/복원) ─────────────────────────
+// 조정 4종(자재·생산·재고·과잉)은 세션값이라 F5 시 사라짐 → 스냅샷이 유일한 영구 보존수단.
+function _snapKey() { return "sopSnapshots"; }
+function _snapLoad() { try { return JSON.parse(localStorage.getItem(_snapKey()) || "[]"); } catch (e) { return []; } }
+function _snapStore(arr) { try { localStorage.setItem(_snapKey(), JSON.stringify(arr)); } catch (e) {} }
+function _snapStamp() {
+  var d = new Date(), p = function(n) { return (n < 10 ? "0" : "") + n; };
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+function snapControlHtml() {
+  var arr = _snapLoad();
+  var opts = "<option value=''>⏱ 시점 불러오기…</option>" + arr.slice().reverse().map(function(s) {
+    return "<option value='" + s.id + "'>" + escapeHtml((s.label ? s.label + " · " : "") + s.ts) + "</option>";
+  }).join("");
+  return "<span class='snap-control'>" +
+    "<button type='button' class='snap-save-btn' title='현재 조정·점검 상태를 시점으로 저장'>📸 스냅샷</button>" +
+    "<select class='snap-select' title='저장된 시점으로 되돌리기'>" + opts + "</select>" +
+    (arr.length ? "<button type='button' class='snap-del-btn' title='선택한 시점 삭제'>🗑</button>" : "") +
+    "</span>";
+}
+function _snapBind() {
+  var saveBtn = tabNav.querySelector(".snap-save-btn");
+  if (saveBtn) saveBtn.addEventListener("click", snapSave);
+  var sel = tabNav.querySelector(".snap-select");
+  if (sel) sel.addEventListener("change", function() { if (this.value) snapRestore(this.value); });
+  var delBtn = tabNav.querySelector(".snap-del-btn");
+  if (delBtn) delBtn.addEventListener("click", function() {
+    var s = tabNav.querySelector(".snap-select");
+    if (s && s.value) snapDelete(s.value); else alert("삭제할 시점을 드롭다운에서 먼저 선택하세요.");
+  });
+}
+function _snapCapture() {
+  return {
+    matSimAdj:     Object.assign({}, state.matSimAdj),
+    fgProdAdj:     Object.assign({}, state.fgProdAdj),
+    invSupplyAdj:  Object.assign({}, state.invSupplyAdj),
+    excessAdj:     Object.assign({}, state.excessAdj),
+    aiAppliedKeys: Object.assign({}, state.aiAppliedKeys),
+    aiExcessKeys:  Object.assign({}, state.aiExcessKeys),
+    rtfWalkDone:   Object.assign({}, state.rtfWalkDone),
+  };
+}
+function snapSave() {
+  var label = prompt("스냅샷 라벨 (예: RTF조정 1차 / 과잉감축안)", "");
+  if (label === null) return; // 취소
+  var arr = _snapLoad();
+  arr.push({ id: Date.now(), ts: _snapStamp(), label: (label || "").trim(), data: _snapCapture() });
+  _snapStore(arr);
+  render(state.currentMenuId); // 컨트롤·드롭다운 갱신
+}
+function snapRestore(id) {
+  var arr = _snapLoad();
+  var s = arr.find(function(x) { return String(x.id) === String(id); });
+  if (!s) return;
+  if (!confirm("현재 조정·점검 상태를 '" + (s.label || s.ts) + "' 시점으로 되돌립니다.\n지금 작업 중인 조정은 사라집니다. 진행할까요?")) {
+    var selC = tabNav.querySelector(".snap-select"); if (selC) selC.value = ""; return;
+  }
+  var d = s.data || {};
+  state.matSimAdj     = Object.assign({}, d.matSimAdj);
+  state.fgProdAdj     = Object.assign({}, d.fgProdAdj);
+  state.invSupplyAdj  = Object.assign({}, d.invSupplyAdj);
+  state.excessAdj     = Object.assign({}, d.excessAdj);
+  state.aiAppliedKeys = Object.assign({}, d.aiAppliedKeys);
+  state.aiExcessKeys  = Object.assign({}, d.aiExcessKeys);
+  state.rtfWalkDone   = Object.assign({}, d.rtfWalkDone);
+  if (typeof saveRtfWalk === "function") saveRtfWalk(); // 점검상태는 영구저장이라 동기화
+  render(state.currentMenuId);
+}
+function snapDelete(id) {
+  var arr = _snapLoad();
+  var s = arr.find(function(x) { return String(x.id) === String(id); });
+  if (!s) return;
+  if (!confirm("'" + (s.label || s.ts) + "' 시점을 삭제할까요?")) return;
+  _snapStore(arr.filter(function(x) { return String(x.id) !== String(id); }));
+  render(state.currentMenuId);
+}
+
 function renderTabs(activeId) {
   var visible = menus.filter(function(m) { return m[3] !== false; });
   var story   = visible.filter(function(m) { return m[4] !== "util"; });
@@ -19,11 +96,13 @@ function renderTabs(activeId) {
     var id = m[0], label = m[1];
     html += `<button type="button" class="tab-btn tab-util ${idx === 0 ? "tab-util-first " : ""}${id === activeId ? "active" : ""}" data-menu-id="${escapeHtml(id)}"><span class="tab-label">${escapeHtml(label)}</span></button>`;
   });
+  html += snapControlHtml(); // 우측 도구 영역 — 상태 스냅샷
 
   tabNav.innerHTML = html;
   tabNav.querySelectorAll("[data-menu-id]").forEach(function(btn) {
     btn.addEventListener("click", function() { render(btn.dataset.menuId); });
   });
+  _snapBind();
 }
 
 // ── 회의체계 ─────────────────────────────────────────────────────────────────
@@ -643,6 +722,14 @@ function render(menuId) {
   // 실제 탭 전환일 때만 맨 위로 이동.
   var isSameScreen  = state.currentMenuId === menuId;
   var savedScrollY  = isSameScreen ? window.scrollY : 0;
+  // 내부 스크롤박스(.rtf-h-scroll 등, 틀고정 표)는 window 스크롤과 별개라 따로 저장/복원
+  var savedInnerScroll = [];
+  if (isSameScreen) {
+    document.querySelectorAll(".rtf-h-scroll").forEach(function(el) {
+      var sec = el.closest("[id]");
+      if (sec) savedInnerScroll.push({ id: sec.id, top: el.scrollTop, left: el.scrollLeft });
+    });
+  }
   state.currentMenuId = menuId;
   const menu = menus.find(([id]) => id === menuId) || menus[0];
   screenTitle.textContent = menu[2] || menu[1];
@@ -679,6 +766,11 @@ function render(menuId) {
     if (menu[0] === "impact")              bindImpact();
     if (menu[0] === "summary")             bindSummary();
     if (isSameScreen) window.scrollTo(0, savedScrollY);
+    savedInnerScroll.forEach(function(s) {
+      var sec = document.getElementById(s.id);
+      var el  = sec && sec.querySelector(".rtf-h-scroll");
+      if (el) { el.scrollTop = s.top; el.scrollLeft = s.left; }
+    });
     } catch(e) {
       screenRoot.innerHTML = "<div style='padding:40px;color:#b91c1c;font-size:14px;'>" +
         "⚠ 화면 렌더 오류: " + escapeHtml(String(e && e.message || e)) + "<br>" +

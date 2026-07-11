@@ -1,9 +1,10 @@
 // ── 정렬 상태 (렌더 간 유지) ──────────────────────────────────────────────────
 var _rtfBaseItemMap = new Map(); // "itemCode|plantCode" → item (현재 계획 기준, 비교용)
 var rtfSortState = {
-  "rtfBusinessMatrix": { colKey: "판매계획", dir: "desc" },
-  "rtfPlantMatrix":    { colKey: "판매계획", dir: "desc" },
-  "rtfTypeMatrix":     { colKey: "판매계획", dir: "desc" },
+  // colKey 비움 → sortHierarchyNodes 기본 분기(당월 판매금액·표시모드별 내림차순)가 작동
+  "rtfBusinessMatrix": { colKey: "", dir: "desc" },
+  "rtfPlantMatrix":    { colKey: "", dir: "desc" },
+  "rtfTypeMatrix":     { colKey: "", dir: "desc" },
 };
 var _rtfItems = []; // 정렬 재빌드용 캐시
 
@@ -203,6 +204,31 @@ function buildSalesPriceMap() {
   return map;
 }
 
+// 기초재고 미연결 품목의 표준원가 대체용: 매출_RAW 단위당원가(수량가중평균), itemCode 기준.
+var _salesCostCache = null;
+function buildSalesCostMap() {
+  if (_salesCostCache) return _salesCostCache;
+  const agg = new Map(); // itemCode → { costQty, qty }
+  (state.mappedData.sales_actual || []).forEach(function(r) {
+    const code = cleanOptional(r.itemCode);
+    const qty  = cleanNumber(r.paQty);
+    const unitCost = cleanNumber(r.unitCost);
+    if (!code || !Number.isFinite(qty) || Math.abs(qty) < 0.001 || !Number.isFinite(unitCost) || unitCost <= 0) return;
+    const e = agg.get(code) || { costQty: 0, qty: 0 };
+    e.costQty += unitCost * qty;
+    e.qty     += qty;
+    agg.set(code, e);
+  });
+  const map = new Map();
+  agg.forEach(function(v, code) {
+    if (Math.abs(v.qty) < 0.001) return;
+    const cost = v.costQty / v.qty;
+    if (cost > 0) map.set(code, cost);
+  });
+  _salesCostCache = map;
+  return map;
+}
+
 // ── RTF 계산 ─────────────────────────────────────────────────────────────────
 function itemTypeGroup(item) {
   const type = cleanOptional(item.itemType);
@@ -295,6 +321,9 @@ function computeRtfItems(bomMapArg, allTypes, goodsAdj) {
   const costMap = new Map(), baseQtyMap = new Map(), baseAmtMap = new Map(), inventorySet = new Set();
   const masterMap = new Map(), planLookup = new Map(), metaMap = new Map();
 
+  // 완제품 플랜트간 재고이전 대응: 코드 단위 기초재고 합산 맵(플랜트 무관)
+  // — 오송 생산·판매인데 재고는 향남에 있는 케이스(9300770 등)에서 가용을 정확히 인식.
+  const codeBaseQtyMap = new Map(), codeBaseAmtMap = new Map();
   inventoryRows.forEach((row) => {
     const code = cleanOptional(row.itemCode);
     const plant = cleanOptional(row.plant);
@@ -302,9 +331,11 @@ function computeRtfItems(bomMapArg, allTypes, goodsAdj) {
     const key = itemPlantKey(code, plant);
     inventorySet.add(key);
     const cost = cleanNumber(row.standardCost), baseQty = cleanNumber(row.baseQty), baseAmt = cleanNumber(row.baseAmount);
-    if (cost !== null && cost > 0 && !costMap.has(key)) costMap.set(key, cost);
+    if (cost !== null && !costMap.has(key)) costMap.set(key, cost);
     baseQtyMap.set(key, (baseQtyMap.get(key) ?? 0) + (baseQty ?? 0));
     baseAmtMap.set(key, (baseAmtMap.get(key) ?? 0) + (baseAmt ?? 0));
+    codeBaseQtyMap.set(code, (codeBaseQtyMap.get(code) ?? 0) + (baseQty ?? 0));
+    codeBaseAmtMap.set(code, (codeBaseAmtMap.get(code) ?? 0) + (baseAmt ?? 0));
   });
   masterRows.forEach((row) => {
     const code = cleanOptional(row.itemCode);
@@ -326,21 +357,38 @@ function computeRtfItems(bomMapArg, allTypes, goodsAdj) {
       metaMap.set(key, { itemCode: code, itemName: cleanText(row.itemName, code), plant, itemType: cleanOptional(row.itemType) });
   });
 
+  // 코드별 계획(생산) 플랜트 수 — 완제품 코드단위 재고합산 시 다중 생산플랜트 이중계상 방지용
+  const codePlanPlants = new Map();
+  metaMap.forEach((m) => {
+    if (!codePlanPlants.has(m.itemCode)) codePlanPlants.set(m.itemCode, new Set());
+    codePlanPlants.get(m.itemCode).add(m.plant);
+  });
+
   const sharedAlertSet = buildSharedAlertSet();
   const altBomSet      = buildAltBomSet();
   const priceMap       = buildSalesPriceMap();
+  const salesCostMap   = buildSalesCostMap();
   const result = [...metaMap.values()].map((meta) => {
     const key = itemPlantKey(meta.itemCode, meta.plant);
-    const master = masterMap.get(meta.itemCode), standardCost = costMap.get(key) ?? null;
+    const master = masterMap.get(meta.itemCode);
+    let standardCost = costMap.get(key) ?? null;
+    // 기초재고 표준원가 미연결(0) 또는 재고 자체 미연결 시 매출_RAW 단위당원가로 대체
+    if (standardCost === null || standardCost === 0) {
+      const salesCost = salesCostMap.get(meta.itemCode);
+      if (salesCost) standardCost = salesCost;
+    }
     const unitPrice = priceMap.get(meta.itemCode) ?? null;
-    const baseQtyVal = inventorySet.has(key) ? (baseQtyMap.get(key) ?? 0) : null;
-    const baseAmtVal = inventorySet.has(key) ? (baseAmtMap.get(key) ?? 0) : null;
+    // 재고 raw에 매칭 자체가 없으면 "미확인"이 아니라 "재고없음"(0)으로 확정 처리 — 판매계획 등 후속 계산이 막히지 않게 함
+    // 완제품(9코드)이고 생산 플랜트가 1개면 코드단위 합산재고 사용(플랜트간 재고이전 대응). 다중 생산플랜트는 이중계상 방지 위해 플랜트별 유지.
+    const _isFgSinglePlant = String(meta.itemCode).startsWith("9") && (codePlanPlants.get(meta.itemCode)?.size ?? 1) === 1;
+    const baseQtyVal = _isFgSinglePlant ? (codeBaseQtyMap.get(meta.itemCode) ?? 0) : (baseQtyMap.get(key) ?? 0);
+    const baseAmtVal = _isFgSinglePlant ? (codeBaseAmtMap.get(meta.itemCode) ?? 0) : (baseAmtMap.get(key) ?? 0);
     // 장부단가: 기초금액/기초수량 (재고평가 기준) → 없으면 표준원가
     const unitInvValue = (baseAmtVal && baseQtyVal) ? (baseAmtVal / baseQtyVal) : standardCost;
     const item = { ...meta,
       plantCode: cleanText(meta.plant, NEED_MASTER), plant: displayPlantName(meta.plant), businessUnit: cleanText(master?.businessUnit, NEED_MASTER),
       itemGroup: cleanText(master?.itemGroup, NEED_MASTER), standardCost, unitPrice, baseAmount: baseAmtVal, unitInvValue,
-      hasCost: standardCost !== null && standardCost > 0,
+      hasCost: standardCost !== null,
       hasRevenue: unitPrice !== null && unitPrice > 0,
       hasInventory: inventorySet.has(key), baseQty: baseQtyVal,
       hasSharedAlert:  sharedAlertSet.has(key),
@@ -364,14 +412,14 @@ function computeRtfItems(bomMapArg, allTypes, goodsAdj) {
       const noSalesPlan = hasPlanRow && salesQty === 0;
       const salesPlanAmount = amountWithCost(salesQty, item);
       const salesRevenue    = amountWithPrice(salesQty, item); // 판매계획 매출(판가)
-      let endingQty = null, endingAmount = null, rtfQty = null, rtfAmount = null;
+      let endingQty = null, endingAmount = null, endingRevenue = null, rtfQty = null, rtfAmount = null;
       let shortageQty = null, shortageAmount = null, lostSalesAmount = null, inventoryDays = null;
       let rtfRevenue = null, shortageRevenue = null;
       let salesAmount = null, status = STATUS.UNKNOWN, reason = "";
       let bomConstrained = false, planShortageQty = null;
 
-      if (!item.hasInventory || openingQty === null) { reason = NEED_DATA; }
-      else if (!hasPlanRow)                          { reason = NEED_DATA; openingQty = null; }
+      if (openingQty === null)      { reason = NEED_DATA; }
+      else if (!hasPlanRow)         { reason = NEED_DATA; openingQty = null; }
       else if (masterGap)                            { reason = NEED_MASTER; }
       else {
         // BOM 전개 완료 시 완제품은 자재 제약 생산 가능수량으로 공급 조정
@@ -391,6 +439,7 @@ function computeRtfItems(bomMapArg, allTypes, goodsAdj) {
         rtfAmount = amountWithCost(rtfQty, item);
         shortageAmount = shortageQty > 0 ? amountWithCost(shortageQty, item) : 0;
         endingAmount = amountWithCost(endingQty, item);
+        endingRevenue = amountWithPrice(endingQty, item);
         // 매출(판가) 기준 값 — 판매/RTF/매출차질 컬럼용
         rtfRevenue      = amountWithPrice(rtfQty, item);
         shortageRevenue = shortageQty > 0 ? amountWithPrice(shortageQty, item) : (item.hasRevenue ? 0 : null);
@@ -401,7 +450,7 @@ function computeRtfItems(bomMapArg, allTypes, goodsAdj) {
         openingQty = endingQty;
         reason = noSalesPlan ? NO_PLAN : "";
       }
-      return { month, salesQty, supplyQty, rtfQty, rtfAmount, endingQty, endingAmount, shortageQty, shortageAmount, lostSalesAmount, inventoryDays, salesAmount, salesPlanAmount, salesRevenue, rtfRevenue, shortageRevenue, status, reason, noSalesPlan, bomConstrained, planShortageQty };
+      return { month, salesQty, supplyQty, rtfQty, rtfAmount, endingQty, endingAmount, endingRevenue, shortageQty, shortageAmount, lostSalesAmount, inventoryDays, salesAmount, salesPlanAmount, salesRevenue, rtfRevenue, shortageRevenue, status, reason, noSalesPlan, bomConstrained, planShortageQty };
     });
     return item;
   }).filter((item) => allTypes || item.typeGroup === "상품" || item.typeGroup === "완제품");
@@ -449,6 +498,7 @@ function aggregateMonth(items, monthIndex) {
     shortageRevenue: sumNullable(rows.map((r) => r.shortageRevenue)),
     lostSalesAmount: sumNullable(rows.map((r) => r.lostSalesAmount)),
     endingAmount:    sumNullable(rows.map((r) => r.endingAmount)),
+    endingRevenue:   sumNullable(rows.map((r) => r.endingRevenue)),
     endingQty,
     inventoryDays,
     hasNoPlan,
@@ -463,8 +513,10 @@ function sortKo(arr) { return [...arr].sort((a, b) => String(a).localeCompare(St
 function uniq(items, key) { return sortKo([...new Set(items.map((i) => i[key]))]); }
 
 // 품목군(및 하위 품목) 정렬용 — 판매계획(전체 기간 합계) 내림차순
+// 당월(rtfMonths[0]) 판매계획 매출(판가 기준) — 품목군/품목 정렬 기준
 function itemSalesTotal(item) {
-  return item.monthlyStatus.reduce((s, m) => s + (Number.isFinite(m.salesQty) ? m.salesQty : 0), 0);
+  const ms0 = item.monthlyStatus && item.monthlyStatus[0];
+  return ms0 && Number.isFinite(ms0.salesRevenue) ? ms0.salesRevenue : 0;
 }
 function uniqByPlanDesc(items, key) {
   const totals = new Map();
@@ -482,10 +534,10 @@ function buildHierarchy(items, mode) {
   const nodes = [];
   if (mode === "business") {
     nodes.push(makeNode("business|__total__", "", -1, "total", "사업부 총합계", items, { div:"", bu:"", plant:"", type:"", group:"", code:"" }));
-    uniq(items, "businessUnit").forEach((bu) => {
+    uniqByPlanDesc(items, "businessUnit").forEach((bu) => {
       const buItems = items.filter((i) => i.businessUnit === bu), buId = `b|${bu}`;
       nodes.push(makeNode(buId, "", 0, "group", `${bu} 계`, buItems, { div:"사업부", bu, plant:"", type:"", group:"", code:"" }));
-      uniq(buItems, "typeGroup").forEach((type) => {
+      uniqByPlanDesc(buItems, "typeGroup").forEach((type) => {
         const typeItems = buItems.filter((i) => i.typeGroup === type), typeId = `${buId}|${type}`;
         nodes.push(makeNode(typeId, buId, 1, "group", `${type} 계`, typeItems, { div:"유형", bu, plant:"", type, group:"", code:"" }));
         uniqByPlanDesc(typeItems, "itemGroup").forEach((group) => {
@@ -498,10 +550,10 @@ function buildHierarchy(items, mode) {
     });
   } else if (mode === "plant") {
     nodes.push(makeNode("plant|__total__", "", -1, "total", "플랜트 총합계", items, { div:"", bu:"", plant:"", type:"", group:"", code:"" }));
-    uniq(items, "plant").forEach((plant) => {
+    uniqByPlanDesc(items, "plant").forEach((plant) => {
       const plantItems = items.filter((i) => i.plant === plant), plantId = `p|${plant}`;
       nodes.push(makeNode(plantId, "", 0, "group", `${plant} 계`, plantItems, { div:"플랜트", bu:"", plant, type:"", group:"", code:"" }));
-      uniq(plantItems, "typeGroup").forEach((type) => {
+      uniqByPlanDesc(plantItems, "typeGroup").forEach((type) => {
         const typeItems = plantItems.filter((i) => i.typeGroup === type), typeId = `${plantId}|${type}`;
         nodes.push(makeNode(typeId, plantId, 1, "group", `${type} 계`, typeItems, { div:"유형", bu:"", plant, type, group:"", code:"" }));
         uniqByPlanDesc(typeItems, "itemGroup").forEach((group) => {
@@ -514,13 +566,13 @@ function buildHierarchy(items, mode) {
     });
   } else {
     nodes.push(makeNode("type|__total__", "", -1, "total", "유형별 총합계", items, { div:"", bu:"", plant:"", type:"", group:"", code:"" }));
-    uniq(items, "typeGroup").forEach((type) => {
+    uniqByPlanDesc(items, "typeGroup").forEach((type) => {
       const typeItems = items.filter((i) => i.typeGroup === type), typeId = `t|${type}`;
       nodes.push(makeNode(typeId, "", 0, "group", `${type} 계`, typeItems, { div:"유형", bu:"", plant:"", type, group:"", code:"" }));
-      uniq(typeItems, "businessUnit").forEach((bu) => {
+      uniqByPlanDesc(typeItems, "businessUnit").forEach((bu) => {
         const buItems = typeItems.filter((i) => i.businessUnit === bu), buId = `${typeId}|${bu}`;
         nodes.push(makeNode(buId, typeId, 1, "group", `${bu} 계`, buItems, { div:"사업부", bu, plant:"", type, group:"", code:"" }));
-        uniq(buItems, "plant").forEach((plant) => {
+        uniqByPlanDesc(buItems, "plant").forEach((plant) => {
           const plantItems = buItems.filter((i) => i.plant === plant), plantId = `${buId}|${plant}`;
           nodes.push(makeNode(plantId, buId, 2, "group", `${plant} 계`, plantItems, { div:"플랜트", bu, plant, type, group:"", code:"" }));
           uniqByPlanDesc(plantItems, "itemGroup").forEach((group) => {
@@ -557,28 +609,44 @@ function getSortValue(node, colKey) {
     "Shortage":     (a) => a.shortageQty,
     "매출":         (a) => a.salesAmount,
     "매출차질예상": (a) => a.lostSalesAmount,
-    "기말재고":     (a) => state.rtfDisplayMode === "amount" ? a.endingAmount : a.endingQty,
+    "기말재고":     (a) => state.rtfDisplayMode === "amount" ? a.endingAmount : state.rtfDisplayMode === "revenue" ? a.endingRevenue : a.endingQty,
     "재고일수":     (a) => a.inventoryDays,
   };
+  if (colKey === "재고일수") {
+    // 일수는 월별 합산이 의미 없음(비율 지표) → 값 있는 달의 평균으로 정렬
+    const vals = getRtfMonths().map((_, i) => metricFn[colKey](aggregateMonth(node.items, i))).filter(Number.isFinite);
+    return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+  }
   if (metricFn[colKey]) return sumNullable(getRtfMonths().map((_, i) => metricFn[colKey](aggregateMonth(node.items, i))));
   return null;
 }
 
+// 계층 전 레벨(사업부→유형→품목군→품목)을 각자의 부모 안에서 재귀 정렬
 function sortHierarchyNodes(nodes, sectionId) {
   const s = rtfSortState[sectionId];
-  if (!s || !s.colKey) return nodes;
   const totalNode = nodes[0]; // kind === "total", always first
-  const rest      = nodes.slice(1);
-  // Group level-0 nodes with their descendants (rest is ordered: l0, then all desc)
-  const groups = [];
-  let cur = null;
-  rest.forEach((n) => {
-    if (n.level === 0) { if (cur) groups.push(cur); cur = [n]; }
-    else if (cur)      { cur.push(n); }
+  const byParent = new Map();
+  nodes.slice(1).forEach((n) => {
+    const arr = byParent.get(n.parentId) || [];
+    arr.push(n);
+    byParent.set(n.parentId, arr);
   });
-  if (cur) groups.push(cur);
-  groups.sort((a, b) => compareForSort(getSortValue(a[0], s.colKey), getSortValue(b[0], s.colKey), s.dir));
-  return [totalNode, ...groups.flat()];
+  // 기본 정렬(컬럼 미선택): 당월(첫 전망월=7월) 판매계획 금액 내림차순 — 표시 모드별(매출/원가/수량)
+  const dm = state.rtfDisplayMode;
+  const defaultVal = (n) => {
+    const a = aggregateMonth(n.items, 0);
+    return dm === "revenue" ? a.salesRevenue : dm === "amount" ? a.salesPlanAmount : a.salesQty;
+  };
+  const cmp = (s && s.colKey)
+    ? (a, b) => compareForSort(getSortValue(a, s.colKey), getSortValue(b, s.colKey), s.dir)
+    : (a, b) => compareForSort(defaultVal(a), defaultVal(b), "desc");
+  function walk(parentId) {
+    const children = (byParent.get(parentId) || []).slice().sort(cmp);
+    const out = [];
+    children.forEach((n) => { out.push(n); out.push(...walk(n.id)); });
+    return out;
+  }
+  return [totalNode, ...walk("")];
 }
 
 // ── 총합계 검증 ───────────────────────────────────────────────────────────────
@@ -660,10 +728,8 @@ function getVisibleMonthColumns() {
 // 매트릭스 셀 축약 포맷 (좁은 셀 잘림 방지) — 금액: 100억↑ 정수·미만 소수1 / 수량: 만 단위
 function fmtMoneyC(won) {
   if (!Number.isFinite(won)) return NEED_DATA;
-  if (won === 0) return "-";
   var eok = won / 1e8;
-  var digits = Math.abs(eok) >= 100 ? 0 : 1; // 100억↑ 정수, 미만 소수1(불필요한 .0 제거)
-  return eok.toLocaleString("ko-KR", { maximumFractionDigits: digits, minimumFractionDigits: 0 }) + "억";
+  return eok.toLocaleString("ko-KR", { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + "억";
 }
 function fmtQtyC(qty) {
   if (!Number.isFinite(qty)) return NEED_DATA;
@@ -680,21 +746,28 @@ function formatDisplayQtyMoney(qtyValue, costValue, revenueValue, noPlan = false
   return Number.isFinite(qtyValue) ? fmtQtyC(qtyValue) : NEED_DATA;
 }
 
-// 기말재고는 판가 환산 안 함 → 원가/매출 모드 모두 원가금액(표준원가) 표시
+// 기말재고: 원가모드=표준원가, 매출모드=판가 환산
 function formatEnding(row) {
-  if (state.rtfDisplayMode === "qty") return Number.isFinite(row.endingQty) ? fmtQtyC(row.endingQty) : NEED_DATA;
+  if (state.rtfDisplayMode === "qty")      return Number.isFinite(row.endingQty) ? fmtQtyC(row.endingQty) : NEED_DATA;
+  if (state.rtfDisplayMode === "revenue")  return Number.isFinite(row.endingRevenue) ? fmtMoneyC(row.endingRevenue) : NEED_DATA;
   return Number.isFinite(row.endingAmount) ? fmtMoneyC(row.endingAmount) : NEED_DATA;
 }
 
 function formatBaseForNode(node, compressed) {
+  // 단일 품목 행인데 재고 raw에 매칭 자체가 없으면(0으로 확정 처리됐지만) "재고없음"으로 명시
+  if (node.items.length === 1 && !node.items[0].hasInventory) return "재고없음";
   const qty = sumNullable(node.items.map((i) => i.baseQty));
   if (state.rtfDisplayMode === "qty") {
     if (!Number.isFinite(qty)) return compressed ? SHORT_TEXT[NEED_DATA] : NEED_DATA;
     return fmtQtyC(qty);
   }
-  if (node.items.some((i) => !i.hasCost || !Number.isFinite(i.baseQty)))
-    return compressed ? SHORT_TEXT[NEED_DATA] : NEED_DATA;
-  const amount = sumNullable(node.items.map((i) => i.baseQty * i.standardCost));
+  const useRevenue = state.rtfDisplayMode === "revenue";
+  // 품목 하나가 미연결이어도 전체를 막지 않고, 연결된 품목만 합산(수량모드와 동일 원칙)
+  const amount = sumNullable(node.items.map((i) => {
+    const hasUnit = useRevenue ? i.hasRevenue : i.hasCost;
+    const unit    = useRevenue ? i.unitPrice  : i.standardCost;
+    return (hasUnit && Number.isFinite(i.baseQty)) ? i.baseQty * unit : null;
+  }));
   return Number.isFinite(amount) ? fmtMoneyC(amount) : (compressed ? SHORT_TEXT[NEED_DATA] : NEED_DATA);
 }
 
@@ -725,18 +798,21 @@ function buildCellDrillCtx(node, item, month, monthRow) {
 }
 
 // ── 셀 렌더 ──────────────────────────────────────────────────────────────────
+function noteCls(val) {
+  return (val === NEED_DATA || val === SHORT_TEXT[NEED_DATA] || val === "재고없음") ? " rtf-cell-note-sm" : "";
+}
 function renderMetricCell(row, metric, metricIndex, compressed, drillCtx, adjInfo) {
   const mb     = metricIndex === 0 ? " rtf-month-start" : "";
 
   if (metric === "판매계획") {
     const raw  = formatDisplayQtyMoney(row.salesQty, row.salesPlanAmount, row.salesRevenue, false);
     const disp = compressed ? (SHORT_TEXT[raw] || raw) : raw;
-    return `<td class="rtf-metric-cell rtf-cell-right${mb}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
+    return `<td class="rtf-metric-cell rtf-cell-right${mb}${noteCls(disp)}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
   }
   if (metric === "RTF") {
     const raw  = formatDisplayQtyMoney(row.rtfQty, row.rtfAmount, row.rtfRevenue, false);
     const disp = compressed ? (SHORT_TEXT[raw] || raw) : raw;
-    return `<td class="rtf-metric-cell rtf-rtf-cell rtf-cell-right${mb}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
+    return `<td class="rtf-metric-cell rtf-rtf-cell rtf-cell-right${mb}${noteCls(disp)}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
   }
   if (metric === "Shortage") {
     const mode  = state.rtfDisplayMode;
@@ -754,8 +830,11 @@ function renderMetricCell(row, metric, metricIndex, compressed, drillCtx, adjInf
     var adjCellCls = "";
     if (adjInfo && Number.isFinite(adjInfo.baseSh) && Number.isFinite(adjInfo.adjSh)) {
       const delta = adjInfo.adjSh - adjInfo.baseSh; // 음수 = 개선
-      if (delta < -0.5) {
-        adjBadge = `<span class="rtf-adj-badge rtf-adj-improved" title="조정 전 ${escapeHtml(formatNumber(Math.round(adjInfo.baseSh)))} → 조정 후 ${escapeHtml(formatNumber(Math.round(adjInfo.adjSh)))}">▼${escapeHtml(formatNumber(Math.round(-delta)))}</span>`;
+      const isMoney = mode === "amount" || mode === "revenue";
+      const fmtC = isMoney ? fmtMoneyC : fmtQtyC; // 매출/원가=억(소수1), 수량=만/정수
+      const thresh = isMoney ? 5e6 : 0.5;         // 매출·원가: 0.05억, 수량: 0.5개
+      if (delta < -thresh) {
+        adjBadge = `<span class="rtf-adj-badge rtf-adj-improved" title="조정 전 ${escapeHtml(fmtC(adjInfo.baseSh))} → 조정 후 ${escapeHtml(fmtC(adjInfo.adjSh))}">▼${escapeHtml(fmtC(-delta))}</span>`;
         adjCellCls = " rtf-adj-cell-improved";
       }
     }
@@ -768,18 +847,20 @@ function renderMetricCell(row, metric, metricIndex, compressed, drillCtx, adjInf
   if (metric === "매출") {
     const raw = Number.isFinite(row.salesAmount) ? fmtMoneyC(row.salesAmount) : NEED_DATA;
     const disp = compressed ? (SHORT_TEXT[raw] || raw) : raw;
-    return `<td class="rtf-metric-cell rtf-muted-metric rtf-cell-right${mb}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
+    return `<td class="rtf-metric-cell rtf-muted-metric rtf-cell-right${mb}${noteCls(disp)}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
   }
   if (metric === "매출차질예상") {
     const raw = Number.isFinite(row.lostSalesAmount) ? fmtMoneyC(row.lostSalesAmount) : NEED_DATA;
     const disp = compressed ? (SHORT_TEXT[raw] || raw) : raw;
-    return `<td class="rtf-metric-cell rtf-muted-metric rtf-cell-right${mb}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
+    return `<td class="rtf-metric-cell rtf-muted-metric rtf-cell-right${mb}${noteCls(disp)}" title="${escapeHtml(raw)}">${escapeHtml(disp)}</td>`;
   }
-  if (metric === "기말재고")
-    return `<td class="rtf-metric-cell rtf-muted-metric rtf-cell-right${mb}">${escapeHtml(formatEnding(row))}</td>`;
+  if (metric === "기말재고") {
+    const val = formatEnding(row);
+    return `<td class="rtf-metric-cell rtf-muted-metric rtf-cell-right${mb}${noteCls(val)}">${escapeHtml(val)}</td>`;
+  }
   if (metric === "재고일수") {
-    const val = Number.isFinite(row.inventoryDays) ? `${Math.round(row.inventoryDays)}일` : "판단불가";
-    return `<td class="rtf-metric-cell rtf-muted-metric rtf-cell-right${mb}">${escapeHtml(val)}</td>`;
+    const val = Number.isFinite(row.inventoryDays) ? `${Math.round(row.inventoryDays)}일` : NEED_DATA;
+    return `<td class="rtf-metric-cell rtf-muted-metric rtf-cell-right${mb}${noteCls(val)}">${escapeHtml(val)}</td>`;
   }
   return `<td class="rtf-metric-cell rtf-cell-right${mb}">-</td>`;
 }
@@ -882,7 +963,11 @@ function renderHierarchyRow(node, leftColDefs, compressed, mode, rowspanMap) {
       }).filter(Boolean);
       if (baseItems.length > 0) {
         var baseAgg = aggregateMonth(baseItems, mIdx);
-        adjInfo = { baseSh: baseAgg.shortageQty, adjSh: monthRow.shortageQty };
+        var _pickSh = function(a) {
+          return state.rtfDisplayMode === "amount" ? a.shortageAmount
+               : state.rtfDisplayMode === "revenue" ? a.shortageRevenue : a.shortageQty;
+        };
+        adjInfo = { baseSh: _pickSh(baseAgg), adjSh: _pickSh(monthRow) };
       }
     }
     return monthCols.map((metric, colIdx) => renderMetricCell(monthRow, metric, colIdx, compressed, drillCtx, adjInfo)).join("");
@@ -907,7 +992,8 @@ function renderHierarchyRow(node, leftColDefs, compressed, mode, rowspanMap) {
       ? `<button type="button" class="rtf-item-toggle" data-node-id="${escapeHtml(node.id)}">${state.expandedItemGroups.has(node.id) ? "-" : "+"}</button>`
       : "";
     const alignCls  = col.align === "left" ? "rtf-cell-left" : col.align === "right" ? "rtf-cell-right" : "rtf-cell-center";
-    const extraCls  = col.isName ? " rtf-col-name" : col.isLast ? " rtf-col-last-sticky" : col.isFirst ? " rtf-col-firstlabel" : "";
+    const isNoteVal = col.isBase && (value === NEED_DATA || value === SHORT_TEXT[NEED_DATA] || value === "재고없음");
+    const extraCls  = (col.isName ? " rtf-col-name" : col.isLast ? " rtf-col-last-sticky" : col.isFirst ? " rtf-col-firstlabel" : "") + (isNoteVal ? " rtf-cell-note-sm" : "");
     const titleAttr = (col.isName || col.isFirst) ? ` title="${escapeHtml(node.label)}"` : "";
     const rowspan = rowspanMap?.spans.has(cellKey) ? ` rowspan="${rowspanMap.spans.get(cellKey)}"` : "";
     const mergeCls = rowspan ? " rtf-rowspan-cell" : "";
@@ -1105,9 +1191,37 @@ function getActualsAnchor() {
   return _actualsAnchorCache;
 }
 
+// 원부자재 롤포워드 델타(원) — 앵커(기초, 완제품 공급계획 BOM전개 소요 vs 자재 자체 입고계획)
+// 대비, BOM연결+재고연결+단위OK인 "usable" 자재만 반영. 소요 0(불용재고·계획누락)인 자재는
+// 소비·입고 둘 다 0이라 델타도 0 — 앵커 고정과 결과가 같아 왜곡 없음(그래서 커버리지 밖이어도 안전).
+// 렌더 경계(_renderEpoch) 메모이즈 — 3단(원래/RTF조정후/감축후) 시나리오가 월별로 반복 조회해도
+// (fgAdj,matAdj) 조합별로 한 렌더당 1회만 calcMatFlowRows 계산.
+var _matRollDeltaMemo = new Map(), _matRollDeltaMemoEpoch = -1;
+function computeMatRollforwardDeltas(months, fgAdj, matAdj) {
+  if (typeof calcMatFlowRows !== "function") return null;
+  if (_matRollDeltaMemoEpoch !== _renderEpoch) { _matRollDeltaMemo.clear(); _matRollDeltaMemoEpoch = _renderEpoch; }
+  var sig = (fgAdj ? JSON.stringify(fgAdj) : "") + "||" + (matAdj ? JSON.stringify(matAdj) : "");
+  if (_matRollDeltaMemo.has(sig)) return _matRollDeltaMemo.get(sig);
+  var rows = calcMatFlowRows(fgAdj || null, matAdj || null);
+  var result = null;
+  if (rows) {
+    result = months.map(function(_, mi) {
+      var d = 0;
+      rows.forEach(function(r) {
+        if (!Number.isFinite(r.flow.unitVal)) return;
+        d += (Math.max(0, r.ending[mi]) - Math.max(0, r.flow.baseQty)) * r.flow.unitVal;
+      });
+      return d;
+    });
+  }
+  _matRollDeltaMemo.set(sig, result);
+  return result;
+}
+
 // 전체재고(월) = 결산 총재고 앵커 + 완제품·상품 재고 변동분(장부단가, opening 대비)
 //              + 미착품·평가충당금 전망 변동 (결산 시트에 값 있으면, 없으면 앵커월 유지)
-function totalInvAmountWon(items, mi, anchor) {
+//              + 원부자재 롤포워드 변동(usable 자재만, matScenario={fg,mat} 없으면 무조정=원래계획)
+function totalInvAmountWon(items, mi, anchor, matScenario) {
   var delta = 0;
   items.forEach(function(it) {
     if (it.typeGroup !== "완제품" && it.typeGroup !== "상품") return;
@@ -1131,6 +1245,8 @@ function totalInvAmountWon(items, mi, anchor) {
   var nbA = nb[anchor.month], nbC = nb[getRtfMonths()[mi]];
   if (nbA && nbC && Number.isFinite(nbA.invAmt) && Number.isFinite(nbC.invAmt))
     delta += (nbC.invAmt - nbA.invAmt) * 1e8;
+  var matDeltas = computeMatRollforwardDeltas(getRtfMonths(), matScenario && matScenario.fg, matScenario && matScenario.mat);
+  if (matDeltas && Number.isFinite(matDeltas[mi])) delta += matDeltas[mi];
   return anchor.totalInvWon + delta;
 }
 
@@ -1179,45 +1295,61 @@ function getNabotaSalesFactors() {
 }
 
 // 나보타(비점검) 합성 매트릭스 행 — RTF판정 매트릭스에만 주입(총계 합산·행 표시).
-// 매출=나보타_RAW 매출액, 수량=매출÷평균판가, 원가=매출×평균원가율(없으면 출고제품만 폴백).
-// 재고/재고일수는 판정 대상 아님 → 기말재고(원가)만 재고금액, 나머지 비움.
+// PSI 그대로: 공급계획=입고금액(제품만) · 기말재고=재고금액(제품만) — 나보타_RAW 실측(원가 기준).
+// 판매계획(매출모드)은 나보타_RAW "매출액" 행(사용자 직접 입력, 미래월 포함)을 그대로 반영 — 원가 역산 아님.
+// (예전엔 매출_RAW 유래 salesAmt를 썼다가 출고 시점과 안 맞아 폐기했으나, 지금은 나보타_RAW 자체에 사용자가 매출액을 직접 기입함 — 그 값을 신뢰)
+// 매출액 결측월(과거 1~2월 등)만 "실측 원가율"로 원가→매출 환산 근사. 재고(기초·기말) 매출환산도 결측 시 동일 근사.
 function buildNabotaMatrixItem(months) {
   var nb = getNabotaInv();
   if (!Object.keys(nb).length) return null;
-  var f = getNabotaSalesFactors();
-  var avgUnitCost = (f && f.price > 0) ? f.price * f.costRatio : null; // 평균 단위원가(원/개)
-  // 기초재고 = 첫 RTF월 직전월(없으면 첫월) 나보타 재고금액
+  var f = getNabotaSalesFactors(); // 판가(f.price) — 수량 환산 앵커로만 사용
+  // 실측 제품 원가율 = Σ출고금액(제품만) / Σ매출액 (있는 달만 집계) — 매출_RAW 원가율보다 정확한 실측 대체값
+  var sumOut = 0, sumSales = 0;
+  Object.keys(nb).forEach(function(m) {
+    var r = nb[m];
+    if (Number.isFinite(r.outProdAmt) && Number.isFinite(r.salesAmt) && r.salesAmt > 0) {
+      sumOut += r.outProdAmt; sumSales += r.salesAmt;
+    }
+  });
+  var realCostRatio = sumSales > 0 ? sumOut / sumSales : (f ? f.costRatio : null);
+  var avgUnitCost = (f && f.price > 0 && Number.isFinite(realCostRatio)) ? f.price * realCostRatio : null;
+
+  // 기초재고 = 첫 RTF월 직전월(없으면 첫월) 나보타 재고금액(제품만, 실측)
   var m0 = months[0], py = +m0.slice(0, 4), pmo = +m0.slice(5, 7) - 1;
   if (pmo < 1) { pmo = 12; py--; }
   var openM = py + "-" + String(pmo).padStart(2, "0");
-  var openWon = (nb[openM] && Number.isFinite(nb[openM].invAmt)) ? nb[openM].invAmt * 1e8
-              : (nb[m0] && Number.isFinite(nb[m0].invAmt) ? nb[m0].invAmt * 1e8 : null);
+  var openWon = (nb[openM] && Number.isFinite(nb[openM].invProdAmt)) ? nb[openM].invProdAmt * 1e8
+              : (nb[m0] && Number.isFinite(nb[m0].invProdAmt) ? nb[m0].invProdAmt * 1e8 : null);
+  // baseQty를 openWon÷avgUnitCost로 잡으면 baseQty×avgUnitCost=openWon(실측 기초금액)이 원가모드에서 정확히 재현됨
   var baseQty = (avgUnitCost && Number.isFinite(openWon)) ? openWon / avgUnitCost : null;
   var ms = months.map(function(m) {
     var r = nb[m] || {};
-    var salesWon = Number.isFinite(r.salesAmt) ? r.salesAmt * 1e8 : null;
-    var qty  = (f && f.price > 0 && Number.isFinite(salesWon)) ? salesWon / f.price : null;
-    var cost = (f && Number.isFinite(salesWon)) ? salesWon * f.costRatio
-             : (Number.isFinite(r.outProdAmt) ? r.outProdAmt * 1e8 : null);
-    var endWon = Number.isFinite(r.invAmt) ? r.invAmt * 1e8 : null;
+    var cost   = Number.isFinite(r.outProdAmt)   ? r.outProdAmt * 1e8   : null; // 판매계획·RTF(원가) = 출고금액(제품만)
+    var supply = Number.isFinite(r.intakeProdAmt) ? r.intakeProdAmt * 1e8 : null; // 공급계획 = 입고금액(제품만)
+    var endWon = Number.isFinite(r.invProdAmt)    ? r.invProdAmt * 1e8    : null; // 기말재고(원가) = 재고금액(제품만)
+    var revenue    = Number.isFinite(r.salesAmt) ? r.salesAmt * 1e8 // 판매계획(매출) = 나보타_RAW 매출액 행 직접 반영
+                   : (Number.isFinite(cost) && realCostRatio > 0) ? cost / realCostRatio : null; // 결측월만 원가 환산 근사
+    var endRev     = (Number.isFinite(endWon) && realCostRatio > 0) ? endWon / realCostRatio : null;
+    var qty        = (Number.isFinite(cost)   && avgUnitCost > 0)  ? cost   / avgUnitCost   : null; // 수량 근사
+    var supplyQty  = (Number.isFinite(supply) && avgUnitCost > 0)  ? supply / avgUnitCost   : null;
     return {
-      month: m, salesQty: qty, supplyQty: null,
-      rtfQty: qty, rtfAmount: cost, rtfRevenue: salesWon,
-      endingQty: null, endingAmount: endWon,
+      month: m, salesQty: qty, supplyQty: supplyQty,
+      rtfQty: qty, rtfAmount: cost, rtfRevenue: revenue,
+      endingQty: null, endingAmount: endWon, endingRevenue: endRev,
       shortageQty: 0, shortageAmount: 0, shortageRevenue: 0, lostSalesAmount: 0,
       inventoryDays: null,
-      salesAmount: salesWon, salesPlanAmount: cost, salesRevenue: salesWon,
+      salesAmount: revenue, salesPlanAmount: cost, salesRevenue: revenue,
       status: STATUS.OK, reason: "", noSalesPlan: false, bomConstrained: false, planShortageQty: 0,
       isNabota: true,
     };
   });
   return {
-    itemCode: "나보타", itemName: "나보타 (비점검·RTF완결)",
+    itemCode: "나보타", itemName: "나보타",
     plantCode: "1220", plant: "나보타", businessUnit: "나보타",
     itemType: "완제품", typeGroup: "완제품", itemGroup: "나보타",
-    baseQty: baseQty, standardCost: avgUnitCost,
+    baseQty: baseQty, standardCost: avgUnitCost, unitPrice: (f && f.price > 0) ? f.price : null,
     hasCost: Number.isFinite(baseQty) && Number.isFinite(avgUnitCost),
-    hasInventory: true, hasRevenue: true,
+    hasInventory: true, hasRevenue: !!(f && f.price > 0),
     isNabota: true, monthlyStatus: ms,
   };
 }
@@ -1332,7 +1464,7 @@ function estMonthMgmtOutWon(items, mi, anchor) {
 // · 매출원가(누적): 결산 실적월까지는 결산값, 이후는 월별 추정 매출원가를 누적
 //   (연도가 바뀌면 누적 리셋 — 회계연도 기준)
 // · 검증: 26.5월 = 2,531억 × 150일 ÷ 2,943.4억 = 129.0일 (결산 정답지 일치)
-function rtfDisclosureDays(items, mi) {
+function rtfDisclosureDays(items, mi, matScenario) {
   var anchor = getActualsAnchor();
   if (!anchor) return null;
   var meta = getActualsMeta();
@@ -1342,8 +1474,8 @@ function rtfDisclosureDays(items, mi) {
   var months = getRtfMonths();
   var m = months[mi];
 
-  // 분자: 재고금액 (미착품·평가충당금 전망은 totalInvAmountWon에서 공통 반영)
-  var amt = totalInvAmountWon(items, mi, anchor);
+  // 분자: 재고금액 (미착품·평가충당금 전망·원부자재 롤포워드는 totalInvAmountWon에서 공통 반영)
+  var amt = totalInvAmountWon(items, mi, anchor, matScenario);
 
   // 분모: 매출원가(누적, 원)
   var mYear = m.slice(0, 4);
@@ -1401,8 +1533,8 @@ function computeScenarioItemSets() {
 }
 
 // ── 3단 헤드라인(현재→RTF조정후→감축후) — 회의안건 상단 띠 공용 계산 ─────────
-// 기준월 = 연말(12월, 없으면 마지막 계획월). 감축후는 원부자재 재고 변동을 금액에
-// 합산하고 일수는 금액 비례 보정 (renderScenarioKpiBanner와 동일 사상).
+// 기준월 = 연말(12월, 없으면 마지막 계획월). 원부자재는 3단 전부 실제 롤포워드(완제품
+// 공급계획 BOM전개 소요 vs 자재 자체 입고계획) 반영 — totalInvAmountWon이 matScenario로 처리.
 // rtf/fin은 해당 조정이 없으면 null → 화면에서 "확정 전" 대기 카드로 점진 공개
 function computeHeadlineTriple() {
   var months = getRtfMonths();
@@ -1412,8 +1544,12 @@ function computeHeadlineTriple() {
     if (months[i].slice(5, 7) === "12") { mi = i; break; }
   }
   var sc = computeScenarioItemSets();
-  var matDeltas = (typeof computeMatScenarioDeltas === "function") ? computeMatScenarioDeltas(months) : null;
-  var matD = matDeltas ? (matDeltas[mi] || 0) : 0;
+  // 자재 시나리오: 원래=무조정 / RTF조정후=matSimAdj·fgProdAdj / 감축후=+excessAdj·matExcessAdj(우선)
+  var matScenRtf   = { fg: state.fgProdAdj, mat: state.matSimAdj };
+  var matScenFinal = {
+    fg:  Object.assign({}, state.fgProdAdj  || {}, state.excessAdj     || {}),
+    mat: Object.assign({}, state.matSimAdj  || {}, state.matExcessAdj  || {}),
+  };
 
   // 품절 품목 수 = 계획 구간 내 한 달이라도 공급부족인 품목
   function shortCount(items) {
@@ -1426,9 +1562,9 @@ function computeHeadlineTriple() {
     });
     return n;
   }
-  function pack(items) {
-    var inv  = rtfHeadlineInv(items, mi);
-    var disc = rtfDisclosureDays(items, mi);
+  function pack(items, matScen) {
+    var inv  = rtfHeadlineInv(items, mi, matScen);
+    var disc = rtfDisclosureDays(items, mi, matScen);
     return {
       amt:      inv.amount,
       mgmt:     Number.isFinite(inv.days) ? inv.days : null,
@@ -1437,19 +1573,10 @@ function computeHeadlineTriple() {
     };
   }
 
-  var base   = pack(sc.base);
-  var rtf    = sc.hasRtfAdj ? pack(sc.rtfAdj) : null;
-  var hasCut = sc.hasExcess || matD !== 0;
-  var fin    = null;
-  if (hasCut) {
-    fin = pack(sc.final);
-    if (matD !== 0 && Number.isFinite(fin.amt) && fin.amt > 0) {
-      var scale = (fin.amt + matD) / fin.amt;
-      fin.amt += matD;
-      if (fin.disc !== null) fin.disc *= scale;
-      if (fin.mgmt !== null) fin.mgmt *= scale;
-    }
-  }
+  var base   = pack(sc.base, null);
+  var rtf    = sc.hasRtfAdj ? pack(sc.rtfAdj, matScenRtf) : null;
+  var hasCut = sc.hasExcess || Object.keys(state.matExcessAdj || {}).length > 0;
+  var fin    = hasCut ? pack(sc.final, matScenFinal) : null;
   return { month: months[mi], base: base, rtf: rtf, fin: fin };
 }
 
@@ -1470,28 +1597,27 @@ function renderScenarioKpiBanner() {
   }
   function d(a, b) { return (Number.isFinite(a) && Number.isFinite(b)) ? a - b : null; }
 
-  // 자재 재고 변동 (자재 입고취소 - / 완제품 감축에 따른 자재 적체 + 반작용, 원)
-  var matDeltas = (typeof computeMatScenarioDeltas === "function") ? computeMatScenarioDeltas(months) : null;
+  // 자재 시나리오: 원래=무조정 / RTF조정후=matSimAdj·fgProdAdj / 감축후=+excessAdj·matExcessAdj(우선)
+  var matScenRtf   = { fg: state.fgProdAdj, mat: state.matSimAdj };
+  var matScenFinal = {
+    fg:  Object.assign({}, state.fgProdAdj  || {}, state.excessAdj     || {}),
+    mat: Object.assign({}, state.matSimAdj  || {}, state.matExcessAdj  || {}),
+  };
+  var hasCut = sc.hasExcess || Object.keys(state.matExcessAdj || {}).length > 0;
 
   var data = months.map(function(month, mi) {
-    var b = rtfHeadlineInv(sc.base, mi);
-    var r = sc.hasRtfAdj ? rtfHeadlineInv(sc.rtfAdj, mi) : b;
-    var f = sc.hasExcess ? rtfHeadlineInv(sc.final, mi) : r;
-    var bd = rtfDisclosureDays(sc.base, mi);
-    var rd = sc.hasRtfAdj ? rtfDisclosureDays(sc.rtfAdj, mi) : bd;
-    var fd = sc.hasExcess ? rtfDisclosureDays(sc.final, mi) : rd;
-    // 감축 시나리오에 자재 변동 합산 — 일수는 금액 비례 보정
-    var matD = matDeltas ? (matDeltas[mi] || 0) : 0;
-    var fAmt = Number.isFinite(f.amount) ? f.amount + matD : f.amount;
-    var scale = (matD !== 0 && Number.isFinite(f.amount) && f.amount > 0) ? fAmt / f.amount : 1;
-    var fMgmt = Number.isFinite(f.days) ? f.days * scale : f.days;
-    var fDisc = Number.isFinite(fd)     ? fd * scale     : fd;
-    var hasCut = sc.hasExcess || matD !== 0;
+    var b = rtfHeadlineInv(sc.base, mi, null);
+    var r = sc.hasRtfAdj ? rtfHeadlineInv(sc.rtfAdj, mi, matScenRtf) : b;
+    var fItems = sc.hasExcess ? sc.final : sc.rtfAdj; // FG 조정은 hasExcess일 때만 final 사용(기존 로직 유지)
+    var f  = rtfHeadlineInv(fItems, mi, matScenFinal); // 자재 시나리오는 항상 최종(감축 포함) 반영
+    var bd = rtfDisclosureDays(sc.base, mi, null);
+    var rd = sc.hasRtfAdj ? rtfDisclosureDays(sc.rtfAdj, mi, matScenRtf) : bd;
+    var fd = rtfDisclosureDays(fItems, mi, matScenFinal);
     return {
       month: month,
-      amt:  fAmt,  amtRtf:  sc.hasRtfAdj ? d(r.amount, b.amount) : null, amtExc:  hasCut ? d(fAmt, r.amount)  : null,
-      mgmt: fMgmt, mgmtRtf: sc.hasRtfAdj ? d(r.days, b.days)     : null, mgmtExc: hasCut ? d(fMgmt, r.days)   : null,
-      disc: fDisc, discRtf: sc.hasRtfAdj ? d(rd, bd)             : null, discExc: hasCut ? d(fDisc, rd)       : null,
+      amt:  f.amount, amtRtf:  sc.hasRtfAdj ? d(r.amount, b.amount) : null, amtExc:  hasCut ? d(f.amount, r.amount) : null,
+      mgmt: f.days,   mgmtRtf: sc.hasRtfAdj ? d(r.days, b.days)     : null, mgmtExc: hasCut ? d(f.days, r.days)     : null,
+      disc: fd,       discRtf: sc.hasRtfAdj ? d(rd, bd)             : null, discExc: hasCut ? d(fd, rd)             : null,
     };
   });
 
@@ -1540,10 +1666,10 @@ function renderScenarioKpiBanner() {
 // 재고일수(관리기준) = 재고금액 × 경과일수(월수×30) ÷ 전체출고 누적
 //   실적월까지는 결산 전체출고 YTD, 이후는 estMonthMgmtOutWon 월별 추정 누적
 //   (연도 바뀌면 누적 리셋 — 공시기준과 동일 사상)
-function rtfHeadlineInv(items, mi) {
+function rtfHeadlineInv(items, mi, matScenario) {
   var anchor = getActualsAnchor();
   if (anchor) {
-    var amt = totalInvAmountWon(items, mi, anchor);
+    var amt = totalInvAmountWon(items, mi, anchor, matScenario);
     var days = null;
     // 판매계획 없는 달(예측 구간 밖)은 분모 추정 불가 → 일수 미표시
     var hasPlan = false;
@@ -1634,6 +1760,8 @@ function renderRtfInventoryBar(items, baseItemsForDelta) {
 function renderRtfMonthCards(items, baseItemsForDelta) {
   var months  = getRtfMonths();
   var hasDelta = !!baseItemsForDelta;
+  // 조정 후 보기: 원부자재 롤포워드도 RTF조정 시나리오(생산·자재입고) 반영 — base는 원래계획(null)
+  var matScen = hasDelta ? { fg: state.fgProdAdj, mat: state.matSimAdj } : null;
 
   var monthData = months.map(function(month, mi) {
     var agg = aggregateMonth(items, mi);
@@ -1650,35 +1778,45 @@ function renderRtfMonthCards(items, baseItemsForDelta) {
     else if (unknownCount > 0) { cls = "unknown";  icon = "?"; label = "판단불가 " + unknownCount + "건"; }
     else                       { cls = "ok";        icon = "✓"; label = "대응가능"; }
 
-    var inv     = rtfHeadlineInv(items, mi);
+    var inv     = rtfHeadlineInv(items, mi, matScen);
     var amtRaw  = Number.isFinite(inv.amount)  ? inv.amount              : null;
     var amtVal  = amtRaw !== null              ? formatMoney(amtRaw)     : "—";
     var daysVal = Number.isFinite(inv.days)    ? Math.round(inv.days)    : null;
-    var discRaw = rtfDisclosureDays(items, mi);
+    var discRaw = rtfDisclosureDays(items, mi, matScen);
     var discVal = Number.isFinite(discRaw)     ? Math.round(discRaw)     : null;
 
-    var deltaHtml = "";
+    // 공급원인 표(deltaSpan)와 동일 클래스·형식 — 재고금액·재고일수(공시·관리) 전부 괄호 증감 표시
+    var deltaHtml = "", daysDeltaHtml = "", discDeltaHtml = "";
     if (hasDelta && baseItemsForDelta) {
-      var baseInv = rtfHeadlineInv(baseItemsForDelta, mi);
-      if (amtRaw !== null && Number.isFinite(baseInv.amount)) {
-        var delta = amtRaw - baseInv.amount;
-        var dCls = delta < 0 ? "rtf-mc-delta-good" : "rtf-mc-delta-bad";
-        deltaHtml = "<span class=\"" + dCls + "\"> (" + (delta >= 0 ? "+" : "") + formatMoney(delta) + ")</span>";
-      }
+      var baseInv = rtfHeadlineInv(baseItemsForDelta, mi, null);
+      var baseDisc = rtfDisclosureDays(baseItemsForDelta, mi, null);
+      var mkDelta = function(val, isDays) {
+        if (val === null || Math.round(isDays ? val : val / 1e8) === 0) return "";
+        var c = val > 0 ? "cst-kpi-delta up" : "cst-kpi-delta dn";
+        var t = isDays ? (val >= 0 ? "+" : "") + Math.round(val) + "일" : (val >= 0 ? "+" : "") + formatMoney(val);
+        return "<span class=\"" + c + "\">(" + t + ")</span>";
+      };
+      if (amtRaw !== null && Number.isFinite(baseInv.amount)) deltaHtml = mkDelta(amtRaw - baseInv.amount, false);
+      if (Number.isFinite(inv.days) && Number.isFinite(baseInv.days)) daysDeltaHtml = mkDelta(inv.days - baseInv.days, true);
+      if (Number.isFinite(discRaw) && Number.isFinite(baseDisc))     discDeltaHtml = mkDelta(discRaw - baseDisc, true);
     }
-    return { month: month, cls: cls, icon: icon, label: label, amtRaw: amtRaw, amtVal: amtVal, daysVal: daysVal, discVal: discVal, deltaHtml: deltaHtml };
+    return { month: month, cls: cls, icon: icon, label: label, amtRaw: amtRaw, amtVal: amtVal, daysVal: daysVal, discVal: discVal,
+      deltaHtml: deltaHtml, daysDeltaHtml: daysDeltaHtml, discDeltaHtml: discDeltaHtml };
   });
+
+  // 해넘김 마지막 달(2027-01처럼 계획연도를 벗어나는 1개월)은 이 요약 띠에서는 제외
+  var displayData = monthData.filter(function(d) { return d.month.slice(0, 4) === months[0].slice(0, 4); });
 
   var headerRow = "<tr>" +
     "<th class=\"rtf-kpi-lbl-hd\"></th>" +
-    monthData.map(function(d) {
+    displayData.map(function(d) {
       return "<th class=\"rtf-kpi-month-hd\">" + escapeHtml(monthLabel(d.month)) + "</th>";
     }).join("") + "</tr>";
 
   var _isTotalInv = getActualsAnchor() != null;
   var amtRow = "<tr class=\"rtf-kpi-r-amt\">" +
     "<td class=\"rtf-kpi-row-lbl\">" + (_isTotalInv ? "전체재고" : "재고금액") + "</td>" +
-    monthData.map(function(d) {
+    displayData.map(function(d) {
       return "<td class=\"rtf-kpi-val\">" +
         "<span class=\"rtf-kpi-main\">" + escapeHtml(d.amtVal) + "</span>" +
         (d.deltaHtml || "") +
@@ -1686,27 +1824,29 @@ function renderRtfMonthCards(items, baseItemsForDelta) {
     }).join("") + "</tr>";
 
   // 공시기준 행: 결산 매출원가(누적) 연결 시에만 표시
-  var hasDisc = monthData.some(function(d) { return d.discVal !== null; });
+  var hasDisc = displayData.some(function(d) { return d.discVal !== null; });
   var discRow = hasDisc ? "<tr class=\"rtf-kpi-r-days\">" +
     "<td class=\"rtf-kpi-row-lbl\">재고일수(공시기준)</td>" +
-    monthData.map(function(d) {
+    displayData.map(function(d) {
       var txt = d.discVal !== null ? d.discVal + "일" : "—";
       return "<td class=\"rtf-kpi-val\">" +
         "<span class=\"rtf-kpi-main\">" + escapeHtml(txt) + "</span>" +
+        (d.discDeltaHtml || "") +
         "</td>";
     }).join("") + "</tr>" : "";
 
   var daysRow = "<tr class=\"rtf-kpi-r-days\">" +
     "<td class=\"rtf-kpi-row-lbl\">" + (hasDisc ? "재고일수(관리기준)" : "재고일수") + "</td>" +
-    monthData.map(function(d) {
+    displayData.map(function(d) {
       var txt = d.daysVal !== null ? d.daysVal + "일" : "—";
       var hiCls = d.daysVal !== null && d.daysVal > 120 ? " hi" : "";
       return "<td class=\"rtf-kpi-val" + hiCls + "\">" +
         "<span class=\"rtf-kpi-main\">" + escapeHtml(txt) + "</span>" +
+        (d.daysDeltaHtml || "") +
         "</td>";
     }).join("") + "</tr>";
 
-  return "<div class=\"rtf-kpi-wrap\">" +
+  return "<div class=\"rtf-kpi-wrap\" style=\"margin-bottom:12px;\">" +
     "<table class=\"rtf-kpi-table\">" +
     "<thead>" + headerRow + "</thead>" +
     "<tbody>" + amtRow + discRow + daysRow + "</tbody>" +
@@ -1748,7 +1888,7 @@ function renderRtf() {
   const summaryLine = `${monthLabel(months[0])} 총 판매계획 <b>${escapeHtml(formatDisplayQtyMoney(firstMonth.salesQty, firstMonth.salesPlanAmount, firstMonth.salesRevenue))}${summaryUnit}</b>, RTF <b>${escapeHtml(formatDisplayQtyMoney(firstMonth.rtfQty, firstMonth.rtfAmount, firstMonth.rtfRevenue))}${summaryUnit}</b>. ${Number.isFinite(firstShortage) && firstShortage > 0 ? `<span class="rtf-alert-text">Shortage ${escapeHtml(_dm === "qty" ? formatNumber(firstShortage) + summaryUnit : formatMoney(firstShortage))}</span>` : `<span class="rtf-ok-text">Shortage 없음</span>`}`;
 
   // 4. 전후 토글 UI (항상 표시, 조정 없으면 "조정 후" 비활성)
-  const adjCount = Object.keys(state.matSimAdj || {}).length + Object.keys(state.goodsSupplyAdj || {}).length;
+  const adjCount = Object.keys(state.matSimAdj || {}).length + Object.keys(state.goodsSupplyAdj || {}).length + Object.keys(state.fgProdAdj || {}).length;
   const toggleHtml = `<div class="rtf-view-toggle" aria-label="RTF 보기 기준">
     <button type="button" class="rtf-view-btn ${state.rtfViewMode === "current" ? "active" : ""}" data-rtf-view="current">현재 계획</button>
     <button type="button" class="rtf-view-btn ${state.rtfViewMode === "adjusted" ? "active" : ""}${!hasAdj ? " disabled" : ""}" data-rtf-view="adjusted"${!hasAdj ? ' disabled title="공급원인 화면에서 자재 입고계획을 조정한 후 사용 가능합니다"' : ""}>조정 후${hasAdj ? ` ●${adjCount}건` : ""}</button>

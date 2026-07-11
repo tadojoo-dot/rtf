@@ -688,6 +688,7 @@ function _renderExcessAdjustmentInner() {
   var rtfItems     = excProf("computeRtfItems(직접호출)", function(){ return computeRtfItems(); });
   var months       = getRtfMonths();
   var plantFilter  = state.excessPlant    || "all";
+  var mgrFilter    = state.excessManager  || "all";
   var showOnlyExcess = state.excessShowOnly === true; // 기본값: 전체 표시
 
   var targetMap = new Map();
@@ -715,6 +716,7 @@ function _renderExcessAdjustmentInner() {
   // 전체 품목 + 초과 여부 플래그
   var allFgItems = rtfItems.filter(function(item) {
     if (plantFilter !== "all" && item.plantCode !== plantFilter) return false;
+    if (mgrFilter !== "all" && itemManager(item.itemCode, item.plantCode) !== mgrFilter) return false;
     return true;
   }).map(function(item) {
     var td  = targetMap.get(item.itemCode) || null;
@@ -779,6 +781,7 @@ function _renderExcessAdjustmentInner() {
       "<button class='exc-show-btn" + ( showOnlyExcess ? " exc-show-active" : "") + "' data-show='excess'>초과만 (" + excessFgItems.length + ")</button>" +
     "</div>" +
     "<select class='exc-plant-filter'>" + plantOpts + "</select>" +
+    "<select class='exc-plant-filter exc-manager-filter'>" + managerOptions(mgrFilter) + "</select>" +
     (hasAnyAdj ? "<button class='exc-reset-all-btn'>↺ 초기화</button>" : "") +
     targetWarn +
   "</div>";
@@ -1324,6 +1327,18 @@ function renderAiDiagPanel(hasTargetData) {
   state.aiDiagOpen   = state.aiDiagOpen   || {};
   var S = cls.sections, np = cls.noPlan;
 
+  // 담당자 필터 (과잉감축 완제품 목록과 동일 기준) — 표시·집계만 좁힘(원본 cls 불변).
+  // classifyAiExcess는 실제 감축 적용·타 화면에도 쓰이므로 데이터는 건드리지 않는다.
+  var mgrF = state.excessManager || "all";
+  if (mgrF !== "all") {
+    var _fMgr = function(arr) { return (arr || []).filter(function(it) { return itemManager(it.itemCode, it.plantCode) === mgrF; }); };
+    ["supply", "planfix"].forEach(function(k) {
+      var items = _fMgr(S[k].items);
+      S[k] = { items: items, totalAmt: items.reduce(function(s, it) { return s + (it.cutAmt || 0); }, 0) };
+    });
+    np = { sellout: _fMgr(np.sellout), disposal: _fMgr(np.disposal), excludedCnt: 0, excludedAmt: 0 };
+  }
+
   // 섹션별 확정(판정 반영) 현황
   function secConfirm(secId) {
     var secApplied = !!state.aiSecApplied[secId];
@@ -1392,6 +1407,7 @@ function renderAiDiagPanel(hasTargetData) {
   }
   function applyBtn(secId, hasContent) {
     if (!hasContent) return "";
+    if (mgrF !== "all") return ""; // 담당자 필터 중엔 일괄적용 숨김 (전체 기준 적용 방지)
     var on = !!state.aiSecApplied[secId];
     return "<button class='exc-aisec-apply" + (on ? " exc-aisec-apply-on" : "") + "' data-sec='" + secId + "'>" +
       (on ? "적용 해제" : "권장안 적용") + "</button>";
@@ -1464,17 +1480,21 @@ function renderAiDiagPanel(hasTargetData) {
 
   // 확정(판정·적용 반영) 총액 — 확정이 하나라도 있으면 헤드에 노출 (제·상품 기준)
   var confTotal = secConfirm("supply").conf + secConfirm("planfix").conf;
-  var headBtns = (!allApplied ? "<button class='exc-ai-apply'>권장안 전체적용</button>" : "") +
-                 (anyApplied ? "<button class='exc-ai-clear'>전체해제</button>" : "");
+  var headBtns = (mgrF !== "all")
+    ? "<span class='exc-aisec-none'>담당자: " + escapeHtml(mgrF) + " · 일괄적용은 전체에서</span>"
+    : (!allApplied ? "<button class='exc-ai-apply'>권장안 전체적용</button>" : "") +
+      (anyApplied ? "<button class='exc-ai-clear'>전체해제</button>" : "");
+  var _aiCollapsed = !!state.excessAiCollapsed;
+  var _aiCollapseBtn = "<button type='button' class='exc-ai-collapse' title='AI 진단 접기/펼치기 — 시뮬 표 공간 확보'>" + (_aiCollapsed ? "▸ 펼치기" : "▾ 접기") + "</button>";
   var head = "<div class='exc-ai-panel-head'>" +
     "<span class='exc-ai-icon'>🤖</span>" +
     "<span class='exc-ai-text'><strong>AI 과잉재고 진단</strong> — 완제품 " + fgCnt + "품목 원인 규명 완료 ➜ 권장안 적용 시 <strong class='exc-ai-good'>-" +
       escapeHtml(formatMoney(cutTotal)) + "</strong> 감축 (품절 0 유지)" +
       (identAmt > 0 ? " · 잠자는 재고 <strong class='exc-ai-good'>" + escapeHtml(formatMoney(identAmt)) + "</strong> 소진·처분 발굴" : "") +
       (confTotal > 0 ? " · <span class='exc-ai-conf'>협의 확정 -" + escapeHtml(formatMoney(confTotal)) + "</span>" : "") +
-    "</span>" + headBtns + "</div>";
+    "</span>" + headBtns + _aiCollapseBtn + "</div>";
 
-  return "<div class='exc-ai-panel'>" + head +
+  return "<div class='exc-ai-panel" + (_aiCollapsed ? " exc-ai-collapsed" : "") + "'>" + head +
     AI_SECTION_DEFS.map(function(def) {
       var kicker = def.group ? "<div class='exc-aisec-group'>" + def.group + "</div>" : "";
       return kicker + secBlock(def, sumOf[def.id], bodyOf[def.id], btnOf[def.id]);
@@ -1937,14 +1957,18 @@ function renderAiDiagCharts(it, isCut, ov) {
 var _baseMatFlowCache = null, _baseMatFlowRef = null; // 무조정(base) 자재흐름 — BOM 안 바뀌면 재사용
 function calcMatFlowRows(fgAdj, matAdj) {
   excCount("calcMatFlowRows");
+  // 생산계획 조정(fgAdj) 있으면 재전개된 BOM의 matFlows 사용 — 원래 생산 0이던 부족품목도
+  // 재전개하면 소요가 잡힘(비례조정은 ÷0으로 스킵돼 못 잡던 결함 해소). 소요는 재전개값 자체.
+  var hasFg  = fgAdj && Object.keys(fgAdj).length > 0;
+  var bomRes = (hasFg && typeof getBomResultAdj === "function") ? getBomResultAdj(fgAdj) : state.bomResult;
   if (!(typeof BOM_STATUS !== "undefined" && state.bomStatus === BOM_STATUS.DONE &&
-        state.bomResult && state.bomResult.matFlows)) return null;
+        bomRes && bomRes.matFlows)) return null;
   // base 시나리오(조정 없음)는 bomResult가 그대로면 값이 동일 → 캐시 재사용
   var isBase = !fgAdj && !matAdj;
   if (isBase && _baseMatFlowCache && _baseMatFlowRef === state.bomResult) return _baseMatFlowCache;
   var months = getRtfMonths();
   var rows = [];
-  state.bomResult.matFlows.forEach(function(f) {
+  bomRes.matFlows.forEach(function(f) {
     if (f.baseQty === null) return; // 현재고 미연결 → 계산 불가
     if (f.unitOk === false) return; // 단위 불일치(BOM/재고/입고계획) → 흐름 계산 불가
     // 소비량: 부모 완제품 생산(공급)계획 비례 — 제상품 감축 시 소요도 비례 감소
@@ -3170,6 +3194,16 @@ function bindExcessAdjustment() {
     btn.addEventListener("click", function() { toggleAiSection(btn.dataset.sec); });
   });
 
+  // AI 진단 패널 접기/펼치기 — 재렌더 없이 DOM 직접(무거운 재계산 회피), 상태는 유지
+  var _aiCol = root.querySelector(".exc-ai-collapse");
+  if (_aiCol) _aiCol.addEventListener("click", function() {
+    var panel = _aiCol.closest(".exc-ai-panel");
+    if (!panel) return;
+    var now = panel.classList.toggle("exc-ai-collapsed");
+    state.excessAiCollapsed = now;
+    _aiCol.textContent = now ? "▸ 펼치기" : "▾ 접기";
+  });
+
   // 제·상품 / 원부자재 탭 전환
   root.querySelectorAll(".exc-tab-btn").forEach(function(btn) {
     btn.addEventListener("click", function() {
@@ -3205,6 +3239,15 @@ function bindExcessAdjustment() {
   if (plantSel) {
     plantSel.addEventListener("change", function() {
       state.excessPlant = plantSel.value || "all";
+      render("inventory-variance");
+    });
+  }
+
+  // 담당자 필터
+  var mgrSel = root.querySelector(".exc-manager-filter");
+  if (mgrSel) {
+    mgrSel.addEventListener("change", function() {
+      state.excessManager = mgrSel.value || "all";
       render("inventory-variance");
     });
   }

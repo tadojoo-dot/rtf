@@ -5,6 +5,40 @@ function escapeHtml(value) {
     .replaceAll('"',"&quot;").replaceAll("'","&#039;");
 }
 
+// ── 담당자(품목별) ─ plan_monthly.manager 기준. 코드|플랜트 → 담당자 ──────────
+// 공급원인·과잉감축 담당자 필터에서 공유. plan_monthly 배열이 바뀌면 자동 재빌드.
+var _mgrMapCache = null, _mgrMapSrc = null;
+function getManagerMap() {
+  var plan = (typeof state !== "undefined" && state.mappedData && state.mappedData.plan_monthly) || [];
+  if (_mgrMapCache && _mgrMapSrc === plan) return _mgrMapCache;
+  var m = new Map();
+  plan.forEach(function(r) {
+    var mgr = (r.manager || "").trim(); if (!mgr) return;
+    var code = String(r.itemCode || "").trim(); if (!code) return;
+    var pl = String(r.plant || "").trim();
+    if (!m.has(code + "|" + pl)) m.set(code + "|" + pl, mgr);
+    if (!m.has(code + "|"))      m.set(code + "|", mgr); // 플랜트 무관 폴백
+  });
+  _mgrMapCache = m; _mgrMapSrc = plan;
+  return m;
+}
+function itemManager(code, plant) {
+  var m = getManagerMap();
+  return m.get(String(code || "") + "|" + String(plant || "")) || m.get(String(code || "") + "|") || "";
+}
+function managerList() {
+  var set = new Set();
+  getManagerMap().forEach(function(v) { if (v) set.add(v); });
+  return Array.from(set).sort(function(a, b) { return a.localeCompare(b, "ko"); });
+}
+function managerOptions(selected) {
+  selected = selected || "all";
+  var opts = "<option value='all'" + (selected === "all" ? " selected" : "") + ">전체 담당자</option>";
+  return opts + managerList().map(function(n) {
+    return "<option value='" + escapeHtml(n) + "'" + (selected === n ? " selected" : "") + ">" + escapeHtml(n) + "</option>";
+  }).join("");
+}
+
 function formatNumber(value, digits = 0) {
   if (!Number.isFinite(value)) return "-";
   return value.toLocaleString("ko-KR", { maximumFractionDigits: digits, minimumFractionDigits: digits });
@@ -47,8 +81,10 @@ function getRtfMonths() {
   if (_rtfMonthsCache && _rtfMonthsCacheKey === cacheKey) return _rtfMonthsCache;
   const planMonths = state.mappedData.plan_monthly
     .map((row) => cleanOptional(row.month)).filter(Boolean).sort();
-  const baseMonth = planMonths[0] || MONTHS[0];
-  _rtfMonthsCache = Array.from({ length: 7 }, (_, i) => addMonths(baseMonth, i));
+  const anchor = typeof getActualsAnchor === "function" ? getActualsAnchor() : null;
+  const anchorNext = anchor ? addMonths(anchor.month, 1) : null;
+  const baseMonth = (anchorNext && planMonths.includes(anchorNext)) ? anchorNext : (planMonths[0] || MONTHS[0]);
+  _rtfMonthsCache = Array.from({ length: 6 }, (_, i) => addMonths(baseMonth, i));
   _rtfMonthsCacheKey = cacheKey;
   return _rtfMonthsCache;
 }
