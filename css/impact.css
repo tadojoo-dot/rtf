@@ -5,32 +5,32 @@
 
 /* 필터 */
 .imp-controls {
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 16px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px;
   display: flex; flex-wrap: wrap; gap: 8px;
 }
 .imp-filter-group { display: flex; gap: 6px; flex-wrap: wrap; }
 .imp-filter-btn {
-  font-size: 12px; padding: 4px 12px; border: 1px solid #d1d5db;
-  border-radius: 6px; background: #fff; color: #374151; cursor: pointer;
+  font-size: 12px; padding: 4px 12px; border: 1px solid var(--line-2);
+  border-radius: 6px; background: var(--surface); color: var(--ink-2); cursor: pointer;
 }
-.imp-filter-btn:hover  { background: #f3f4f6; }
-.imp-filter-btn.active { background: #1d4ed8; border-color: #1d4ed8; color: #fff; font-weight: 600; }
+.imp-filter-btn:hover  { background: var(--bg); }
+.imp-filter-btn.active { background: #1d4ed8; border-color: #1d4ed8; color: var(--surface); font-weight: 600; }
 
 /* 차트 카드 */
 .imp-chart-card {
-  background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px 20px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 20px;
   display: flex; flex-direction: column; gap: 10px;
 }
 .imp-chart-header { display: flex; align-items: baseline; gap: 10px; }
 .imp-chart-title  { font-size: 14px; font-weight: 700; color: #111827; }
-.imp-chart-note   { font-size: 11px; color: #9ca3af; }
+.imp-chart-note   { font-size: 11px; color: var(--muted-2); }
 .imp-chart-wrap   { position: relative; height: 300px; }
 
 /* 범례 */
 .imp-chart-legend { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
 .imp-leg {
   display: inline-flex; align-items: center; gap: 5px;
-  font-size: 11px; color: #374151;
+  font-size: 11px; color: var(--ink-2);
 }
 .imp-leg::before { content: ""; display: inline-block; width: 22px; height: 3px; border-radius: 2px; }
 
@@ -39,9 +39,9 @@
 .imp-leg-base::before      { background: rgba(156,163,175,0.7); height: 10px; border-radius: 2px; }
 /* 선 범례 */
 .imp-leg-days-actual::before { background: #1d4ed8; height: 2px; }
-.imp-leg-days-base::before   { background: transparent; border-top: 2px dashed #9ca3af; height: 0; }
+.imp-leg-days-base::before   { background: transparent; border-top: 2px dashed var(--muted-2); height: 0; }
 .imp-leg-rtf::before         { background: transparent; border-top: 2px dashed #f97316; height: 0; }
-.imp-leg-excess::before      { background: transparent; border-top: 2px dashed #16a34a; height: 0; }
+.imp-leg-excess::before      { background: transparent; border-top: 2px dashed var(--good); height: 0; }
 /* 판매/공급 막대 범례 */
 .imp-leg-sales::before  { background: rgba(37,99,235,0.82); height: 10px; border-radius: 2px; }
 .imp-leg-supply::before { background: rgba(22,163,74,0.82);  height: 10px; border-radius: 2px; }
@@ -51,28 +51,28 @@
 .imp-screen { padding: 4px 0; }
 .imp-inner { max-width: 1200px; margin: 0 auto; }
 .imp-head { margin: 8px 2px 14px; }
-.imp-h2 { font-size: 22px; font-weight: 800; color: #1f2933; }
-.imp-sub { display: block; font-size: 13.5px; color: #6b7280; margin-top: 4px; }
+.imp-h2 { font-size: 22px; font-weight: 800; color: var(--ink); }
+.imp-sub { display: block; font-size: 13.5px; color: var(--muted); margin-top: 4px; }
 .imp-controls { display: flex; gap: 18px; align-items: center; margin: 0 2px 12px; flex-wrap: wrap; }
-.imp-dim-group, .imp-type-group { display: inline-flex; gap: 4px; background: #f1f5f9; border-radius: 10px; padding: 3px; }
-.imp-dim-btn, .imp-type-btn { border: none; background: transparent; color: #64748b; border-radius: 8px;
+.imp-dim-group, .imp-type-group { display: inline-flex; gap: 4px; background: var(--bg); border-radius: 10px; padding: 3px; }
+.imp-dim-btn, .imp-type-btn { border: none; background: transparent; color: var(--muted); border-radius: 8px;
   padding: 7px 16px; font-size: 14px; font-weight: 700; cursor: pointer; }
-.imp-dim-btn.active { background: #28278f; color: #fff; }
-.imp-type-btn.active { background: #fff; color: #28278f; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-.imp-table-wrap { overflow-x: auto; border: 1px solid #e5e7eb; border-radius: 12px; }
+.imp-dim-btn.active { background: var(--brand); color: var(--surface); }
+.imp-type-btn.active { background: var(--surface); color: var(--brand); box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.imp-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
 .imp-table { width: 100%; border-collapse: collapse; font-size: 15px; }
-.imp-table thead th { background: #f8fafc; color: #475569; font-size: 13px; font-weight: 700;
-  text-align: right; padding: 12px 16px; border-bottom: 2px solid #e5e7eb; white-space: nowrap; }
+.imp-table thead th { background: var(--surface-2); color: #475569; font-size: 13px; font-weight: 700;
+  text-align: right; padding: 12px 16px; border-bottom: 2px solid var(--line); white-space: nowrap; }
 .imp-table thead th.imp-th-name { text-align: left; }
-.imp-table tbody td { padding: 11px 16px; border-bottom: 1px solid #f1f5f9; }
-.imp-name { text-align: left; color: #1f2933; font-weight: 600; }
-.imp-code { display: inline-block; background: #eef2ff; color: #4338ca; border-radius: 5px; padding: 1px 6px; font-size: 12.5px; font-weight: 700; }
-.imp-bu { color: #94a3b8; font-size: 12.5px; }
-.imp-num { text-align: right; font-variant-numeric: tabular-nums; color: #334155; white-space: nowrap; }
-.imp-cnt { text-align: right; color: #64748b; font-size: 13.5px; font-variant-numeric: tabular-nums; }
-.imp-cnt b { color: #28278f; }
+.imp-table tbody td { padding: 11px 16px; border-bottom: 1px solid var(--bg); }
+.imp-name { text-align: left; color: var(--ink); font-weight: 600; }
+.imp-code { display: inline-block; background: #eef2ff; color: var(--sc-exc); border-radius: 5px; padding: 1px 6px; font-size: 12.5px; font-weight: 700; }
+.imp-bu { color: var(--muted-2); font-size: 12.5px; }
+.imp-num { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); white-space: nowrap; }
+.imp-cnt { text-align: right; color: var(--muted); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+.imp-cnt b { color: var(--brand); }
 .imp-delta-cut { color: #15803d; font-weight: 800; }
 .imp-delta-up { color: #b91c1c; font-weight: 800; }
-.imp-delta-zero { color: #cbd5e1; }
-.imp-total-row td { background: #f8fafc; font-weight: 800; font-size: 16px; border-bottom: 2px solid #e5e7eb; }
-.imp-total-row .imp-name { color: #1f2933; }
+.imp-delta-zero { color: var(--line-2); }
+.imp-total-row td { background: var(--surface-2); font-weight: 800; font-size: 16px; border-bottom: 2px solid var(--line); }
+.imp-total-row .imp-name { color: var(--ink); }

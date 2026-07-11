@@ -11,26 +11,26 @@
 .bsim-tabs {
   display: flex; gap: 4px;
   padding: 20px 24px 0;
-  border-bottom: 2px solid #e2e8f0;
+  border-bottom: 2px solid var(--line);
   margin-bottom: 0;
 }
 .bsim-tab {
   padding: 10px 24px; border-radius: 8px 8px 0 0;
   border: 1px solid transparent; border-bottom: none;
   font-size: 14px; font-weight: 700; cursor: pointer;
-  color: #64748b; background: transparent;
+  color: var(--muted); background: transparent;
   position: relative; bottom: -2px;
   display: flex; align-items: center; gap: 8px;
   transition: color 0.15s, background 0.15s;
 }
-.bsim-tab:hover { background: #f1f5f9; color: #1e293b; }
+.bsim-tab:hover { background: var(--bg); color: var(--ink); }
 .bsim-tab-active {
-  background: #fff !important; color: #1e293b !important;
-  border-color: #e2e8f0 !important; border-bottom-color: #fff !important;
+  background: var(--surface) !important; color: var(--ink) !important;
+  border-color: var(--line) !important; border-bottom-color: var(--surface) !important;
   box-shadow: 0 -2px 8px rgba(0,0,0,0.06);
 }
 .bsim-tab-sub {
-  font-size: 11px; font-weight: 500; color: #94a3b8;
+  font-size: 11px; font-weight: 500; color: var(--muted-2);
 }
 .bsim-tab-active .bsim-tab-sub { color: #6366f1; }
 
@@ -38,7 +38,7 @@
 .bsim-ctrl {
   display: flex; flex-direction: column; gap: 10px;
   padding: 20px 24px 16px;
-  background: #f8fafc; border-bottom: 1px solid #e2e8f0;
+  background: var(--surface-2); border-bottom: 1px solid var(--line);
 }
 .bsim-ctrl-row {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
@@ -47,7 +47,7 @@
   align-items: flex-start;
 }
 .bsim-label {
-  font-size: 13px; font-weight: 700; color: #374151;
+  font-size: 13px; font-weight: 700; color: var(--ink-2);
   white-space: nowrap; min-width: 72px; padding-top: 6px;
 }
 .bsim-fg-sel-wrap {
@@ -55,34 +55,34 @@
 }
 .bsim-fg-sel {
   min-width: 340px; max-width: 680px; width: 100%;
-  padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 8px;
-  font-size: 13px; color: #1e293b; background: #fff;
+  padding: 6px 8px; border: 1px solid var(--line-2); border-radius: 8px;
+  font-size: 13px; color: var(--ink); background: var(--surface);
 }
 .bsim-fg-sel:focus { outline: none; border-color: #6366f1; }
 .bsim-sel-hint {
-  font-size: 11px; color: #9ca3af;
+  font-size: 11px; color: var(--muted-2);
 }
 .bsim-qty {
-  width: 120px; padding: 8px 12px; border: 1px solid #d1d5db;
+  width: 120px; padding: 8px 12px; border: 1px solid var(--line-2);
   border-radius: 8px; font-size: 14px; text-align: right;
-  color: #1e293b; background: #fff; height: 40px;
+  color: var(--ink); background: var(--surface); height: 40px;
 }
 .bsim-qty:focus { outline: none; border-color: #6366f1; }
-.bsim-qty-unit { font-size: 13px; color: #6b7280; }
+.bsim-qty-unit { font-size: 13px; color: var(--muted); }
 .bsim-mat-inp {
-  width: 360px; padding: 8px 12px; border: 1px solid #d1d5db;
-  border-radius: 8px; font-size: 14px; color: #1e293b; background: #fff;
+  width: 360px; padding: 8px 12px; border: 1px solid var(--line-2);
+  border-radius: 8px; font-size: 14px; color: var(--ink); background: var(--surface);
   height: 40px;
 }
 .bsim-mat-inp:focus { outline: none; border-color: #6366f1; }
 .bsim-run {
-  padding: 9px 24px; background: #1a3558; color: #fff;
+  padding: 9px 24px; background: var(--navy); color: var(--surface);
   border: none; border-radius: 8px; font-size: 14px; font-weight: 700;
   cursor: pointer; height: 40px;
   transition: background 0.15s;
 }
 .bsim-run:hover { background: #1e4a7a; }
-.bsim-ctrl-hint { font-size: 12px; color: #9ca3af; padding-left: 84px; }
+.bsim-ctrl-hint { font-size: 12px; color: var(--muted-2); padding-left: 84px; }
 
 /* 결과 영역 */
 .bsim-result {
@@ -90,7 +90,7 @@
 }
 .bsim-empty {
   padding: 60px 24px; text-align: center;
-  color: #9ca3af; font-size: 14px; line-height: 1.8;
+  color: var(--muted-2); font-size: 14px; line-height: 1.8;
 }
 
 /* 요약 배지 */
@@ -99,8 +99,8 @@
   margin-bottom: 14px; flex-wrap: wrap;
 }
 .bsim-sum-item {
-  font-size: 13px; color: #374151; padding: 4px 12px;
-  background: #f1f5f9; border-radius: 20px;
+  font-size: 13px; color: var(--ink-2); padding: 4px 12px;
+  background: var(--bg); border-radius: 20px;
 }
 .bsim-shortage-tag { background: #fef2f2 !important; color: #b91c1c !important; font-weight: 700; }
 .bsim-ok-tag       { background: #dcfce7 !important; color: #15803d !important; font-weight: 700; }
@@ -109,14 +109,14 @@
 /* 테이블 */
 .bsim-table-wrap {
   overflow-x: auto;
-  border: 1px solid #e2e8f0; border-radius: 10px;
+  border: 1px solid var(--line); border-radius: 10px;
 }
 .bsim-table {
   border-collapse: collapse; width: 100%; font-size: 14px;
   min-width: 680px;
 }
 .bsim-table thead th {
-  background: #1e293b; color: #fff;
+  background: var(--ink); color: var(--surface);
   padding: 11px 16px; font-size: 12px; font-weight: 700;
   text-align: center; white-space: nowrap; border: none;
 }
@@ -124,24 +124,24 @@
 .bsim-table thead th:nth-child(2) { text-align: left; }
 .bsim-table tbody tr:last-child td { border-bottom: none; }
 .bsim-table tbody td {
-  padding: 11px 16px; border-bottom: 1px solid #f1f5f9;
+  padding: 11px 16px; border-bottom: 1px solid var(--bg);
   vertical-align: middle;
 }
-.bsim-table tbody tr:hover td { background: #f8faff; }
+.bsim-table tbody tr:hover td { background: var(--surface-2); }
 .bsim-row-short td { background: #fff7f7 !important; }
 .bsim-row-short:hover td { background: #fef2f2 !important; }
 
-.bsim-td-code { font-size: 12px; color: #64748b; white-space: nowrap; }
-.bsim-td-name { font-weight: 600; color: #1e293b; }
-.bsim-td-c    { text-align: center; color: #6b7280; font-size: 13px; }
+.bsim-td-code { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.bsim-td-name { font-weight: 600; color: var(--ink); }
+.bsim-td-c    { text-align: center; color: var(--muted); font-size: 13px; }
 .bsim-td-r    { text-align: right; font-variant-numeric: tabular-nums; }
-.bsim-td-need { font-weight: 800; color: #1e293b; font-size: 15px; }
+.bsim-td-need { font-weight: 800; color: var(--ink); font-size: 15px; }
 
 .bsim-surplus  { color: #15803d; font-weight: 700; }
 .bsim-shortage { color: #b91c1c; font-weight: 700; }
-.bsim-nodata   { color: #9ca3af; font-size: 12px; }
+.bsim-nodata   { color: var(--muted-2); font-size: 12px; }
 
 .bsim-selected-names {
-  font-size: 12px; color: #64748b;
+  font-size: 12px; color: var(--muted);
   padding: 0 0 10px 0; line-height: 1.6;
 }

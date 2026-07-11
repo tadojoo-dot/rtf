@@ -1,32 +1,65 @@
 :root {
-  --color-primary: #28278f;
+  /* ==== 디자인 토큰: 실제 값은 이 블록에만 존재. 아래 레거시 이름은 전부 별칭. ==== */
+
+  /* 구조 */
+  --ink:        #1f2933;
+  --ink-2:      #374151;
+  --muted:      #6b7280;
+  --muted-2:    #9ca3af;
+  --line:       #e3e7ef;
+  --line-2:     #d1d5db;
+  --bg:         #f3f5f9;
+  --surface:    #ffffff;
+  --surface-2:  #f7f9fc;
+
+  /* 브랜드 */
+  --navy:       #1a3558;
+  --navy-sky:   #7dd3fc;
+  --navy-sub:   #93b8d8;
+  --navy-body:  #e2eaf4;
+  --brand:      #28278f;
+  --data:       #1e3a8a;
+
+  /* 의미 */
+  --good:       #16a34a;
+  --days:       #0f766e;
+  --warn:       #e98300;
+  --warn-ink:   #a85e00;
+  --danger:     #b02a37;
+
+  /* 3단 시나리오 (원계획 → RTF조정 → 과잉감축) */
+  --sc-base:    #c7d2fe;
+  --sc-rtf:     #818cf8;
+  --sc-exc:     #4338ca;
+
+  /* 회의 부(部) */
+  --part1:      #4f46e5;
+  --part2:      #0891b2;
+  --part3:      #16a34a;
+
+  /* ==== 레거시 이름 (삭제 금지, 위 토큰을 가리키는 별칭) ==== */
+  --color-primary: var(--brand);
   --color-primary-dark: #17194a;
-  --color-accent: #28278f;
-  --color-bg: #f3f5f9;
-  --color-card: #ffffff;
-  --color-card-soft: #f7f9fc;
-  --color-border: #e3e7ef;
-  --color-text: #1f2933;
-  --color-muted: #6b7280;
-  --color-warn: #e67e22;
-  --color-danger: #c0392b;
-  --color-ok: #2f5f3a;
+  --color-accent: var(--brand);
+  --color-bg: var(--bg);
+  --color-card: var(--surface);
+  --color-card-soft: var(--surface-2);
+  --color-border: var(--line);
+  --color-text: var(--ink);
+  --color-muted: var(--muted);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-ok: var(--good);
   --radius-card: 8px;
   --shadow-card: 0 2px 8px rgba(15, 23, 42, 0.06);
   --space-section: 20px;
   --font-size-kpi: 28px;
   --font-size-body: 14px;
-  --bg: var(--color-bg);
-  --panel: var(--color-card);
-  --panel-soft: var(--color-card-soft);
-  --ink: var(--color-text);
-  --muted: var(--color-muted);
-  --line: var(--color-border);
-  --accent: var(--color-accent);
-  --accent-dark: var(--color-primary);
-  --warn: var(--color-warn);
-  --danger: var(--color-danger);
-  --ok: var(--color-ok);
+  --panel: var(--surface);
+  --panel-soft: var(--surface-2);
+  --accent: var(--brand);
+  --accent-dark: var(--brand);
+  --ok: var(--good);
   --shadow: var(--shadow-card);
   font-family: "Pretendard Variable", Pretendard, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
 }

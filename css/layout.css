@@ -14,8 +14,8 @@
   align-items: stretch;
   height: 68px;
   flex-shrink: 0;
-  background: #ffffff;
-  border-bottom: 3px solid #24272b;
+  background: var(--surface);
+  border-bottom: 3px solid var(--ink);
   box-shadow: 0 1px 6px rgba(15, 23, 42, 0.08);
 }
 
@@ -25,12 +25,12 @@
   gap: 10px;
   flex-shrink: 0;
   padding: 0 18px;
-  border-right: 1px solid #e1e5ec;
+  border-right: 1px solid var(--line);
   margin-right: 4px;
 }
 
 .brand strong {
-  color: #1f2933;
+  color: var(--ink);
   font-size: 15px;
   font-weight: 800;
   white-space: nowrap;
@@ -38,7 +38,7 @@
 }
 
 .brand span {
-  color: #6b7280;
+  color: var(--muted);
   font-size: 11px;
   white-space: nowrap;
 }
@@ -62,10 +62,10 @@
   flex-shrink: 0;
   height: 100%;
   padding: 0 20px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--line-2);
   border-bottom: none;
   border-radius: 8px 8px 0 0;
-  background: #f3f5f9;
+  background: var(--bg);
   color: #4b5563;
   font-size: 17px;
   font-weight: 600;
@@ -76,15 +76,15 @@
 }
 
 .tab-btn:hover {
-  background: #e8ecf5;
-  color: #1f2933;
-  border-color: #9ca3af;
+  background: var(--line);
+  color: var(--ink);
+  border-color: var(--muted-2);
 }
 
 .tab-btn.active {
-  background: #24272b;
-  color: #ffffff;
-  border-color: #24272b;
+  background: var(--ink);
+  color: var(--surface);
+  border-color: var(--ink);
   font-weight: 700;
 }
 
@@ -104,7 +104,7 @@
 
 .tab-btn.active .tab-num {
   background: rgba(255,255,255,0.18);
-  color: #fff;
+  color: var(--surface);
 }
 
 .tab-label {
@@ -121,12 +121,12 @@
   align-items: center;
   align-self: center;
   padding: 4px 4px;
-  color: #94a3b8;
+  color: var(--muted-2);
   font-size: 10px;
   font-weight: 800;
   white-space: nowrap;
   letter-spacing: 0.04em;
-  border-left: 1px solid #e2e8f0;
+  border-left: 1px solid var(--line);
   margin-left: 8px;
   writing-mode: vertical-rl;
   text-orientation: mixed;
@@ -143,22 +143,22 @@
 /* 도구 탭 (BOM시뮬·다운로드): 우측 정렬, 번호 없음, 낮은 시각 위상 */
 .tab-btn.tab-util {
   padding: 0 12px;
-  background: #ffffff;
-  border-color: #e5e7eb;
-  color: #9ca3af;
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--muted-2);
 }
 .tab-btn.tab-util .tab-label {
   font-size: 13px;
   font-weight: 600;
 }
 .tab-btn.tab-util:hover {
-  background: #f3f5f9;
+  background: var(--bg);
   color: #4b5563;
 }
 .tab-btn.tab-util.active {
   background: #4b5563;
   border-color: #4b5563;
-  color: #ffffff;
+  color: var(--surface);
 }
 .tab-btn.tab-util-first {
   margin-left: auto;
@@ -167,22 +167,22 @@
 /* 상태 스냅샷 컨트롤 (우측 도구 영역) */
 .snap-control {
   display: inline-flex; align-items: center; gap: 6px; margin-left: 10px;
-  padding-left: 10px; border-left: 1px solid #e5e7eb;
+  padding-left: 10px; border-left: 1px solid var(--line);
 }
 .snap-save-btn {
   padding: 5px 12px; border-radius: 7px; cursor: pointer;
-  background: #4338ca; color: #fff; border: 1px solid #4338ca;
+  background: var(--sc-exc); color: var(--surface); border: 1px solid var(--sc-exc);
   font-size: 13px; font-weight: 700; white-space: nowrap;
 }
 .snap-save-btn:hover { background: #3730a3; }
 .snap-select {
   max-width: 220px; padding: 5px 8px; border-radius: 7px;
-  border: 1px solid #c7d2fe; background: #eef2ff; color: #3730a3;
+  border: 1px solid var(--sc-base); background: #eef2ff; color: #3730a3;
   font-size: 13px; font-weight: 600; cursor: pointer;
 }
 .snap-del-btn {
   padding: 5px 9px; border-radius: 7px; cursor: pointer;
-  background: #fff; border: 1px solid #d1d5db; color: #6b7280; font-size: 13px;
+  background: var(--surface); border: 1px solid var(--line-2); color: var(--muted); font-size: 13px;
 }
 .snap-del-btn:hover { background: #fef2f2; border-color: #fca5a5; color: #b91c1c; }
 
@@ -192,8 +192,8 @@
   gap: 10px;
   flex-shrink: 0;
   padding: 0 20px;
-  border-left: 1px solid #e1e5ec;
-  color: #6b7280;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
   font-size: 13px;
   white-space: nowrap;
 }
@@ -203,10 +203,10 @@
   align-items: center;
   gap: 4px;
   padding: 5px 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--line-2);
   border-radius: 6px;
-  background: #f3f5f9;
-  color: #374151;
+  background: var(--bg);
+  color: var(--ink-2);
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
@@ -216,9 +216,9 @@
 }
 
 .data-check-btn:hover {
-  background: #e8ecf5;
-  border-color: #28278f;
-  color: #28278f;
+  background: var(--line);
+  border-color: var(--brand);
+  color: var(--brand);
 }
 
 .status-dot {
@@ -240,14 +240,14 @@
 .screen-titlebar {
   padding: 8px 32px 7px;
   border-bottom: 1px solid var(--line);
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .screen-titlebar h1 {
   font-size: 18px;
   font-weight: 700;
   line-height: 1.2;
-  color: #1f2933;
+  color: var(--ink);
 }
 
 .screen-root {
@@ -363,8 +363,8 @@
   min-height: 46px;
   margin-inline: -18px;
   padding: 12px 18px;
-  color: #ffffff;
-  background: #2b2b2b;
+  color: var(--surface);
+  background: var(--ink);
 }
 
 .section-card-head h2 {

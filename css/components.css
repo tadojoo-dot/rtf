@@ -5,7 +5,7 @@
   border: 1px solid transparent;
   border-radius: 5px 5px 0 0;
   color: #495057;
-  background: #e9edf3;
+  background: var(--line);
   text-align: center;
   font-size: 12px;
   font-weight: 700;
@@ -14,16 +14,16 @@
 }
 
 .tab-button:hover {
-  color: #1f2933;
+  color: var(--ink);
   background: #fff4cc;
   border-color: transparent;
   box-shadow: none;
 }
 
 .tab-button.is-active {
-  color: #ffffff;
-  background: #24272b;
-  border-color: #24272b;
+  color: var(--surface);
+  background: var(--ink);
+  border-color: var(--ink);
   box-shadow: none;
 }
 
@@ -99,11 +99,11 @@
 
 .notice-no-data {
   padding: 28px 24px;
-  border: 1px solid #c9d6e3;
+  border: 1px solid var(--line-2);
   border-left: 4px solid var(--color-primary);
   border-radius: var(--radius-card);
   color: var(--ink);
-  background: #f0f4fc;
+  background: var(--bg);
   line-height: 1.8;
   font-size: 14px;
 }
@@ -122,7 +122,7 @@
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .badge {
@@ -136,17 +136,17 @@
 }
 
 .badge.ok {
-  color: #ffffff;
+  color: var(--surface);
   background: var(--ok);
 }
 
 .badge.warn {
-  color: #ffffff;
+  color: var(--surface);
   background: var(--warn);
 }
 
 .badge.missing {
-  color: #ffffff;
+  color: var(--surface);
   background: var(--danger);
 }
 
@@ -157,7 +157,7 @@
   border: 1px solid var(--line);
   border-left: 4px solid var(--color-primary);
   border-radius: var(--radius-card);
-  background: #f8f9fa;
+  background: var(--surface-2);
   box-shadow: var(--shadow);
 }
 
@@ -216,7 +216,7 @@
   height: 22px;
   border-radius: 50%;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--surface);
   font-size: 11px;
   font-weight: 900;
 }
@@ -277,7 +277,7 @@
   border: 1px solid var(--line);
   border-left: 4px solid var(--line);
   border-radius: 8px;
-  background: #f9fafc;
+  background: var(--surface-2);
 }
 
 .ic-high { border-left-color: var(--danger); }
@@ -400,7 +400,7 @@
 }
 
 .iar-row:hover {
-  background: #f4f6fc;
+  background: var(--bg);
 }
 
 .iar-month {
@@ -644,7 +644,7 @@
 /* ── badge: 재고증가 ────────────────────────────────────── */
 
 .badge.info {
-  color: #ffffff;
+  color: var(--surface);
   background: var(--color-primary);
 }
 
@@ -699,11 +699,11 @@
 }
 
 .it-row:hover {
-  background: #f4f6fc;
+  background: var(--bg);
 }
 
 .it-row-issue {
-  background: #fff9f8;
+  background: var(--surface-2);
   border-left: 3px solid var(--danger);
   padding-left: 11px;
 }
@@ -768,7 +768,7 @@
 .it-foot {
   padding: 9px 14px;
   border-top: 1px solid var(--line);
-  background: #f8f9fc;
+  background: var(--surface-2);
   color: var(--muted);
   font-size: 11px;
   font-weight: 600;
@@ -779,14 +779,14 @@
   align-items: center;
   padding: 2px 9px;
   border-radius: 4px;
-  background: #eef0f8;
+  background: var(--bg);
   color: var(--color-primary);
   font-size: 11px;
   font-weight: 700;
 }
 
 .badge.danger {
-  color: #ffffff;
+  color: var(--surface);
   background: var(--danger);
 }
 
@@ -796,7 +796,7 @@
   display: inline-block;
   padding: 2px 7px;
   border-radius: 4px;
-  background: #eef0f8;
+  background: var(--bg);
   color: var(--accent-dark);
   font-size: 11px;
   font-weight: 700;
@@ -837,7 +837,7 @@
 .stp-panel-head {
   padding: 10px 16px 9px;
   border-bottom: 1px solid var(--line);
-  background: #f8f9fd;
+  background: var(--surface-2);
 }
 
 .stp-panel-label {
@@ -895,7 +895,7 @@
   border: 1px solid var(--line);
   border-left: 4px solid var(--line);
   border-radius: 8px;
-  background: #f9fafc;
+  background: var(--surface-2);
   overflow: hidden;
 }
 
@@ -909,7 +909,7 @@
   justify-content: space-between;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
-  background: #f2f3f8;
+  background: var(--bg);
 }
 
 .agenda-card-title {
@@ -923,7 +923,7 @@
   align-items: center;
   padding: 2px 8px;
   border-radius: 4px;
-  background: #e8eaf5;
+  background: var(--line);
   color: var(--accent-dark);
   font-size: 10px;
   font-weight: 700;
@@ -961,7 +961,7 @@
   color: var(--muted);
   font-size: 11px;
   border-bottom: 1px solid var(--line);
-  background: #fafafa;
+  background: var(--surface-2);
 }
 
 .agenda-question {
@@ -1042,7 +1042,7 @@
   height: 15px;
   border-radius: 50%;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--surface);
   font-size: 10px;
   font-weight: 900;
   display: inline-flex;
@@ -1074,8 +1074,8 @@
 
 .jl-ok     { background: var(--panel); }
 .jl-warn   { background: #fffaf4; }
-.jl-danger { background: #fff9f8; }
-.jl-action { background: #f4f6fc; }
+.jl-danger { background: var(--surface-2); }
+.jl-action { background: var(--bg); }
 
 .jl-num {
   flex-shrink: 0;
@@ -1083,7 +1083,7 @@
   height: 24px;
   border-radius: 50%;
   background: var(--color-primary);
-  color: #fff;
+  color: var(--surface);
   font-size: 12px;
   font-weight: 900;
   display: flex;
@@ -1123,10 +1123,10 @@
 /* ── 조정안에 담기 버튼 ─────────────────────────────────── */
 
 .adj-candidate-btn {
-  background: #f3f4f6;
-  border: 1px dashed #9ca3af;
+  background: var(--bg);
+  border: 1px dashed var(--muted-2);
   border-radius: 6px;
-  color: #9ca3af;
+  color: var(--muted-2);
   cursor: not-allowed;
   font-size: 12px;
   font-weight: 700;
@@ -1143,25 +1143,25 @@
 }
 
 .adj-candidate-hint {
-  color: #9ca3af;
+  color: var(--muted-2);
   font-size: 11px;
 }
 
 
 /* ── 회의 진행 바 (품목 순차 점검 — 공급원인·과잉감축 공용) ── */
 .walkbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 10px;
-  padding: 9px 14px; margin: 10px 0 12px; font-size: 14px; color: #1e293b; }
-.walkbar-title { font-weight: 800; color: #4338ca; white-space: nowrap; }
-.walkbar-count { font-size: 15px; color: #334155; white-space: nowrap; }
-.walkbar-count b { color: #4338ca; font-size: 17px; }
+  background: #eef2ff; border: 1px solid var(--sc-base); border-radius: 10px;
+  padding: 9px 14px; margin: 10px 0 12px; font-size: 14px; color: var(--ink); }
+.walkbar-title { font-weight: 800; color: var(--sc-exc); white-space: nowrap; }
+.walkbar-count { font-size: 15px; color: var(--ink-2); white-space: nowrap; }
+.walkbar-count b { color: var(--sc-exc); font-size: 17px; }
 .walkbar-cur { flex: 1; min-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .walkbar-cur b { color: #0f172a; }
 .walkbar-plant { display: inline-block; background: #e0e7ff; color: #3730a3; border-radius: 6px;
   padding: 1px 7px; font-size: 12.5px; font-weight: 700; }
 .walkbar-donechip { display: inline-block; background: #dcfce7; color: #15803d; border-radius: 6px;
   padding: 1px 7px; font-size: 12.5px; font-weight: 700; }
-.walkbar-btn { border: 1px solid #c7d2fe; background: #fff; color: #4338ca; border-radius: 8px;
+.walkbar-btn { border: 1px solid var(--sc-base); background: var(--surface); color: var(--sc-exc); border-radius: 8px;
   padding: 5px 12px; font-size: 13.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
 .walkbar-btn:hover:not(:disabled) { background: #e0e7ff; }
 .walkbar-btn:disabled { opacity: .4; cursor: default; }
