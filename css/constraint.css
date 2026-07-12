@@ -89,6 +89,15 @@
   text-align: left; transition: background 0.1s;
 }
 .cst-collapse-btn:hover { background: var(--bg); color: var(--ink); }
+.cst-collapse-icon { display: inline-block; width: 14px; }
+
+/* ── KPI 배너 접힘 한 줄 요약 (renderCstBannerSection) ── */
+.cst-kpi-collapse-btn { font-weight: 700; }
+.cst-kpi-headline { display: inline-flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.cst-kpi-headline-lbl { color: var(--muted); font-weight: 600; font-size: 13px; }
+.cst-kpi-headline-val { color: var(--ink); font-size: 16px; font-weight: 800; }
+.cst-kpi-headline-chips { font-size: 13px; font-weight: 600; color: var(--muted); }
+.cst-kpi-headline-chips .cst-kpi-delta { font-size: 13px; font-weight: 700; margin: 0 2px; }
 
 /* ── 안내/진행/실패 박스 ── */
 .cst-guide-box {

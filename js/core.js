@@ -112,6 +112,10 @@ const state = {
   excessExpandedRows: new Set(), // 완제품 드릴다운 펼쳐진 키
   matExcessExpandedRows: new Set(), // 자재 드릴다운 펼쳐진 키
   chartScenario: "기존", // 연간 수급 추이 차트(회의안건/재고진단 공용) 시나리오: "기존" | "RTF조정" | "과잉조정"
+  cstBannerOpen: false,  // 공급원인 화면 상단 KPI 배너(3시나리오 월별표) 펼침 여부 — 기본 접힘
+  cstAiOpen:     false,  // 공급원인 화면 AI 선제안 패널 펼침 여부 — 기본 접힘
+  excBannerOpen: false,  // 과잉감축 화면 상단 KPI 배너 펼침 여부 — 기본 접힘
+  excAiOpen:     false,  // 과잉감축 화면 AI 진단 패널 펼침 여부 — 기본 접힘
 };
 
 // DOM 참조

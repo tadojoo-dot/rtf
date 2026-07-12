@@ -1,4 +1,47 @@
-﻿// ── 완제품 카드 렌더 ───────────────────────────────────────────────────────────
+﻿// ── 조정 입력 공통 헬퍼 (천단위 쉼표 표시 + 파싱) ──────────────────────────────
+// type="number"는 "250,000" 같은 쉼표 값을 무효로 보고 거부하므로, 조정용 숫자
+// 입력은 전부 type="text" + inputmode="numeric"으로 통일하고 여기서 표시/파싱을 담당한다.
+// 값을 읽는 곳에서는 반드시 이 함수로 쉼표를 제거하고 파싱할 것 (parseFloat/Number 직접 사용 금지).
+function parseAdjInput(v) {
+  var n = Number(String(v == null ? "" : v).replace(/,/g, "").trim());
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+}
+
+// 입력 중 실시간 쉼표 포맷 — 캐럿 위치는 그 앞의 "숫자 자릿수"를 기준으로 보정해
+// 쉼표가 추가/제거돼도 커서가 끝으로 튀지 않게 한다.
+function _adjLiveFormat(el) {
+  var raw = el.value;
+  var caret = el.selectionStart == null ? raw.length : el.selectionStart;
+  var digitsBeforeCaret = raw.slice(0, caret).replace(/[^\d]/g, "").length;
+  var digitsOnly = raw.replace(/[^\d]/g, "");
+  var formatted = digitsOnly === "" ? "" : Number(digitsOnly).toLocaleString("ko-KR");
+  if (el.value === formatted) return;
+  el.value = formatted;
+  if (digitsBeforeCaret <= 0) { try { el.setSelectionRange(0, 0); } catch (e) {} return; }
+  var count = 0, pos = formatted.length;
+  for (var i = 0; i < formatted.length; i++) {
+    if (/\d/.test(formatted[i])) {
+      count++;
+      if (count === digitsBeforeCaret) { pos = i + 1; break; }
+    }
+  }
+  try { el.setSelectionRange(pos, pos); } catch (e) {}
+}
+
+// 지정 클래스들의 input 이벤트를 document에 위임 등록 — 화면이 재렌더돼 요소가
+// 새로 생겨도(제자리 교체 포함) 재바인딩 없이 항상 동작한다. 스크립트 로드 시 1회만 호출할 것.
+function registerAdjCommaLive(classNames) {
+  document.addEventListener("input", function(e) {
+    var el = e.target;
+    if (!el || el.tagName !== "INPUT") return;
+    for (var i = 0; i < classNames.length; i++) {
+      if (el.classList.contains(classNames[i])) { _adjLiveFormat(el); return; }
+    }
+  });
+}
+registerAdjCommaLive(["cst-adj-month-input", "cst-fgp-input", "cst-fg-adj-input", "cst-goods-input", "mat-sim-input"]);
+
+// ── 완제품 카드 렌더 ───────────────────────────────────────────────────────────
 function renderFgCards(fgGroups, months) {
   if (!fgGroups.length) return "";
 
@@ -49,10 +92,10 @@ function renderFgCards(fgGroups, months) {
           : "";
 
         var inputHtml = isShortMonth
-          ? "<input type=\"number\" class=\"cst-fg-adj-input\" " +
+          ? "<input type=\"text\" inputmode=\"numeric\" class=\"cst-fg-adj-input\" " +
             "data-key=\"" + escapeHtml(simKey) + "\" " +
-            "placeholder=\"조정\" step=\"1\" min=\"0\" " +
-            (adjVal !== "" ? "value=\"" + Number(adjVal) + "\"" : "") + " />" + adjTag
+            "placeholder=\"조정\" " +
+            (adjVal !== "" ? "value=\"" + formatNumber(Math.round(Number(adjVal))) + "\"" : "") + " />" + adjTag
           : "<span class=\"cst-fg-no-shortage\">-</span>";
 
         return "<td class=\"cst-fg-month-cell" + (isShortMonth ? " shortage" : "") + "\">" +
@@ -296,8 +339,8 @@ function renderCstGoodsMatTable(items, months, origSupply, unitMap, baseMap) {
       var salesHtml = sales !== null ? "<div class=\"cst-sa-sales\">판매 " + formatNumber(Math.round(sales)) + "</div>" : "";
       var inputCell = "<td class=\"cst-sa-input-cell" + borderCls + (isAdj ? " cst-sa-adjusted" : "") + "\">" +
         salesHtml +
-        "<input type=\"number\" class=\"cst-goods-input\" data-key=\"" + escapeHtml(k) + "\" data-orig=\"" + Math.round(orig) +
-        "\" value=\"" + Math.round(adj) + "\" min=\"0\" step=\"1\" />" + deltaHtml + "</td>";
+        "<input type=\"text\" inputmode=\"numeric\" class=\"cst-goods-input\" data-key=\"" + escapeHtml(k) + "\" data-orig=\"" + Math.round(orig) +
+        "\" value=\"" + formatNumber(Math.round(adj)) + "\" />" + deltaHtml + "</td>";
       // 부족 없는 달 — 재고 수량·일수 (조정 반영, 회색 보조 표시)
       var invHtml = Number.isFinite(ms.endingQty)
         ? "<span class=\"cst-inv-sub\">" + formatNumber(Math.round(ms.endingQty)) + "·" +
@@ -592,9 +635,9 @@ function renderCstShortMaterialsPanel(d) {
     var openDisp   = openingQty !== null ? fmtV(openingQty) : (item.hasInventory ? "-" : "미연결");
 
     var incomDelta = adjIncoming - incomingQty;
-    var incomCell  = "<input type=\"number\" class=\"mat-sim-input\" " +
+    var incomCell  = "<input type=\"text\" inputmode=\"numeric\" class=\"mat-sim-input\" " +
       "data-key=\"" + escapeHtml(simKey) + "\" data-orig=\"" + incomingQty + "\" " +
-      "value=\"" + adjIncoming + "\" min=\"0\" step=\"1\" />" +
+      "value=\"" + formatNumber(Math.round(adjIncoming)) + "\" />" +
       (isAdjusted ? "<span class=\"mat-sim-delta " + (incomDelta > 0 ? "mat-sim-pos" : "mat-sim-neg") + "\">" +
         (incomDelta > 0 ? "+" : "") + formatNumber(Math.round(incomDelta)) + "</span>" : "");
 
@@ -2004,9 +2047,9 @@ function renderCstAdjSubRow(item, months, totalCols, matSupplyMap) {
         (c.delta > 0 ? "+" : "") + formatNumber(Math.round(c.delta)) + "</span>"
       : "";
     return "<td class=\"cst-adj-input-cell" + borderCls + activeCls + "\">" +
-      "<input type=\"number\" class=\"cst-adj-month-input\" " +
+      "<input type=\"text\" inputmode=\"numeric\" class=\"cst-adj-month-input\" " +
       "data-key=\"" + escapeHtml(c.k) + "\" data-orig=\"" + c.orig + "\" " +
-      "value=\"" + c.adj + "\" min=\"0\" step=\"1\" />" +
+      "value=\"" + formatNumber(Math.round(c.adj)) + "\" />" +
       deltaHtml + "</td>";
   }).join("");
   var sCells = shortCells.map(function(s, ci) {
@@ -2413,7 +2456,7 @@ function renderCstAiSuggestion(months) {
   var clearBtn = hasApplied
     ? "<button type=\"button\" class=\"exc-ai-clear cst-ai-clear-all\" id=\"cstAiClearAll\">전체해제</button>" : "";
   var mgrNote = (mgrFilter === "all") ? "" : " <span class=\"exc-aisec-none\">· 담당자: " + escapeHtml(mgrFilter) + "</span>";
-  var _cstAiCollapsed = !!state.cstAiCollapsed;
+  var _cstAiCollapsed = !state.cstAiOpen; // 기본 접힘 — 회의 초반엔 조정 표(부족목록)가 먼저 보여야 함
   var _cstAiCollapseBtn = "<button type=\"button\" class=\"exc-ai-collapse\" title=\"AI 진단 접기/펼치기\">" + (_cstAiCollapsed ? "▸ 펼치기" : "▾ 접기") + "</button>";
   var head = "<div class=\"exc-ai-panel-head\">" +
     "<span class=\"exc-ai-icon\">🤖</span>" +
@@ -3225,8 +3268,8 @@ function renderCstFgMatTable(mats, months, supplyMap, simAdj, fg) {
       var deltaHtml = isAdj ? "<span class=\"mat-sim-delta mat-sim-pos\">+" + formatNumber(Math.round(val - orig)) + "</span>" : "";
       prodC += "<td class=\"cst-psi-val cst-psi-input" + bcl + (isAdj ? " cst-sa-adjusted" : "") + "\">" +
         (hasPlanKey
-          ? "<input type=\"number\" class=\"cst-fgp-input\" data-key=\"" + escapeHtml(k) + "\" data-orig=\"" + Math.round(orig) +
-            "\" value=\"" + Math.round(val) + "\" min=\"" + Math.round(orig) + "\" step=\"1\" />" + deltaHtml
+          ? "<input type=\"text\" inputmode=\"numeric\" class=\"cst-fgp-input\" data-key=\"" + escapeHtml(k) + "\" data-orig=\"" + Math.round(orig) +
+            "\" value=\"" + formatNumber(Math.round(val)) + "\" />" + deltaHtml
           : "-") + "</td>";
 
       var sQty = Number.isFinite(ms.shortageQty) ? ms.shortageQty : 0;
@@ -3304,8 +3347,8 @@ function renderCstFgMatTable(mats, months, supplyMap, simAdj, fg) {
       var reqHtml = "<div class=\"cst-sa-sales\">소요 " + escapeHtml(_cstFmtVal(md.requiredQty || 0, dec, "")) + "</div>";
       var inputCell = "<td class=\"cst-sa-input-cell" + borderCls + (isAdj ? " cst-sa-adjusted" : "") + "\">" +
         reqHtml +
-        "<input type=\"number\" class=\"cst-adj-month-input\" data-key=\"" + escapeHtml(k) +
-        "\" data-orig=\"" + orig + "\" value=\"" + adj + "\" min=\"0\" step=\"1\" />" + deltaHtml + "</td>";
+        "<input type=\"text\" inputmode=\"numeric\" class=\"cst-adj-month-input\" data-key=\"" + escapeHtml(k) +
+        "\" data-orig=\"" + orig + "\" value=\"" + formatNumber(Math.round(adj)) + "\" />" + deltaHtml + "</td>";
 
       var shortCell = (showShortage === null || showShortage === undefined) ? "<td class=\"cst-sa-short-cell" + borderCls + "\">-</td>"
         : (showShortage <= 0 && origShortage > 0 && isAdj) ? "<td class=\"cst-sa-resolved" + borderCls + "\">✓ 해소</td>"
@@ -3348,6 +3391,46 @@ function renderCstFgMatTable(mats, months, supplyMap, simAdj, fg) {
 }
 
 // ── 화면 렌더 ─────────────────────────────────────────────────────────────────
+// ── KPI 배너 한 줄 요약 (접힌 상태에서도 12월 3단 숫자는 남긴다) ───────────────
+// computeHeadlineTriple()(rtf.js)는 12월 기준 {month, base, rtf, fin} 3단 값을 그대로 낸다.
+function _cstHeadlineSummaryHtml() {
+  if (typeof computeHeadlineTriple !== "function") return null;
+  var t = computeHeadlineTriple();
+  if (!t) return null;
+  var scen = t.fin || t.rtf || t.base;
+  if (!scen) return null;
+  var days = Number.isFinite(scen.disc) ? scen.disc : scen.mgmt;
+  var label = (typeof getActualsAnchor === "function" && getActualsAnchor()) ? "전체재고" : "재고금액";
+  var rtfDelta = t.rtf ? (t.rtf.amt - t.base.amt) : null;
+  var cutDelta = t.fin ? (t.fin.amt - (t.rtf ? t.rtf.amt : t.base.amt)) : null;
+  function chip(v, lbl, cls) {
+    if (!Number.isFinite(v) || Math.round(v / 1e8) === 0) return "";
+    var sign = v > 0 ? "+" : "";
+    return "<span class=\"" + cls + "\">" + escapeHtml(lbl + " " + sign + formatMoney(v)) + "</span>";
+  }
+  var chips = [chip(rtfDelta, "RTF", "cst-kpi-delta up"), chip(cutDelta, "감축", "cst-kpi-delta dn")]
+    .filter(Boolean).join(" · ");
+  return "<span class=\"cst-kpi-headline\">" +
+    "<span class=\"cst-kpi-headline-lbl\">" + escapeHtml(label) + "</span>" +
+    "<span class=\"cst-kpi-headline-val\">" + escapeHtml(monthLabel(t.month)) + " " + escapeHtml(formatMoney(scen.amt)) +
+    (Number.isFinite(days) ? " · " + Math.round(days) + "일" : "") + "</span>" +
+    (chips ? "<span class=\"cst-kpi-headline-chips\">(" + chips + ")</span>" : "") +
+    "</span>";
+}
+
+// KPI 배너 접기 섹션 — 접힘(기본): 12월 3단 한 줄 요약만, 펼침: 기존 월별 3시나리오 표 전체.
+function renderCstBannerSection() {
+  var open = !!state.cstBannerOpen;
+  var summary = _cstHeadlineSummaryHtml();
+  var btnLabel = summary ? summary : escapeHtml("전체재고 KPI");
+  return "<div class=\"cst-collapse-wrap\" id=\"cstBannerWrap\">" +
+    "<button type=\"button\" class=\"cst-collapse-btn cst-kpi-collapse-btn\" id=\"cstBannerToggle\">" +
+    "<span class=\"cst-collapse-icon\">" + (open ? "▼" : "▶") + "</span>" + btnLabel +
+    "</button>" +
+    (open ? renderCstCompareBanner() : "") +
+    "</div>";
+}
+
 function renderConstraint() {
   var hasData   = state.mappedData.plan_monthly.length > 0;
   var bomStatus = state.bomStatus || BOM_STATUS.IDLE;
@@ -3385,7 +3468,7 @@ function renderConstraint() {
 
   return "<div class=\"cst-screen\">" +
     (!hasData ? "<div class=\"cst-toolbar-warn-bar\">데이터 연결 필요 — 데이터점검 화면에서 RAW 파일을 먼저 선택하십시오.</div>" : "") +
-    (bomDone ? renderCstCompareBanner() : "") +
+    (bomDone ? renderCstBannerSection() : "") +
     (bomDone ? renderCstAiSuggestion(months) : "") +
     (bomDone ? renderCstRtfShortList(months) : "") +
     "<div class=\"cst-collapse-wrap\">" +
@@ -3595,14 +3678,17 @@ function _cstRefreshDetailInPlace(fgKey, dr) {
       }
     }
 
-    // 상단 KPI 배너(전체재고·재고일수 월별 표)도 조정 반영해 제자리 교체
-    var kpiWrap = document.querySelector(".rtf-kpi-wrap");
-    if (kpiWrap && typeof renderCstCompareBanner === "function") {
-      var kpiHtml = renderCstCompareBanner();
-      if (kpiHtml) {
-        var tmp = document.createElement("div");
-        tmp.innerHTML = kpiHtml;
-        if (tmp.firstElementChild) kpiWrap.replaceWith(tmp.firstElementChild);
+    // 상단 KPI 배너(접힘 시 한 줄 요약 / 펼침 시 월별 3시나리오 표)도 조정 반영해 제자리 교체
+    var bannerWrap = document.querySelector("#cstBannerWrap");
+    if (bannerWrap && typeof renderCstBannerSection === "function") {
+      var bannerHtml = renderCstBannerSection();
+      if (bannerHtml) {
+        var tmp2 = document.createElement("div");
+        tmp2.innerHTML = bannerHtml;
+        if (tmp2.firstElementChild) {
+          bannerWrap.replaceWith(tmp2.firstElementChild);
+          _cstBindBannerToggle();
+        }
       }
     }
     return true;
@@ -3610,6 +3696,16 @@ function _cstRefreshDetailInPlace(fgKey, dr) {
     if (window.console) console.error("[패널 제자리 갱신 오류]", e);
     return false;
   }
+}
+
+// KPI 배너 접기 토글 바인딩 — 전체 재렌더로 처리 (제자리 교체 후에도 재바인딩 가능하도록 별도 함수로 분리)
+function _cstBindBannerToggle() {
+  var btn = document.querySelector("#cstBannerToggle");
+  if (!btn) return;
+  btn.addEventListener("click", function() {
+    state.cstBannerOpen = !state.cstBannerOpen;
+    render("constraint");
+  });
 }
 
 // 조정 입력 4종 바인딩 — root 스코프로 동작해 제자리 교체 후 재바인딩 가능
@@ -3632,8 +3728,8 @@ function _cstBindAdjInputs(root) {
       if (!state.fgProdAdj) state.fgProdAdj = {};
       var key  = inp.dataset.key;
       var orig = parseFloat(inp.dataset.orig) || 0;
-      var val  = parseFloat(inp.value);
-      if (!Number.isFinite(val)) val = orig;
+      var val  = parseAdjInput(inp.value);
+      if (val === null) val = orig;
       val = Math.max(orig, val); // 늘리기만 허용
       if (Math.abs(val - orig) < 0.001) { delete state.fgProdAdj[key]; }
       else                              { state.fgProdAdj[key] = val; }
@@ -3659,7 +3755,8 @@ function _cstBindAdjInputs(root) {
       if (!state.matSimAdj) state.matSimAdj = {};
       var key  = inp.dataset.key;
       var orig = parseFloat(inp.dataset.orig) || 0;
-      var val  = Math.max(0, parseFloat(inp.value) || 0);
+      var val  = parseAdjInput(inp.value);
+      if (val === null) val = 0;
       if (Math.abs(val - orig) < 0.001) {
         delete state.matSimAdj[key];
       } else {
@@ -3782,7 +3879,8 @@ function bindConstraint() {
     inp.addEventListener("change", function() {
       if (!state.matSimAdj) state.matSimAdj = {};
       var key = inp.dataset.key;
-      var val = Math.max(0, parseFloat(inp.value) || 0);
+      var val = parseAdjInput(inp.value);
+      if (val === null) val = 0;
       if (val < 0.001) { delete state.matSimAdj[key]; }
       else              { state.matSimAdj[key] = val; }
       render("constraint");
@@ -3796,7 +3894,8 @@ function bindConstraint() {
       if (!state.matSimAdj) state.matSimAdj = {};
       var key  = inp.dataset.key;
       var orig = parseFloat(inp.dataset.orig) || 0;
-      var val  = Math.max(0, parseFloat(inp.value) || 0);
+      var val  = parseAdjInput(inp.value);
+      if (val === null) val = 0;
       if (Math.abs(val - orig) < 0.001) {
         delete state.matSimAdj[key];
       } else {
@@ -3837,7 +3936,8 @@ function bindConstraint() {
       if (!state.goodsSupplyAdj) state.goodsSupplyAdj = {};
       var key  = inp.dataset.key;
       var orig = parseFloat(inp.dataset.orig) || 0;
-      var val  = Math.max(0, parseFloat(inp.value) || 0);
+      var val  = parseAdjInput(inp.value);
+      if (val === null) val = 0;
       if (Math.abs(val - orig) < 0.001) { delete state.goodsSupplyAdj[key]; }
       else                              { state.goodsSupplyAdj[key] = val; }
       if (typeof invalidateRtfCache === "function") invalidateRtfCache();
@@ -3936,13 +4036,16 @@ function bindConstraint() {
     render("constraint");
   });
 
+  // ── KPI 배너 접기/펼치기 ──
+  _cstBindBannerToggle();
+
   // ── AI 진단 패널 접기/펼치기 (재렌더 없이 DOM 직접, 상태 유지) ──
   var _cstAic = document.querySelector(".exc-ai-collapse");
   if (_cstAic) _cstAic.addEventListener("click", function() {
     var panel = _cstAic.closest(".exc-ai-panel");
     if (!panel) return;
     var now = panel.classList.toggle("exc-ai-collapsed");
-    state.cstAiCollapsed = now;
+    state.cstAiOpen = !now;
     _cstAic.textContent = now ? "▸ 펼치기" : "▾ 접기";
   });
 

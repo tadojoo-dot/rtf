@@ -196,6 +196,13 @@ function mapTargetInvRows(rows) {
     // 수요변동(CV) = 표준편차 ÷ 12개월 평균 출고.
     // "수요가 불안정해서 재고를 쌓았다"는 변명을 이 숫자 하나가 막는다.
     var sdCol    = findGroupCol(function(hv) { return hv === "표준편차"; });
+    // 증가원인 진단용 — 지금까지 버리고 있던 컬럼들.
+    //   단가      : 수량 기준 지표(MOQ·평균출고)를 금액으로 환산해야 회의에서 말이 통한다
+    //   매출비중  : 중요도(이 품목이 회사 매출에서 차지하는 비중)
+    //   리드타임  : MOQ·공급주기와 함께 "구조적으로 갇히는 재고"를 설명한다
+    var priceCol = findGroupCol(function(hv) { return hv.indexOf("단가") === 0; });
+    var shareCol = findGroupCol(function(hv) { return hv.indexOf("매출비중") === 0; });
+    var ltCol    = findGroupCol(function(hv) { return hv.indexOf("리드타임") >= 0; });
     if (optCol < 0) break; // 이 레이아웃 아님 → 기존 로직으로
     // 서브헤더 행(월라벨 "YY.M"·S/F평균)도 "내역/자재" 행 자체에 있을 수도, 바로 다음 행에 있을 수도 있음 —
     // 월라벨 패턴이 실제로 있는 쪽을 채택.
@@ -233,6 +240,7 @@ function mapTargetInvRows(rows) {
     var out26Cols = actCols.filter(function(c) { return c.year === maxActYear; });
     var out25Cols = actCols.filter(function(c) { return c.year === maxActYear - 1; });
     var DAYS = optCol + 2; // 그룹 내 [수량, 금액, 재고일수]
+    // 리드타임 그룹은 [L/T, √] 2컬럼 — 값은 그룹헤더 컬럼 자리에 있다
     return rows.slice(hr + 1).map(function(row) {
       var code = cleanOptional(row[1]);
       var days = cleanNumber(row[DAYS]);
@@ -259,7 +267,15 @@ function mapTargetInvRows(rows) {
         moq:          moqCol >= 0 ? cleanNumber(row[moqCol]) : null,
         cycleMonths:  cycleCol >= 0 ? cleanNumber(row[cycleCol]) : null,
         avg12OutQty:  avgOutCol >= 0 ? cleanNumber(row[avgOutCol]) : null,
+        avg12OutAmt:  avgOutCol >= 0 ? cleanNumber(row[avgOutCol + 1]) : null,  // 그룹 = [수량, 금액]
         stdDev:       sdCol >= 0 ? cleanNumber(row[sdCol]) : null,   // 수요 표준편차 → CV 산출용
+        // 증가원인 진단용
+        targetQty:    cleanNumber(row[optCol]),      // 적정재고 수량
+        targetAmt:    cleanNumber(row[optCol + 1]),  // 적정재고 금액 — "적정의 N배"를 금액으로 말하려면 필수
+        unitPrice:    priceCol >= 0 ? cleanNumber(row[priceCol]) : null,
+        salesShare:   shareCol >= 0 ? cleanNumber(row[shareCol]) : null,
+        leadTime:     ltCol   >= 0 ? cleanNumber(row[ltCol])   : null,
+        grade:        svcCol  >= 0 ? cleanOptional(row[svcCol]) : null,  // 중요도 A/B/C (serviceLevel과 같은 열)
       };
     }).filter(function(r) { return r !== null; });
   }

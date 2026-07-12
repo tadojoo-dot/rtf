@@ -1,5 +1,11 @@
 // ── 과잉감축 화면 (v300) ────────────────────────────────────────────────────
 
+// 조정 입력 천단위 쉼표 실시간 포맷 — parseAdjInput/registerAdjCommaLive는 constraint.js 공용 헬퍼
+// (스크립트 로드 순서상 constraint.js가 먼저 로드됨). 함수 부재 가드 유지.
+if (typeof registerAdjCommaLive === "function") {
+  registerAdjCommaLive(["exc-psi-input", "exc-mat-input", "exc-diag-qty"]);
+}
+
 var MAT_TARGET_DAYS  = 180;
 // 자재 재고일수 상식 상한 (초과 시 단위·데이터 정합 의심 → 과잉관리·AI·KPI 반영 제외)
 // 예: 계획수량이 정(TB)인데 단위라벨 KG인 반제품 → 일수 수백만일로 튐
@@ -479,9 +485,9 @@ function renderFgDetailPanel(item, months, globalPlanMap) {
         "<div class='exc-gauge-tgt' style='left:100%;'></div></div>";
     }
 
-    var inputEl = "<input type='number' class='exc-psi-input' " +
+    var inputEl = "<input type='text' inputmode='numeric' class='exc-psi-input' " +
       "data-key='" + escapeHtml(r.adjKey) + "' data-orig='" + r.origSupply + "' " +
-      "value='" + Math.round(r.supplyQty) + "' min='0' step='1'>";
+      "value='" + formatNumber(Math.round(r.supplyQty)) + "'>";
 
     return "<tr class='exc-detail-row'>" +
       "<td class='exc-detail-month'>" + escapeHtml(monthLabel(r.month)) + "</td>" +
@@ -661,6 +667,23 @@ function renderExcessFgTable(displayItems, months, globalPlanMap, hasTargetData)
 // ═══════════════════════════════════════════════════════════════════════════
 // 10. 메인 렌더
 // ═══════════════════════════════════════════════════════════════════════════
+// KPI 배너 접기 섹션 — 공급원인 화면과 동일 패턴(cst-collapse-wrap/btn) 재사용.
+// 접힘(기본): 12월 3단(원계획/RTF조정/과잉감축) 한 줄 요약만, 펼침: 기존 월별 3시나리오 표 전체.
+// _cstHeadlineSummaryHtml()은 constraint.js에 정의된 공용 헬퍼(스크립트 로드 순서상 항상 먼저 로드됨).
+function renderExcBannerSection() {
+  var open = !!state.excBannerOpen;
+  var summary = (typeof _cstHeadlineSummaryHtml === "function") ? _cstHeadlineSummaryHtml() : null;
+  var btnLabel = summary ? summary : escapeHtml("전체재고 KPI");
+  var bodyHtml = "";
+  if (open && typeof renderScenarioKpiBanner === "function") bodyHtml = renderScenarioKpiBanner();
+  return "<div class='cst-collapse-wrap' id='excBannerWrap'>" +
+    "<button type='button' class='cst-collapse-btn cst-kpi-collapse-btn' id='excBannerToggle'>" +
+    "<span class='cst-collapse-icon'>" + (open ? "▼" : "▶") + "</span>" + btnLabel +
+    "</button>" +
+    bodyHtml +
+    "</div>";
+}
+
 function renderExcessAdjustment() {
   excProfReset();
   var _t0 = performance.now();
@@ -787,8 +810,9 @@ function _renderExcessAdjustmentInner() {
   "</div>";
 
   // 3시나리오 KPI 배너 (RTF·공급원인과 동일 기준: 전체재고·공시·관리, RTF/감축 delta 분해)
+  // 기본 접힘 — 12월 3단 한 줄 요약만 (공급원인 화면과 동일 접기 UI)
   var bannerHtml = excProf("KPI배너(scenario+matFlow)", function(){
-    return (typeof renderScenarioKpiBanner === "function") ? renderScenarioKpiBanner() : "";
+    return (typeof renderExcBannerSection === "function") ? renderExcBannerSection() : "";
   });
 
   // AI 과잉재고 진단 패널 — 원인 분류 + 액션(오너)별 아코디언, 섹션별 권장안 적용 (제·상품 탭 전용)
@@ -1488,7 +1512,7 @@ function renderAiDiagPanel(hasTargetData) {
     ? "<span class='exc-aisec-none'>담당자: " + escapeHtml(mgrF) + " · 일괄적용은 전체에서</span>"
     : (!allApplied ? "<button class='exc-ai-apply'>권장안 전체적용</button>" : "") +
       (anyApplied ? "<button class='exc-ai-clear'>전체해제</button>" : "");
-  var _aiCollapsed = !!state.excessAiCollapsed;
+  var _aiCollapsed = !state.excAiOpen; // 기본 접힘 — 회의 초반엔 조정 표(품목 목록)가 먼저 보여야 함
   var _aiCollapseBtn = "<button type='button' class='exc-ai-collapse' title='AI 진단 접기/펼치기 — 시뮬 표 공간 확보'>" + (_aiCollapsed ? "▸ 펼치기" : "▾ 접기") + "</button>";
   var head = "<div class='exc-ai-panel-head'>" +
     "<span class='exc-ai-icon'>🤖</span>" +
@@ -1678,8 +1702,8 @@ function openAiDiagPopup(secId, idx) {
         navHtml +
       "</div>" +
       "<div class='exc-diag-inputs' hidden>" +
-        "<span class='exc-diag-input-qty' hidden>확정 감축량 <input type='number' class='exc-diag-qty' min='0'" +
-          (isCut ? " max='" + Math.round(it.cutQty) + "' value='" + Math.round(it.cutQty) + "'" : "") + "> 개</span>" +
+        "<span class='exc-diag-input-qty' hidden>확정 감축량 <input type='text' inputmode='numeric' class='exc-diag-qty'" +
+          (isCut ? " data-max='" + Math.round(it.cutQty) + "' value='" + formatNumber(Math.round(it.cutQty)) + "'" : "") + "> 개</span>" +
         "<span class='exc-diag-input-reason'>사유 <input type='text' class='exc-diag-reason' placeholder='예: 전략비축 / 최소운영재고 / 프로모션 예정'></span>" +
         "<button class='exc-diag-save'>판정 기록</button>" +
       "</div>" +
@@ -1707,7 +1731,8 @@ function openAiDiagPopup(secId, idx) {
   var saveBtn = ov.querySelector(".exc-diag-save");
   if (saveBtn) saveBtn.addEventListener("click", function() {
     if (!selStatus) return;
-    var qty = selStatus === "adjust" ? Number(ov.querySelector(".exc-diag-qty").value) || 0 : null;
+    var _qtyEl = ov.querySelector(".exc-diag-qty");
+    var qty = selStatus === "adjust" ? Math.min(parseAdjInput(_qtyEl.value) || 0, Number(_qtyEl.dataset.max) || Infinity) : null;
     var reason = (ov.querySelector(".exc-diag-reason").value || "").trim();
     closeAiDiagPopup();
     setAiDecision(secId, it, selStatus, qty, reason);
@@ -2526,8 +2551,8 @@ function openMatDiagPopup(secId, idx) {
         "<span class='exc-diag-cur'>" + curDec + "</span>" +
       "</div>" +
       "<div class='exc-diag-inputs' hidden>" +
-        "<span class='exc-diag-input-qty' hidden>확정 감축량 <input type='number' class='exc-diag-qty' min='0'" +
-          (isCut ? " max='" + Math.round(it.cutQty) + "' value='" + Math.round(it.cutQty) + "'" : "") + "> 개</span>" +
+        "<span class='exc-diag-input-qty' hidden>확정 감축량 <input type='text' inputmode='numeric' class='exc-diag-qty'" +
+          (isCut ? " data-max='" + Math.round(it.cutQty) + "' value='" + formatNumber(Math.round(it.cutQty)) + "'" : "") + "> 개</span>" +
         "<span class='exc-diag-input-reason'>사유 <input type='text' class='exc-diag-reason' placeholder='예: 발주 확정분 취소 불가 / 공급사 협의 필요'></span>" +
         "<button class='exc-diag-save'>판정 기록</button>" +
       "</div>" +
@@ -2550,7 +2575,8 @@ function openMatDiagPopup(secId, idx) {
   var saveBtn = ov.querySelector(".exc-diag-save");
   if (saveBtn) saveBtn.addEventListener("click", function() {
     if (!selStatus) return;
-    var qty = selStatus === "adjust" ? Number(ov.querySelector(".exc-diag-qty").value) || 0 : null;
+    var _qtyEl = ov.querySelector(".exc-diag-qty");
+    var qty = selStatus === "adjust" ? Math.min(parseAdjInput(_qtyEl.value) || 0, Number(_qtyEl.dataset.max) || Infinity) : null;
     var reason = (ov.querySelector(".exc-diag-reason").value || "").trim();
     closeAiDiagPopup();
     setAiDecision(secId, it, selStatus, qty, reason);
@@ -2952,8 +2978,8 @@ function renderExcessFgFlatTable(displayItems, months, globalPlanMap) {
         dayCls = (td && r.days > td) ? " exc-mat-day-over" : " exc-mat-day-ok";
       }
       return "<td class='exc-mat-cons'>" + escapeHtml(Math.round(r.salesQty).toLocaleString("ko-KR")) + "</td>" +
-        "<td class='exc-mat-in'><input type='number' class='exc-psi-input exc-psi-flat" + (r.hasAdj ? " exc-mat-input-edited" : "") + "' " +
-          "value='" + Math.round(r.supplyQty) + "' data-key='" + escapeHtml(r.adjKey) + "' data-orig='" + r.origSupply + "' min='0'>" +
+        "<td class='exc-mat-in'><input type='text' inputmode='numeric' class='exc-psi-input exc-psi-flat" + (r.hasAdj ? " exc-mat-input-edited" : "") + "' " +
+          "value='" + formatNumber(Math.round(r.supplyQty)) + "' data-key='" + escapeHtml(r.adjKey) + "' data-orig='" + r.origSupply + "'>" +
           (r.hasAdj ? "<div class='exc-mat-orig'>원: " + escapeHtml(Math.round(r.origSupply).toLocaleString("ko-KR")) + "</div>" : "") +
         "</td>" +
         "<td class='exc-mat-day" + dayCls + "'>" + escapeHtml(dayTxt) + "</td>";
@@ -3041,8 +3067,8 @@ function renderExcessMatTable(months) {
         dayVal > MAT_TARGET_DAYS ? " exc-mat-day-over" : " exc-mat-day-ok";
       var dayTxt = dayVal === null ? "—" : (r.ending[mi] < 0 ? "부족!" : Math.round(dayVal) + "일");
       return "<td class='exc-mat-cons'>" + escapeHtml(Math.round(r.cons[mi]).toLocaleString("ko-KR")) + "</td>" +
-        "<td class='exc-mat-in'><input type='number' class='exc-mat-input" + (edited ? " exc-mat-input-edited" : "") + "' " +
-          "value='" + Math.round(r.intake[mi]) + "' data-key='" + escapeHtml(key) + "' data-orig='" + r.origIntake[mi] + "' min='0'>" +
+        "<td class='exc-mat-in'><input type='text' inputmode='numeric' class='exc-mat-input" + (edited ? " exc-mat-input-edited" : "") + "' " +
+          "value='" + formatNumber(Math.round(r.intake[mi])) + "' data-key='" + escapeHtml(key) + "' data-orig='" + r.origIntake[mi] + "'>" +
           (edited ? "<div class='exc-mat-orig'>원: " + escapeHtml(Math.round(r.origIntake[mi]).toLocaleString("ko-KR")) + "</div>" : "") +
         "</td>" +
         "<td class='exc-mat-day" + dayCls + "'>" + escapeHtml(dayTxt) + "</td>";
@@ -3193,6 +3219,13 @@ function bindExcessAdjustment() {
     });
   });
 
+  // KPI 배너 접기/펼치기 (공급원인 화면과 동일 패턴 — 전체 재렌더)
+  var excBannerToggle = root.querySelector("#excBannerToggle");
+  if (excBannerToggle) excBannerToggle.addEventListener("click", function() {
+    state.excBannerOpen = !state.excBannerOpen;
+    render("inventory-variance");
+  });
+
   // AI 진단 — 섹션별 권장안 적용/해제
   root.querySelectorAll(".exc-aisec-apply").forEach(function(btn) {
     btn.addEventListener("click", function() { toggleAiSection(btn.dataset.sec); });
@@ -3204,7 +3237,7 @@ function bindExcessAdjustment() {
     var panel = _aiCol.closest(".exc-ai-panel");
     if (!panel) return;
     var now = panel.classList.toggle("exc-ai-collapsed");
-    state.excessAiCollapsed = now;
+    state.excAiOpen = !now;
     _aiCol.textContent = now ? "▸ 펼치기" : "▾ 접기";
   });
 
@@ -3220,9 +3253,9 @@ function bindExcessAdjustment() {
   root.querySelectorAll(".exc-mat-input").forEach(function(input) {
     input.addEventListener("change", function() {
       var key  = input.dataset.key;
-      var val  = parseFloat(input.value);
+      var val  = parseAdjInput(input.value);
       var orig = parseFloat(input.dataset.orig) || 0;
-      if (!Number.isFinite(val) || val < 0) { input.value = 0; return; }
+      if (val === null) { input.value = "0"; val = 0; }
       if (Math.abs(val - orig) < 0.01) delete state.matExcessAdj[key];
       else state.matExcessAdj[key] = val;
       render("inventory-variance");
@@ -3316,9 +3349,9 @@ function bindExcessAdjustment() {
   root.querySelectorAll(".exc-psi-input").forEach(function(input) {
     input.addEventListener("change", function() {
       var key  = input.dataset.key;
-      var val  = parseFloat(input.value);
+      var val  = parseAdjInput(input.value);
       var orig = parseFloat(input.dataset.orig) || 0;
-      if (!Number.isFinite(val) || val < 0) { input.value = 0; return; }
+      if (val === null) { input.value = "0"; val = 0; }
       if (Math.abs(val - orig) < 0.01) delete state.excessAdj[key];
       else state.excessAdj[key] = val;
       render("inventory-variance");

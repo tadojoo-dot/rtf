@@ -212,6 +212,9 @@
 .rv-mos-g { color: var(--good); }
 .rv-mos-w { color: var(--warn-ink); }
 .rv-mos-x { color: var(--danger); }
+/* 계획이 없어 ∞일 때 병기하는 과거 3평판 환산 참고치 — 본값이 아니므로 죽여서 쓴다 */
+.rv-mos-fb { display: block; font-weight: 600; font-size: 10.5px;
+             color: var(--muted); margin-top: 1px; }
 
 .rv-badge { display: inline-block; font-size: 11.5px; font-weight: 800;
             padding: 3px 8px; border-radius: 6px; margin-right: 5px; white-space: nowrap; }
@@ -280,6 +283,37 @@
 .rv-note { font-size: 12.5px; line-height: 1.75; color: var(--muted);
            padding: 13px 16px; border-top: 1px solid var(--line); }
 .rv-note b { color: var(--ink-2); font-weight: 700; }
+
+/* ── 품목(leaf) 행 클릭 → AI 분석 팝업 ── */
+tr[data-rvitem] { cursor: pointer; }
+tr[data-rvitem]:hover td:first-child,
+tr[data-rvitem]:hover td { background: var(--brand-wash); }
+
+/* 증가 요인/감소 요인/순증 — 각주 맨 위 검산 한 줄 */
+.rv-note-wf { font-size: 13px; color: var(--ink-2); margin-bottom: 8px; }
+.rv-note-wf b { color: var(--ink); }
+
+/* ── 품목 팝업 내용 (외곽 껍데기는 excess.css의 exc-diag-* 재사용) ── */
+.rv-pop-sec { margin: 14px 0; }
+.rv-pop-h   { font-size: 14px; font-weight: 800; color: var(--ink); margin-bottom: 8px; }
+.rv-pop-wf  { border: 1px solid var(--line); border-radius: 8px; padding: 4px 14px; background: var(--surface-2); }
+.rv-pop-wf-row { display: flex; justify-content: space-between; align-items: baseline;
+                 padding: 6px 0; font-size: 13.5px; color: var(--ink-2);
+                 border-bottom: 1px dashed var(--line); }
+.rv-pop-wf-row:last-child { border-bottom: 0; }
+.rv-pop-wf-row b { font-variant-numeric: tabular-nums; }
+.rv-pop-wf-base b { color: var(--ink); font-weight: 700; }
+.rv-pop-wf-tot  { border-top: 2px solid var(--line-2); border-bottom: 0; margin-top: 2px; padding-top: 10px; }
+.rv-pop-wf-tot b { font-size: 15px; font-weight: 800; color: var(--ink); }
+.rv-pop-wf-tot small { font-size: 11.5px; font-weight: 600; color: var(--muted); margin-left: 4px; }
+.rv-pop-reasons { display: flex; flex-direction: column; gap: 8px; }
+.rv-pop-r { display: flex; gap: 10px; font-size: 13.5px; color: var(--ink-2); line-height: 1.6; }
+.rv-pop-r b { flex: none; min-width: 68px; color: var(--ink); font-weight: 800; }
+.rv-pop-oplabel { display: block; font-size: 12.5px; font-weight: 800; color: var(--muted); margin-bottom: 6px; }
+.rv-pop-op-in { width: 100%; padding: 9px 12px; font: inherit; font-size: 14px;
+                border: 1px solid var(--line); border-radius: 8px;
+                background: var(--surface); color: var(--ink); }
+.rv-pop-op-in:focus { outline: none; border-color: var(--brand); }
 
 /* ── file:// 로 열었을 때의 안내 (fetch가 막혀 결산자료를 못 읽는 상태) ── */
 .rv-guide { padding: 32px 36px; }

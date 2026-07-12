@@ -25,6 +25,28 @@ var TYPE_ORDER = ["상품", "완제품", "원료", "반제품", "구매반제품
 
 var _reviewCache = null, _reviewCacheEpoch = -1;
 
+// ── 선행 커버리지(일) ─────────────────────────────────────────────────────────
+// 6월말 재고를 7월부터의 월별 소요(금액)로 차례로 소진시켜, 몇 일 만에 0이 되는지 센다.
+// 과거 3개월 평균(3평판)이 아니라 "앞으로의 계획대로면 며칠 버티는가"를 답한다.
+// 계획 구간(6개월)을 넘기고도 재고가 남으면 계획 말기 속도로 외삽 — 그래야 "68개월치" 같은
+// 극단값이 184일에서 잘리지 않는다. 나갈 계획이 아예 없으면 소진 불가(∞) — 지어내지 않는다.
+function revForwardCoverDays(endWon, monthlyNeedWon) {
+  if (!(endWon > 0)) return 0;
+  var totalNeed = (monthlyNeedWon || []).reduce(function(s, v) { return s + (v > 0 ? v : 0); }, 0);
+  if (!(totalNeed > 0)) return Infinity;
+  var rem = endWon, days = 0, lastDaily = 0;
+  for (var mi = 0; mi < monthlyNeedWon.length; mi++) {
+    var dim  = monthDays(FCST_MONTHS[mi]);
+    var need = monthlyNeedWon[mi];
+    if (!(need > 0)) { days += dim; continue; }
+    lastDaily = need / dim;
+    if (rem >= need) { rem -= need; days += dim; }
+    else { days += rem / lastDaily; return days; }
+  }
+  if (rem > 0 && lastDaily > 0) days += rem / lastDaily;
+  return days;
+}
+
 // ── 품목 유니버스 (결산 기준, 나보타 제외) ────────────────────────────────────
 function buildReviewItems() {
   if (_reviewCache && _reviewCacheEpoch === (window._renderEpoch || 0)) return _reviewCache;
@@ -38,12 +60,12 @@ function buildReviewItems() {
   var bomMap = hasRtfAdj && typeof buildBomMaxProducibleMap === "function"
     ? buildBomMaxProducibleMap(state.matSimAdj, state.fgProdAdj) : null;
 
-  var fcstByCode = new Map();   // itemCode → { base[], rtf[], exc[] } (원)
+  var fcstByCode = new Map();   // itemCode → { base[], rtf[], exc[], needWon[] } (원)
   rtfItems.forEach(function(it) {
     var adjR = (typeof computeAdjMonthly    === "function") ? computeAdjMonthly(it, bomMap)    : null;
     var adjE = (typeof computeExcessMonthly === "function") ? computeExcessMonthly(it, bomMap) : null;
     var f = fcstByCode.get(it.itemCode);
-    if (!f) { f = { base: [], rtf: [], exc: [] }; fcstByCode.set(it.itemCode, f); }
+    if (!f) { f = { base: [], rtf: [], exc: [], needWon: [0,0,0,0,0,0] }; fcstByCode.set(it.itemCode, f); }
     FCST_MONTHS.forEach(function(_, mi) {
       var ms = it.monthlyStatus && it.monthlyStatus[mi];
       var b  = ms && Number.isFinite(ms.endingAmount) ? ms.endingAmount : 0;
@@ -52,6 +74,9 @@ function buildReviewItems() {
       f.base[mi] = (f.base[mi] || 0) + b;
       f.rtf[mi]  = (f.rtf[mi]  || 0) + r;
       f.exc[mi]  = (f.exc[mi]  || 0) + e;
+      // 선행 커버리지용 월별 소요(금액) — 판매계획 수량 × 표준원가
+      if (ms && Number.isFinite(ms.salesQty) && Number.isFinite(it.standardCost) && it.standardCost > 0)
+        f.needWon[mi] += ms.salesQty * it.standardCost;
     });
   });
 
@@ -117,6 +142,11 @@ function buildReviewItems() {
       }
     }
 
+    // 선행 커버리지(일) — 6월말 재고를 하반기 계획(제·상품=판매계획 / 원부자재=BOM 소요)대로
+    // 소진하면 며칠 버티는가. 판매·소요 계획이 아예 없으면 needArr가 전부 0 → ∞.
+    var needArr = isFg ? (f ? f.needWon : null) : (mf ? mf.needWon : null);
+    var covDays = revForwardCoverDays(end6, needArr || [0,0,0,0,0,0]);
+
     items.push({
       itemCode: it.itemCode, itemName: it.itemName,
       type: it.type, isFg: isFg,
@@ -126,8 +156,12 @@ function buildReviewItems() {
       hist: hist, end6: end6,
       delta: m6.end - m6.base,
       sale6: m6.sale, cc6: m6.ccOut, buy6: m6.buyIn, prod6: m6.prodIn, prodOut6: m6.prodOut,
-      avg3out: avg3,   // 제·상품=3평판(판매) / 원부자재=3개월 평균 생산출고
-      mos3: avg3 > 0 ? end6 / avg3 : (end6 > 0 ? Infinity : null),   // 재고월수
+      avg3out: avg3,   // 제·상품=3평판(판매) / 원부자재=3개월 평균 생산출고 — 팝업 참고용, 표에는 안 보임
+      mos3: avg3 > 0 ? end6 / avg3 : (end6 > 0 ? Infinity : null),   // 재고월수(과거 3평판) — 팝업 참고용
+      needWon: needArr || [0,0,0,0,0,0],   // 월별 소요(금액) — 팝업·롤업용
+      covDays: covDays,   // 재고일수 표시값 — 선행 커버리지(일)
+      // 계획이 없어 covDays가 ∞일 때 병기할 참고치 — 과거 3개월 출고 속도 기준(일)
+      covFallback: (covDays === Infinity && avg3 > 0) ? (end6 / avg3) * 30 : null,
       hasPlan: isFg ? !!f : hasMatFlow,
       fBase: fBase, fRtf: fRtf, fExc: fExc,
       shortF: shortF, hasMatFlow: hasMatFlow,   // 부족 배지용 (원부자재만)
@@ -153,11 +187,12 @@ function buildMatFcstMap() {
     Object.assign({}, state.fgProdAdj || {}, state.excessAdj    || {}),
     Object.assign({}, state.matSimAdj || {}, state.matExcessAdj || {})) || base;
 
-  var map = new Map();   // itemCode(componentCode) → { dBase[6], dRtf[6], dExc[6], short[6] } (원)
+  var map = new Map();   // itemCode(componentCode) → { dBase[6], dRtf[6], dExc[6], short[6], needWon[6] } (원)
   function get(code) {
     var m = map.get(code);
     if (!m) {
-      m = { dBase: [0,0,0,0,0,0], dRtf: [0,0,0,0,0,0], dExc: [0,0,0,0,0,0], short: [0,0,0,0,0,0] };
+      m = { dBase: [0,0,0,0,0,0], dRtf: [0,0,0,0,0,0], dExc: [0,0,0,0,0,0], short: [0,0,0,0,0,0],
+            needWon: [0,0,0,0,0,0] };
       map.set(code, m);
     }
     return m;
@@ -176,6 +211,14 @@ function buildMatFcstMap() {
   accum(base, "dBase", false);
   accum(rtf,  "dRtf",  false);
   accum(exc,  "dExc",  true);   // 부족 배지는 실제 표시되는 감축후(fExc) 시나리오 기준
+
+  // 선행 커버리지용 월별 소요(금액) — base 시나리오의 BOM 소비량 × 단가. calcMatFlowRows를
+  // 다시 부르지 않고 이미 계산된 base rows의 cons를 그대로 합산한다(느린 재호출 방지).
+  base.forEach(function(row) {
+    if (!Number.isFinite(row.flow.unitVal)) return;
+    var m = get(row.flow.componentCode);
+    FCST_MONTHS.forEach(function(_, mi) { m.needWon[mi] += (row.cons[mi] || 0) * row.flow.unitVal; });
+  });
   return map;
 }
 
@@ -384,18 +427,27 @@ function reviewForecastCogs() {
 // 각각의 "왜"를 가진 데이터로 증명한다. 담당자가 설명하기 전에 화면이 이미 답을 말한다.
 //
 //   입고 측  ① 입고급증 — 6월 입고가 최근 3개월 평균의 N배
-//            ② MOQ 제약 — 최소발주단위가 월 판매의 N개월치라 안 쌓일 수가 없다
+//            ② MOQ구조 — 최소발주단위가 월평균 출고의 N개월치라 안 쌓일 수가 없다 (구조적, 상시 판정)
 //            ③ 신규진입 — 1월 재고 0에서 시작
 //   출고 측  ④ 판매부진 — 판매계획 대비 실적 미달 (판매계획 파일 1~6월 계획 vs 실적)
 //            ⑤ 계획없음 — 하반기 판매계획이 아예 없다
-//   근거     ⑥ 수요변동% — CV(표준편차÷평균). "수요가 불안정해서 쌓았다"는 변명을 막는다
+//            ⑥ 판매중단 — 1~3월엔 팔렸는데 4~6월 판매가 0
+//   재고 수준 ⑦ 적정초과 — 적정재고 금액의 N배 (제·상품만)
+//            ⑧ 소진불가 — 하반기 계획대로 소진해도 계획 구간(6개월) 안에 안 끝난다
+//            ⑨ 장기정체 — 6개월 내내 입고도 출고도 없는데 재고가 있다
+//   근거     ⑩ 수요변동% — CV(표준편차÷평균). "수요가 불안정해서 쌓았다"는 변명을 막는다.
+//            수요안정(CV≤20%)은 다른 원인이 이미 붙은 품목에만 반박 근거로 부가한다 —
+//            단독으로 뜨면 "수요가 안정적이니 문제 없다"는 착시를 만든다.
 //
+// ①③④⑤는 "이번 달 증가"를 설명하는 원인이라 delta>3억 품목만 따진다.
+// ②⑥⑦⑧⑨는 이번 달 증감과 무관하게 존재하는 구조적 문제라 모든 품목에 상시 판정한다.
 // 원인이 안 잡히면 비워둔다. "원인 미상"이라고 쓰면 AI가 모른다는 뜻이 되어 신뢰가 깎인다.
 // 코스트센터출고는 재고를 '줄이는' 출고라 증가 원인이 아니다 — 여기서 다루지 않는다.
 
 var CAUSE_SURGE_X   = 2.0;   // 입고급증: 최근 3개월 평균의 2배 초과
 var CAUSE_ACH_LOW   = 0.8;   // 판매부진: 계획 대비 달성률 80% 미만
-var CAUSE_MOQ_M     = 1.5;   // MOQ 제약: 월 판매의 1.5개월치 초과
+var CAUSE_MOQ_M     = 3.0;   // MOQ구조: 월평균 출고의 3개월치 이상 (상시 판정)
+var CAUSE_TARGET_X  = 2.0;   // 적정초과: 적정재고 금액의 2배 이상
 var CV_STABLE       = 0.20;  // 수요변동 20% 이하 = 안정
 var CV_VOLATILE     = 0.50;  // 50% 초과 = 불안정
 
@@ -404,7 +456,7 @@ var _causeCache = null, _causeEpoch = -1;
 function buildCauseMap() {
   if (_causeCache && _causeEpoch === (window._renderEpoch || 0)) return _causeCache;
 
-  // 적정재고_RAW — MOQ · 12개월 평균 출고 · 표준편차
+  // 적정재고_RAW — MOQ · 12개월 평균 출고 · 표준편차 · 적정재고금액 · 공급주기 · 리드타임 · 중요도
   var ti = new Map();
   (state.mappedData.target_inv || []).forEach(function(r) {
     if (r.itemCode) ti.set(r.itemCode, r);
@@ -421,6 +473,15 @@ function buildCauseMap() {
     if (Number.isFinite(r.actualQty)) a.act  += r.actualQty;
   });
 
+  // 6월 판매계획 vs 실적 (당월만) — 팝업 워터폴 근거용. RECENT(3개월 합산)와 별개.
+  var juneSales = new Map();
+  (state.mappedData.sales_history || []).forEach(function(r) {
+    if (!r.itemCode || r.month !== "2026-06") return;
+    var plan = cleanNumber(r.planQty), act = cleanNumber(r.actualQty);
+    if (Number.isFinite(plan) || Number.isFinite(act))
+      juneSales.set(r.itemCode, { plan: plan, act: act });
+  });
+
   // 하반기 판매계획 유무
   var hasPlan712 = new Set();
   (state.mappedData.plan_monthly || []).forEach(function(r) {
@@ -430,16 +491,65 @@ function buildCauseMap() {
 
   var map = new Map();
   (buildReviewItems() || []).forEach(function(it) {
-    var t = ti.get(it.itemCode) || {};
-    var c = { causes: [], cv: null, ach: null, surge: null, moqM: null };
+    var t  = ti.get(it.itemCode) || {};
+    var cl = state.closing && state.closing.items.get(it.itemCode);
+    var c = {
+      causes: [], cv: null, ach: null, surge: null, moqM: null,
+      targetAmt: null, targetRatio: null,
+      covDays: it.covDays, june: juneSales.get(it.itemCode) || null,
+      cycleMonths: Number.isFinite(t.cycleMonths) ? t.cycleMonths : null,
+      leadTime:    Number.isFinite(t.leadTime)    ? t.leadTime    : null,
+      grade: t.grade || null, moq: Number.isFinite(t.moq) ? t.moq : null,
+    };
 
     // 수요변동 (CV) — 근거로 항상 계산
     if (t.stdDev > 0 && t.avg12OutQty > 0) c.cv = t.stdDev / t.avg12OutQty;
 
-    // 증가한 품목만 원인을 따진다 (감소는 원인 진단 대상이 아니다)
+    // MOQ구조 — 월평균 출고 대비 몇 개월치인가. 이번 달 증감과 무관한 구조적 문제라 상시 판정한다.
+    if (t.moq > 0 && t.avg12OutQty > 0) {
+      c.moqM = t.moq / t.avg12OutQty;
+      if (c.moqM >= CAUSE_MOQ_M)
+        c.causes.push({ k: "moq", label: "MOQ " + c.moqM.toFixed(1) + "개월치" });
+    }
+
+    // 적정초과 — 제·상품만, 6월말 재고가 적정재고 금액의 N배
+    if (it.isFg && t.targetAmt > 0) {
+      c.targetAmt = t.targetAmt;
+      c.targetRatio = it.end6 / t.targetAmt;
+      if (c.targetRatio >= CAUSE_TARGET_X)
+        c.causes.push({ k: "target", label: "적정초과 " + c.targetRatio.toFixed(1) + "배" });
+    }
+
+    // 소진불가 — 선행 커버리지가 ∞ 이거나 720일(2년) 초과
+    if (it.end6 > 0 && (it.covDays === Infinity || it.covDays > 720)) {
+      var covLabel = it.covDays === Infinity ? "소진불가 ∞" : "소진불가 " + Math.round(it.covDays / 30) + "개월";
+      c.causes.push({ k: "noCoverage", label: covLabel });
+    }
+
+    // 장기정체 — 6개월 내내 입고(구매+생산)도 출고(판매+생산출고+코스트센터출고)도 0인데 재고가 있다
+    if (cl && it.end6 > 0) {
+      var noIn = true, noOut = true;
+      for (var di = 0; di < 6; di++) {
+        var dm = cl.mon[di];
+        if (!dm) continue;
+        if ((dm.buyIn || 0) !== 0 || (dm.prodIn || 0) !== 0) noIn = false;
+        if ((dm.sale || 0) !== 0 || (dm.prodOut || 0) !== 0 || (dm.ccOut || 0) !== 0) noOut = false;
+      }
+      if (noIn && noOut) c.causes.push({ k: "dormant6", label: "장기정체 6개월 무거래" });
+    }
+
+    // 판매중단 — 제·상품, 1~3월엔 팔렸는데 4~6월 판매가 0
+    if (it.isFg && cl) {
+      var s13 = 0, s46 = 0;
+      for (var pi = 0; pi < 3; pi++) { var pm = cl.mon[pi]; if (pm) s13 += pm.sale || 0; }
+      for (var qi = 3; qi < 6; qi++) { var qm = cl.mon[qi]; if (qm) s46 += qm.sale || 0; }
+      c.saleStopS13 = s13; c.saleStopS46 = s46;
+      if (s13 > 0 && s46 === 0) c.causes.push({ k: "saleStop", label: "판매중단 3개월" });
+    }
+
+    // 증가한 품목만 따지는 원인 — 이번 달 증가를 직접 설명한다
     if (it.delta > 3e8) {
       // ① 입고급증 — 6월 입고가 최근 3개월(3·4·5월) 평균의 몇 배인가
-      var cl = state.closing && state.closing.items.get(it.itemCode);
       if (cl) {
         var inSum = 0, inCnt = 0;
         for (var i = 2; i <= 4; i++) {
@@ -456,7 +566,7 @@ function buildCauseMap() {
       if (Number.isFinite(it.hist[0]) && it.hist[0] === 0 && it.end6 > 0)
         c.causes.push({ k: "new", label: "신규진입" });
 
-      // ④ 판매부진
+      // ④ 판매부진 (최근 3개월 합산 달성률)
       var a = ach.get(it.itemCode);
       if (a && a.plan > 0) {
         c.ach = a.act / a.plan;
@@ -464,17 +574,15 @@ function buildCauseMap() {
           c.causes.push({ k: "under", label: "판매부진 " + Math.round(c.ach * 100) + "%" });
       }
 
-      // ② MOQ 제약 — 월평균 판매 대비 몇 개월치인가
-      if (t.moq > 0 && t.avg12OutQty > 0) {
-        c.moqM = t.moq / t.avg12OutQty;
-        if (c.moqM > CAUSE_MOQ_M)
-          c.causes.push({ k: "moq", label: "MOQ " + c.moqM.toFixed(1) + "개월치" });
-      }
-
       // ⑤ 하반기 계획 없음
       if (it.isFg && !hasPlan712.has(it.itemCode))
         c.causes.push({ k: "noplan", label: "하반기 계획없음" });
     }
+
+    // 수요안정 — 단독으로 뜨면 안 된다. 다른 원인이 이미 붙은 품목에만 반박 근거로 부가한다.
+    if (c.causes.length && Number.isFinite(c.cv) && c.cv <= CV_STABLE)
+      c.causes.push({ k: "stableDemand", label: "수요안정 CV " + Math.round(c.cv * 100) + "%" });
+
     map.set(it.itemCode, c);
   });
 
@@ -483,12 +591,23 @@ function buildCauseMap() {
   return map;
 }
 
-var CAUSE_CLS = { under: "rv-b-danger", noplan: "rv-b-danger" };
+var CAUSE_CLS = {
+  under: "rv-b-danger", noplan: "rv-b-danger",
+  target: "rv-b-danger", noCoverage: "rv-b-danger",
+  dormant6: "rv-b-danger", saleStop: "rv-b-danger",
+  stableDemand: "rv-b-good",
+};
 
 // 품목 행 — 그 품목의 원인 배지
+// 이 컬럼은 "6월 증가원인"이다. 줄어든 품목에 증가원인을 다는 건 앞뒤가 안 맞고,
+// 전 품목에 배지를 달면 배지가 아니라 배경이 된다(검증: 소진불가만 1,569품목).
+// → 실제로 늘었고(delta>0) 금액이 유의미한(1억↑) 품목에만 단다.
+// 팝업은 클릭해서 들어간 것이므로 게이트 없이 전부 보여준다 — 거기선 노이즈가 아니다.
+var CAUSE_MIN_END = 1e8;   // 1억
 function revCauseBadges(c, item) {
   var out = "";
-  if (c && c.causes.length) {
+  var show = item && item.delta > 0 && item.end6 >= CAUSE_MIN_END;
+  if (show && c && c.causes.length) {
     out += c.causes.map(function(x) {
       return "<span class='rv-badge " + (CAUSE_CLS[x.k] || "rv-b-warn") + "'>" +
         escapeHtml(x.label) + "</span>";
@@ -522,8 +641,10 @@ function revGroupCauseBadges(items, causes, agg) {
     });
   });
 
-  var LABEL = { surge: "입고급증", under: "판매부진", moq: "MOQ 제약",
-                "new": "신규진입", noplan: "하반기 계획없음" };
+  var LABEL = { surge: "입고급증", under: "판매부진", moq: "MOQ구조",
+                "new": "신규진입", noplan: "하반기 계획없음",
+                target: "적정초과", noCoverage: "소진불가",
+                dormant6: "장기정체", saleStop: "판매중단", stableDemand: "수요안정" };
   var list = Object.keys(byCause).map(function(k) { return byCause[k]; })
     .sort(function(a, b) { return b.amt - a.amt; })
     .slice(0, 3);
@@ -542,12 +663,13 @@ function revGroupCauseBadges(items, causes, agg) {
 }
 
 // 수요변동 배지 — % 로 쓴다. "CV 0.06"은 설명이 필요하지만 "수요변동 6%"는 그냥 읽힌다.
+// 안정(CV≤20%)은 여기서 다루지 않는다 — "수요안정" 원인 배지(단독으로 뜨지 않도록 다른 원인이
+// 있을 때만 붙는다)로만 노출한다. 여기서까지 무조건 보여주면 반박 근거가 늘 상주해 버린다.
 function revCvBadge(cv) {
-  if (!Number.isFinite(cv)) return "";
+  if (!Number.isFinite(cv) || cv <= CV_STABLE) return "";
   var pct = Math.round(cv * 100);
-  var tag = cv <= CV_STABLE ? "안정" : (cv > CV_VOLATILE ? "불안정" : "보통");
-  var cls = cv <= CV_STABLE ? "rv-b-good" : (cv > CV_VOLATILE ? "rv-b-shared" : "rv-b-shared");
-  return "<span class='rv-badge " + cls + "' title='수요 표준편차 ÷ 12개월 평균 출고'>" +
+  var tag = cv > CV_VOLATILE ? "불안정" : "보통";
+  return "<span class='rv-badge rv-b-shared' title='수요 표준편차 ÷ 12개월 평균 출고'>" +
     "수요변동 " + pct + "% · " + tag + "</span>";
 }
 
@@ -753,13 +875,21 @@ function revDaysDelta(d) {
   if (!Number.isFinite(d)) return "";
   return "<span class='" + (d > 0 ? "rv-up" : "rv-down") + "'>" + (d > 0 ? "+" : "") + d.toFixed(1) + "일</span>";
 }
-// 재고일수(3평판 기준) — 재고금액 ÷ 최근 3개월 평균 출고 × 30일.
-// 전사 재고일수(140일)는 누적 매출원가가 분모라 방식이 다르다. 그래서 컬럼명에 (3평판)을 붙인다.
-//   360일(1년) 초과 = 주의 / 720일(2년) 초과 = 위험 / 출고 0 = ∞(소진 불가)
-function revMos(mos) {
-  if (mos === null || mos === undefined) return "<span class='rv-mut'>-</span>";
-  if (mos === Infinity) return "<span class='rv-mos rv-mos-x'>∞</span>";
-  var days = mos * 30;
+// 재고일수(선행 커버리지) — 6월말 재고를 하반기 계획대로 소진할 때 버티는 일수(revForwardCoverDays).
+// 전사 재고일수(140일, 누적 매출원가 분모)와는 산식이 다른 품목·품목군 단위 참고치다.
+//   360일(1년) 초과 = 주의 / 720일(2년) 초과 = 위험 / 나갈 계획 없음 = ∞(소진 불가)
+// 나갈 계획이 없으면 선행 커버리지는 수학적으로 ∞다. 그런데 그런 품목이 절반이라
+// (제·상품 541 / 원부자재 1,028) 표가 ∞로 덮여 정보가 사라진다.
+// → ∞일 때는 과거 3평판 속도로 환산한 값을 회색으로 병기한다. 계획이 없다는 사실은
+//   ∞ 기호로 그대로 드러내되, "그럼 실제론 얼마나 버티나"에도 답한다.
+function revMos(days, fallbackDays) {
+  if (days === null || days === undefined) return "<span class='rv-mut'>-</span>";
+  if (days === Infinity) {
+    if (!Number.isFinite(fallbackDays) || fallbackDays <= 0)
+      return "<span class='rv-mos rv-mos-x'>∞</span>";
+    return "<span class='rv-mos rv-mos-x' title='하반기 계획 없음 — 과거 3개월 출고 속도로 환산한 참고치'>∞" +
+      "<small class='rv-mos-fb'>~" + Math.round(fallbackDays).toLocaleString("ko-KR") + "일</small></span>";
+  }
   var cls = days >= 720 ? "rv-mos-x" : days >= 360 ? "rv-mos-w" : "rv-mos-g";
   return "<span class='rv-mos " + cls + "'>" +
     Math.round(days).toLocaleString("ko-KR") + "<small>일</small></span>";
@@ -799,7 +929,7 @@ function revSpark(hist) {
 function revAgg(items) {
   var a = { end: 0, delta: 0, out3: 0, sale: 0, cc: 0, buy: 0, prod: 0,
             hist: [0,0,0,0,0,0], fBase: [0,0,0,0,0,0], fRtf: [0,0,0,0,0,0], fExc: [0,0,0,0,0,0],
-            shortF: [0,0,0,0,0,0] };   // 부족 금액 롤업 (원부자재 배지용)
+            shortF: [0,0,0,0,0,0], needWon: [0,0,0,0,0,0] };   // 부족 금액 롤업 (원부자재 배지용)
   items.forEach(function(it) {
     a.end += it.end6; a.delta += it.delta; a.out3 += it.avg3out;
     a.sale += it.sale6; a.cc += it.cc6; a.buy += it.buy6; a.prod += it.prod6;
@@ -808,11 +938,16 @@ function revAgg(items) {
       a.fBase[i] += it.fBase[i] || 0;
       a.fRtf[i]  += it.fRtf[i]  || 0;
       a.fExc[i]  += it.fExc[i]  || 0;
-      if (it.shortF) a.shortF[i] += it.shortF[i] || 0;
+      if (it.shortF)  a.shortF[i]  += it.shortF[i]  || 0;
+      if (it.needWon) a.needWon[i] += it.needWon[i] || 0;
     }
   });
-  // 롤업 재고월수 — 금액 기준이라 합산해서 나눌 수 있다 (수량이면 단위가 달라 불가)
+  // 롤업 재고월수(과거 3평판 기준) — 팝업 참고용. 금액 기준이라 합산해서 나눌 수 있다.
   a.mos = a.out3 > 0 ? a.end / a.out3 : (a.end > 0 ? Infinity : null);
+  // 롤업 재고일수(선행 커버리지) — 그룹 합계 재고를 그룹 합계 소요로 소진하는 일수.
+  // needWon도 금액이라 선형 합산이 유효하다.
+  a.covDays = revForwardCoverDays(a.end, a.needWon);
+  a.covFallback = (a.covDays === Infinity && a.out3 > 0) ? (a.end / a.out3) * 30 : null;
   return a;
 }
 
@@ -825,7 +960,7 @@ function revSortValue(agg, key, total, headDelta) {
     case "delta":   return agg.delta;
     case "contrib": return headDelta !== 0 ? agg.delta / headDelta : 0;
     case "share":   return agg.end / (total || 1);
-    case "mos":     return agg.mos === Infinity ? 1e9 : (agg.mos === null ? -1 : agg.mos);
+    case "days":    return agg.covDays === Infinity ? 1e9 : (agg.covDays === null ? -1 : agg.covDays);
     default:
       // 월별 뷰 — "m0" ~ "m11" (재고금액 기준)
       if (/^m\d+$/.test(key)) {
@@ -883,7 +1018,8 @@ function buildReviewTree(items, tab, T) {
 
 // 품목 하나를 집계 형태로 (정렬·렌더가 같은 구조를 쓰도록)
 function revItemAgg(it) {
-  return { end: it.end6, delta: it.delta, mos: it.mos3, hist: it.hist, fExc: it.fExc,
+  return { end: it.end6, delta: it.delta, mos: it.mos3, covDays: it.covDays, covFallback: it.covFallback,
+           hist: it.hist, fExc: it.fExc,
            sale: it.sale6, cc: it.cc6, buy: it.buy6, prod: it.prod6 };
 }
 
@@ -939,35 +1075,33 @@ function revOpinionCell(n) {
 }
 
 // ── 요약 뷰 ───────────────────────────────────────────────────────────────────
-function revSumTable(tree, T) {
+function revSumTable(tree, T, wf) {
   var byId   = new Map(tree.map(function(x) { return [x.id, x]; }));
   var causes = buildCauseMap();
   var total  = T.hist[5] || 1;
-  // 증가 기여도의 분모 = 헤드라인 증감(공시기준 전월대비). 관리기준 증감을 쓰면
-  // 소견 문장과 어긋난다 ("183억 늘었고 그 84%가…" ← 84%는 다른 분모).
-  var headDelta = (Number.isFinite(T.hist[5]) && Number.isFinite(T.hist[4]))
-    ? T.hist[5] - T.hist[4] : 0;
+  // 증가 기여도의 분모 = 증가 요인 합계(posSum, reviewWaterfall). 순증(헤드라인 증감)을 분모로
+  // 쓰면 감소 행이 상쇄한 만큼 증가 행 비중이 100%를 넘어(예: 101%) "오류 아니냐"는 말이 나온다.
+  // posSum은 유형 레벨에서 한 번만 계산해 하위(품목군·품목) 행에도 그대로 쓴다.
+  var posSum = wf.pos;
   var rows  = "";
 
   tree.forEach(function(n, i) {
     if (!revVisible(n, byId)) return;
     var hasKid = !!(tree[i + 1] && tree[i + 1].parent === n.id);
     var a = n.item
-      ? { end: n.item.end6, delta: n.item.delta, mos: n.item.mos3, hist: n.item.hist,
-          sale: n.item.sale6, cc: n.item.cc6, buy: n.item.buy6, prod: n.item.prod6 }
+      ? { end: n.item.end6, delta: n.item.delta, mos: n.item.mos3, covDays: n.item.covDays,
+          covFallback: n.item.covFallback,
+          hist: n.item.hist, sale: n.item.sale6, cc: n.item.cc6, buy: n.item.buy6, prod: n.item.prod6 }
       : revAgg(n.items);
 
     var pct = a.end / total * 100;
-    // 증가 기여도 = 그 행의 증감 ÷ 총 증감. 감소한 행은 음수로 표시한다.
-    // 양수만 보여주면 합이 100%를 넘어(증가분만 더해지므로) "왜 119%냐"는 말이 나온다.
-    // 음수까지 포함하고 조정행(나보타·미착·충당금)에도 기여도를 붙이면 합이 정확히 100%가 되어
-    // 회의에서 검산해도 맞는다.
-    var contrib = (headDelta !== 0 && Math.abs(a.delta) >= 5e7) ? a.delta / headDelta * 100 : null;
+    // 증가 기여도 = 그 행의 증감 ÷ 증가 요인 합계. 감소한 행은 음수로 표시한다.
+    var contrib = (posSum !== 0 && Math.abs(a.delta) >= 5e7) ? a.delta / posSum * 100 : null;
     var cls = "";
     // BOM 어디에도 안 걸리고 출고도 없는 자재 = 불용. 감축이 아니라 처분 결정 대상.
     if (n.level === 1 && n.label === MAT_UNUSED_GROUP) cls = " rv-crit";
     else if (n.level === 1 && a.delta > 50e8)          cls = " rv-hot";
-    else if (a.mos === Infinity && a.end > 10e8)       cls = " rv-crit";
+    else if (a.covDays === Infinity && a.end > 10e8)   cls = " rv-crit";
 
     // "왜 늘었나" — 담당자가 설명하기 전에 화면이 먼저 답한다.
     // 품목군·유형 행에도 표시한다. 회의에서는 대부분 품목군 단위로 얘기하고,
@@ -975,12 +1109,14 @@ function revSumTable(tree, T) {
     var cause = n.item ? revCauseBadges(causes.get(n.item.itemCode), n.item)
                        : revGroupCauseBadges(n.items, causes, a);
 
-    rows += "<tr class='rv-l" + n.level + cls + "'>" + revRowHead(n, hasKid) +
+    // 품목(leaf) 행만 클릭하면 AI 분석 팝업이 뜬다 (유형·품목군 행은 토글만)
+    var rowAttr = n.item ? " data-rvitem='" + escapeHtml(n.item.itemCode) + "'" : "";
+    rows += "<tr class='rv-l" + n.level + cls + "'" + rowAttr + ">" + revRowHead(n, hasKid) +
       "<td class='rv-n rv-gsep'><b>" + revMoney(a.end) + "</b></td>" +
       "<td class='rv-n'>" + revDelta(a.delta) + "</td>" +
       "<td class='rv-n'>" + revContrib(contrib) + "</td>" +
       "<td class='rv-n rv-mut'>" + pct.toFixed(1) + "%</td>" +
-      "<td class='rv-n rv-gsep rv-band'>" + revMos(a.mos) + "</td>" +
+      "<td class='rv-n rv-gsep rv-band'>" + revMos(a.covDays, a.covFallback) + "</td>" +
       "<td class='rv-band rv-cause-cell'>" + cause + "</td>" +
       revOpinionCell(n) +
       "<td class='rv-n rv-gsep'>" + revSpark(a.hist) + "</td></tr>";
@@ -992,11 +1128,11 @@ function revSumTable(tree, T) {
     revTh("delta",   "전월대비") +
     revTh("contrib", "증가 기여도", "rv-th-pct") +
     revTh("share",   "재고금액 비중") +
-    revTh("mos",     "재고일수 (3평판)", "rv-gsep rv-band rv-th-days") +
+    revTh("days",    "재고일수", "rv-gsep rv-band rv-th-days") +
     "<th class='rv-band rv-th-cause'>6월 증가 원인</th>" +
     "<th class='rv-band rv-th-op'>의견</th>" +
     "<th class='rv-gsep'>1~6월 추이</th></tr></thead>" +
-    "<tbody>" + rows + revFooterSum(T) + "</tbody></table>";
+    "<tbody>" + rows + revFooterSum(T, posSum) + "</tbody></table>";
 }
 
 // ── 월별 뷰 ───────────────────────────────────────────────────────────────────
@@ -1065,7 +1201,8 @@ function revMonthTable(tree, T) {
       var sVal = a.shortF ? a.shortF[j] : null;
       cells += revMonCell(a.fExc[j], null, prev, "rv-fcst" + (j === 0 ? " rv-gsep" : ""), sVal);
     }
-    rows += "<tr class='rv-l" + n.level + cls + "'>" + revRowHead(n, hasKid) + cells + "</tr>";
+    var rowAttr = n.item ? " data-rvitem='" + escapeHtml(n.item.itemCode) + "'" : "";
+    rows += "<tr class='rv-l" + n.level + cls + "'" + rowAttr + ">" + revRowHead(n, hasKid) + cells + "</tr>";
   });
 
   // 합계행에는 재고일수를 함께 넣는다 (여기서만 매출원가 분모가 성립)
@@ -1083,12 +1220,34 @@ function revMonthTable(tree, T) {
     "</tr></thead><tbody>" + rows + tot + "</tbody></table>";
 }
 
+// 헤드라인 순증(183.0억) = 표에 렌더되는 모든 최상위 행(유형 레벨 + 조정행 4종)의 delta 합.
+// 증가 요인(posSum, 예 212.7억)과 감소 요인(negSum, 예 −29.7억)이 상쇄해서 순증이 나온다.
+// 기여도의 분모를 순증(헤드라인)으로 쓰면 증가 행끼리만 더해도 100%를 넘어(예 101%)
+// "오류 아니냐"는 말이 나온다 — 분모를 증가 요인 합계로 바꾸면 어떤 행도 100%를 넘지 않는다.
+function reviewWaterfall(items, T) {
+  var A = T.adj;
+  var byType = {};
+  (items || []).forEach(function(it) { byType[it.type] = (byType[it.type] || 0) + it.delta; });
+  function adjDelta(key) {
+    var cur = A[key][5], prev = A[key][4];
+    return (Number.isFinite(cur) && Number.isFinite(prev)) ? cur - prev : 0;
+  }
+  var deltas = Object.keys(byType).map(function(k) { return byType[k]; });
+  deltas.push(adjDelta("wip"), adjDelta("nabota"), adjDelta("michak"), adjDelta("allowance"));
+  var pos = 0, neg = 0;
+  deltas.forEach(function(d) {
+    if (!Number.isFinite(d) || Math.abs(d) < 5e7) return;   // 노이즈 컷오프 — 표 렌더 기준과 동일
+    if (d > 0) pos += d; else neg += d;
+  });
+  return { pos: pos, neg: neg };
+}
+
 // ── 합계 + 조정행 — 표를 다 더하면 헤드라인(공시기준)이 나온다 ────────────────
 // 조정행도 기여도를 가져야 표를 다 더해 100%가 나온다.
 // (나보타가 19억 줄어든 것도 이번 달 총증감을 만든 요인이다)
-function revAdjRow(label, cur, prev, total, headDelta, note) {
+function revAdjRow(label, cur, prev, total, posSum, note) {
   var d = (Number.isFinite(cur) && Number.isFinite(prev)) ? cur - prev : null;
-  var c = (d !== null && headDelta !== 0 && Math.abs(d) >= 5e7) ? d / headDelta * 100 : null;
+  var c = (d !== null && posSum !== 0 && Math.abs(d) >= 5e7) ? d / posSum * 100 : null;
   var pct = Number.isFinite(cur) ? (cur / total * 100).toFixed(1) + "%" : "-";
   return "<tr class='rv-adj'><td class='rv-name'>" + label + "</td>" +
     "<td class='rv-n rv-gsep'>" + (Number.isFinite(cur) ? revMoney(cur) : "-") + "</td>" +
@@ -1098,23 +1257,24 @@ function revAdjRow(label, cur, prev, total, headDelta, note) {
     "<td colspan='4' class='rv-mut rv-l-note rv-gsep'>" + note + "</td></tr>";
 }
 // 조정행 4개(재공품·나보타·미착품·평가충당금)가 다 있어야 표가 닫힌다.
-// 하나라도 빠지면 기여도 합이 100%가 안 된다 — 실제로 재공품이 빠져 9.9억이 안 맞았다.
-function revFooterSum(T) {
+// 하나라도 빠지면 증가 행 기여도 합이 100%가 안 된다 — 실제로 재공품이 빠져 9.9억이 안 맞았다.
+function revFooterSum(T, posSum) {
   var A = T.adj;
   var total = T.hist[5] || 1;
   var hd = T.hist[5] - T.hist[4];
-  return revAdjRow("재공품", A.wip[5], A.wip[4], total, hd, "공정 중 재고 (별도 수불)") +
-    revAdjRow("나보타 (통합관리)", A.nabota[5], A.nabota[4], total, hd,
+  var hdPct = posSum !== 0 ? (hd / posSum * 100).toFixed(1) + "%" : "-";
+  return revAdjRow("재공품", A.wip[5], A.wip[4], total, posSum, "공정 중 재고 (별도 수불)") +
+    revAdjRow("나보타 (통합관리)", A.nabota[5], A.nabota[4], total, posSum,
               "품목 전개 없음 — 총액만 관리") +
-    revAdjRow("미착품", A.michak[5], A.michak[4], total, hd, "공시 조정 항목") +
-    revAdjRow("평가충당금", A.allowance[5], A.allowance[4], total, hd, "공시 조정 항목") +
+    revAdjRow("미착품", A.michak[5], A.michak[4], total, posSum, "공시 조정 항목") +
+    revAdjRow("평가충당금", A.allowance[5], A.allowance[4], total, posSum, "공시 조정 항목") +
     "<tr class='rv-total'><td class='rv-name'>총재고 (공시기준)</td>" +
       "<td class='rv-n rv-gsep'>" + revMoney(T.hist[5]) + "</td>" +
       "<td class='rv-n'>" + revDelta(hd) + "</td>" +
-      "<td class='rv-n'><b>100%</b></td>" +
+      "<td class='rv-n'><b>" + hdPct + "</b></td>" +
       "<td class='rv-n'><b>100%</b></td>" +
       "<td class='rv-n rv-gsep'>" + (T.histDays[5] ? T.histDays[5].toFixed(0) + "일" : "-") + "</td>" +
-      "<td colspan='3' class='rv-mut'>결산_RAW 합계와 일치 · 기여도 합계 100%</td></tr>";
+      "<td colspan='3' class='rv-mut'>결산_RAW 합계와 일치 · 증가 행 기여도 합계 100%</td></tr>";
 }
 
 // ── 메인 렌더 ─────────────────────────────────────────────────────────────────
@@ -1180,6 +1340,7 @@ function renderInventoryReview() {
   var items = buildReviewItems();
   var T     = reviewTotals();
   var D     = reviewDiagnosis();
+  var wf    = reviewWaterfall(items, T);
   var tab   = state.revTab  || "fg";
   var view  = state.revView || "sum";
 
@@ -1292,7 +1453,7 @@ function renderInventoryReview() {
   }
 
   var tree  = buildReviewTree(items, tab, T);
-  var table = (view === "mon") ? revMonthTable(tree, T) : revSumTable(tree, T);
+  var table = (view === "mon") ? revMonthTable(tree, T) : revSumTable(tree, T, wf);
 
   // 회의 중 담당자가 "우리 품목 어디 있냐"고 묻는다. 검색창 하나가 시간을 크게 줄인다.
   var hits = tree.filter(function(n) { return n.level === 2; }).length;
@@ -1330,13 +1491,17 @@ function renderInventoryReview() {
     "<div class='rv-card'>" + bar +
       "<div class='rv-scroll'>" + table + "</div>" +
       "<div class='rv-note'>" +
-        "<b>증가 기여도</b> = 그 행의 증가액 ÷ 이번 달 총 증가액 (누가 이번 증가를 만들었나) · " +
+        "<div class='rv-note-wf'>증가 요인 <b>+" + revMoney(wf.pos) + "억</b> · 감소 요인 <b>−" +
+          revMoney(Math.abs(wf.neg)) + "억</b> · 순증 <b>" +
+          (Number.isFinite(headDelta) ? (headDelta >= 0 ? "+" : "−") + revMoney(Math.abs(headDelta)) : "-") +
+          "억</b></div>" +
+        "<b>증가 기여도</b> = 그 행의 증가액 ÷ 증가 요인 합계 (누가 이번 증가를 만들었나) · " +
         "<b>재고금액 비중</b> = 그 행의 재고 ÷ 공시기준 총재고 (규모가 얼마나 되나)<br>" +
-        "<b>재고일수 (3평판)</b> = 6월말 재고 ÷ 최근 3개월 평균 출고 × 30일 " +
-        "(제·상품 = <b>3평판</b>(판매금액) / 원부자재 = 생산출고). " +
-        "360일 초과 = 주의 · 720일 초과 = 위험 · <b>∞</b> = 최근 3개월 출고 0(소진 불가). " +
-        "<span class='rv-mut'>※ 아래 총재고 행의 재고일수(140일)는 <b>누적 매출원가</b>가 분모라 산식이 다릅니다.</span><br>" +
-        "<b>재고일수</b> = 재고금액 ÷ <b>누적 매출원가</b> × <b>누적일수</b> (연초부터 누적 — 회사 마감 방식). " +
+        "<b>재고일수</b>(품목·품목군·유형 행) = 6월말 재고를 하반기 계획(제·상품 = 판매계획 / 원부자재 = BOM 소요)대로 " +
+        "소진할 때 버티는 일수(선행 커버리지). 계획 구간(6개월)을 넘으면 계획 말기 속도로 외삽. 나갈 계획이 없으면 <b>∞</b>. " +
+        "360일 초과 = 주의 · 720일 초과 = 위험. " +
+        "<span class='rv-mut'>※ 아래 총재고 합계행의 재고일수(140일)는 산식이 다릅니다.</span><br>" +
+        "<b>재고일수</b>(총재고 합계행) = 재고금액 ÷ <b>누적 매출원가</b> × <b>누적일수</b> (연초부터 누적 — 회사 마감 방식). " +
         "실적 구간(1~6월)은 결산 매출원가를 그대로 씁니다. " +
         "전망 구간(7~12월)은 매출원가가 마감 후에나 확정되므로 <b>판매계획 × 표준원가</b>로 추정하고, " +
         "판매계획 파일이 전사 매출원가의 77%만 담고 있어 상반기 실측 보정계수(×1.301)를 적용합니다.<br>" +
@@ -1345,6 +1510,230 @@ function renderInventoryReview() {
         "<b>판매계획이 없는 재고는 0이 아니라 그대로 이월(flat)</b>되어 12월까지 수평선으로 남습니다." +
       "</div>" +
     "</div></div>";
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 품목 AI 분석 팝업 — 마크업·CSS 클래스는 excess.js의 openAiDiagPopup 패턴을 그대로 따른다
+// (exc-diag-overlay / exc-diag-card / exc-diag-head / exc-diag-close / exc-diag-opinion).
+// 표의 구조·컬럼은 건드리지 않는다 — 품목(leaf) 행 클릭으로만 열린다.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// 품목코드 → 표준원가. computeRtfItems 결과(플랜트별)에서 코드당 첫 유효값을 취한다.
+// 팝업에서 판매계획(수량)을 금액으로 환산할 때만 쓴다 — 배지·판정에는 안 쓴다.
+var _stdCostCache = null, _stdCostEpoch = -1;
+function getStdCostMap() {
+  if (_stdCostCache && _stdCostEpoch === (window._renderEpoch || 0)) return _stdCostCache;
+  var map = new Map();
+  var rtfItems = (typeof computeRtfItems === "function") ? computeRtfItems(undefined, true) : [];
+  rtfItems.forEach(function(it) {
+    if (it.itemCode && !map.has(it.itemCode) && Number.isFinite(it.standardCost) && it.standardCost > 0)
+      map.set(it.itemCode, it.standardCost);
+  });
+  _stdCostCache = map;
+  _stdCostEpoch = (window._renderEpoch || 0);
+  return map;
+}
+
+// 워터폴 한 줄 — 0.05억 미만은 노이즈로 생략(표 컷오프와 동일)
+function revWfLine(label, won) {
+  if (!Number.isFinite(won) || Math.abs(won) < 5e6) return "";
+  var sign = won > 0 ? "+" : "−";
+  var cls  = won > 0 ? "rv-up" : "rv-down";
+  return "<div class='rv-pop-wf-row'><span>" + escapeHtml(label) + "</span>" +
+    "<b class='" + cls + "'>" + sign + revMoney(Math.abs(won)) + "억</b></div>";
+}
+
+var _revPopupEl = null;
+function closeRevItemPopup() {
+  if (_revPopupEl && _revPopupEl.parentNode) _revPopupEl.parentNode.removeChild(_revPopupEl);
+  _revPopupEl = null;
+}
+
+function openRevItemPopup(itemCode) {
+  closeRevItemPopup();
+  var items = buildReviewItems() || [];
+  var it = null;
+  for (var i = 0; i < items.length; i++) { if (items[i].itemCode === itemCode) { it = items[i]; break; } }
+  if (!it) return;
+
+  var cl  = state.closing && state.closing.items.get(itemCode);
+  var m6  = cl && cl.mon[5];
+  var c   = buildCauseMap().get(itemCode) || { causes: [] };
+  var trow = (state.mappedData.target_inv || []).filter(function(r) { return r.itemCode === itemCode; })[0] || {};
+  var hasCause = {};
+  (c.causes || []).forEach(function(x) { hasCause[x.k] = true; });
+
+  var costMap = getStdCostMap();
+  var cost = costMap.get(itemCode);
+  if (!(cost > 0) && trow.unitPrice > 0) cost = trow.unitPrice;
+  var costOk = cost > 0;
+
+  // ① 6월에 무슨 일이 있었나 — 결산 실측 워터폴 + 검산
+  var wf = "";
+  if (m6) {
+    wf += "<div class='rv-pop-wf-row rv-pop-wf-base'><span>기초재고</span><b>" + revMoney(m6.base) + "억</b></div>";
+    wf += revWfLine("구매입고", m6.buyIn);
+    wf += revWfLine("생산입고", m6.prodIn);
+    wf += revWfLine("판매", -m6.sale);
+    wf += revWfLine("생산출고", -m6.prodOut);
+    wf += revWfLine("코스트센터출고(샘플·비용)", -m6.ccOut);
+    var flowNet   = (m6.buyIn || 0) + (m6.prodIn || 0) - (m6.sale || 0) - (m6.prodOut || 0) - (m6.ccOut || 0);
+    var actualNet = m6.end - m6.base;
+    var diff = actualNet - flowNet;
+    if (Math.abs(diff) >= 5e6) wf += revWfLine("기타(미상 차액)", diff);
+    wf += "<div class='rv-pop-wf-row rv-pop-wf-tot'><span>기말재고</span><b>" + revMoney(m6.end) +
+      "억 <small>(전월대비 " + (actualNet >= 0 ? "+" : "−") + revMoney(Math.abs(actualNet)) + "억)</small></b></div>";
+  } else {
+    wf = "<div class='rv-mut'>결산 실측 데이터가 연결되지 않았습니다.</div>";
+  }
+
+  // ② 왜 이렇게 됐나 — 판정 + 근거 숫자. 없는 근거는 행을 생략한다.
+  var reasons = [];
+  if (it.isFg && c.june && Number.isFinite(c.june.plan) && c.june.plan > 0) {
+    var jAct = Number.isFinite(c.june.act) ? c.june.act : 0;
+    var jAch = Math.round(jAct / c.june.plan * 100);
+    var jText = costOk
+      ? "판매계획 " + revMoney(c.june.plan * cost) + "억 → 실적 " + revMoney(jAct * cost) + "억 · 달성률 " + jAch + "%"
+      : "판매계획 " + Math.round(c.june.plan).toLocaleString("ko-KR") + "개 → 실적 " +
+        Math.round(jAct).toLocaleString("ko-KR") + "개 · 달성률 " + jAch + "%";
+    reasons.push({ label: "판매부진", text: jText });
+  }
+  if (hasCause.target) {
+    reasons.push({ label: "적정초과", text: "적정재고 " + revMoney(c.targetAmt) + "억의 " +
+      c.targetRatio.toFixed(1) + "배 (초과 " + revMoney(it.end6 - c.targetAmt) + "억)" });
+  }
+  if (hasCause.noCoverage) {
+    reasons.push({ label: "소진불가", text: it.covDays === Infinity
+      ? "하반기 판매(소요) 계획이 없어 소진되지 않습니다 (∞)"
+      : "하반기 계획대로면 " + Math.round(it.covDays / 30) + "개월치 — 계획 구간(6개월) 내 소진 불가" });
+  }
+  if (hasCause.moq && Number.isFinite(c.moqM)) {
+    var moqQtyTxt = Number.isFinite(c.moq) ? Math.round(c.moq).toLocaleString("ko-KR") + "개 = " : "";
+    reasons.push({ label: "MOQ구조", text: "MOQ " + moqQtyTxt + "월평균 출고의 " + c.moqM.toFixed(1) +
+      "배. 한 번 발주에 " + Math.round(c.moqM) + "개월치가 들어옵니다" });
+  }
+  if (hasCause.stableDemand && Number.isFinite(c.cv)) {
+    reasons.push({ label: "수요안정", text: "CV " + Math.round(c.cv * 100) + "%" +
+      (c.grade ? " · 중요도 " + escapeHtml(c.grade) : "") +
+      " — 수요는 안정적입니다. 불확실성 대비 비축으로 보기 어렵습니다" });
+  }
+  if (hasCause.dormant6) {
+    reasons.push({ label: "장기정체", text: "6개월 내내 입고도 출고도 없는데 재고가 " +
+      revMoney(it.end6) + "억 남아 있습니다" });
+  }
+  if (hasCause.saleStop) {
+    reasons.push({ label: "판매중단", text: "1~3월 판매 " + revMoney(c.saleStopS13) +
+      "억 → 4~6월 판매 0" });
+  }
+  if (c.cycleMonths !== null || c.leadTime !== null) {
+    var supplyBits = [];
+    if (c.cycleMonths !== null) supplyBits.push("공급주기 " + c.cycleMonths + "개월");
+    if (c.leadTime    !== null) supplyBits.push("리드타임 " + c.leadTime + "개월");
+    reasons.push({ label: "공급조건", text: supplyBits.join(" · ") });
+  }
+  if (it.mos3 !== null && it.mos3 !== undefined) {
+    reasons.push({ label: "참고", text: "최근 3개월 평균 출고 기준으로는 " +
+      (it.mos3 === Infinity ? "∞(무출고)" : Math.round(it.mos3) + "개월치") + " (과거 기준)" });
+  }
+
+  // ③ AI 소견 — 붙은 원인을 조합해 동적으로 생성. 단정하지 않고 확인 여지를 남긴다.
+  var op = [];
+  if (hasCause.under || (it.isFg && c.june && c.june.plan > 0)) {
+    if (m6 && costOk && c.june && Number.isFinite(c.june.plan) && c.june.plan > 0) {
+      var jAct2 = Number.isFinite(c.june.act) ? c.june.act : 0;
+      var jAch2 = Math.round(jAct2 / c.june.plan * 100);
+      op.push("6월에 " + revMoney(m6.buyIn) + "억을 사서 " + revMoney(m6.sale) +
+        "억 팔았습니다. 판매는 계획의 " + jAch2 + "%인데 발주는 그대로 나갔습니다.");
+    } else if (Number.isFinite(c.ach)) {
+      op.push("최근 3개월 판매가 계획 대비 " + Math.round(c.ach * 100) + "%에 그쳤습니다.");
+    }
+  }
+  if (hasCause.stableDemand) {
+    op.push("수요변동이 " + Math.round(c.cv * 100) + "%로 안정적이라 불확실성 대비 비축이라는 설명은 성립하지 않습니다.");
+  }
+  if (hasCause.target || hasCause.noCoverage) {
+    var bits2 = [];
+    if (hasCause.target) bits2.push("적정재고의 " + c.targetRatio.toFixed(1) + "배");
+    if (hasCause.noCoverage) {
+      bits2.push(it.covDays === Infinity ? "하반기 계획대로면 소진되지 않습니다" :
+        "하반기 계획대로면 " + Math.round(it.covDays / 30) + "개월치입니다");
+    }
+    op.push(bits2.join(", ") + ".");
+  }
+  if (hasCause.moq) {
+    op.push("MOQ가 월평균 출고의 " + c.moqM.toFixed(1) + "개월치라 필요한 만큼만 발주해도 재고가 쌓이는 구조입니다.");
+  }
+  if (hasCause.dormant6) {
+    op.push("6개월째 입출고가 전혀 없는 재고입니다 — 처분 여부를 확인해야 합니다.");
+  }
+  if (hasCause.saleStop) {
+    op.push("4월 이후 판매가 끊겼습니다 — 단종·이관 등 사유 확인이 필요합니다.");
+  }
+  if (hasCause.noplan) {
+    op.push("하반기 판매계획이 없어 이 재고는 이 회의로는 줄일 방법이 없습니다 — 사업부 확인이 필요합니다.");
+  }
+  var opinionHtml;
+  if (op.length) {
+    op.push("전략적 비축이나 별도 사유가 있다면 아래 의견란에 남겨 주십시오. 사유가 확인되지 않는다면 하반기 발주·계획 재검토가 필요합니다.");
+    opinionHtml = op.join(" ");
+  } else {
+    opinionHtml = "특이 원인이 감지되지 않았습니다.";
+  }
+
+  var opKey = itemCode;
+  var opVal = (state.revOpinion || {})[opKey] || "";
+
+  var ov = document.createElement("div");
+  ov.className = "exc-diag-overlay";
+  ov.innerHTML =
+    "<div class='exc-diag-card'>" +
+      "<div class='exc-diag-head'>" +
+        "<div class='exc-diag-titles'>" +
+          "<div class='exc-diag-name'><span class='exc-ai-codehead'>" + escapeHtml(itemCode) + "</span> " +
+            escapeHtml(it.itemName || itemCode) + "</div>" +
+          "<div class='exc-diag-sub'>" + revCauseBadges(c, it) + "</div>" +
+        "</div>" +
+        "<button class='exc-diag-close' title='닫기'>×</button>" +
+      "</div>" +
+      "<div class='rv-pop-sec'>" +
+        "<div class='rv-pop-h'>① 6월에 무슨 일이 있었나</div>" +
+        "<div class='rv-pop-wf'>" + wf + "</div>" +
+      "</div>" +
+      (reasons.length
+        ? "<div class='rv-pop-sec'>" +
+            "<div class='rv-pop-h'>② 왜 이렇게 됐나</div>" +
+            "<div class='rv-pop-reasons'>" + reasons.map(function(r) {
+              return "<div class='rv-pop-r'><b>" + escapeHtml(r.label) + "</b><span>" + r.text + "</span></div>";
+            }).join("") + "</div>" +
+          "</div>"
+        : "") +
+      "<div class='exc-diag-opinion'><span class='exc-diag-opinion-tag'>🤖 AI 소견</span>" + opinionHtml + "</div>" +
+      "<div class='rv-pop-sec'>" +
+        "<span class='rv-pop-oplabel'>담당자 의견</span>" +
+        "<input class='rv-pop-op-in' data-rvpopop='" + escapeHtml(opKey) + "' value='" +
+          escapeHtml(opVal) + "' placeholder='의견 입력 — 전략비축·최소운영재고 등 AI가 모르는 맥락' />" +
+      "</div>" +
+    "</div>";
+  document.body.appendChild(ov);
+  _revPopupEl = ov;
+
+  ov.addEventListener("click", function(e) { if (e.target === ov) closeRevItemPopup(); });
+  var closeBtn = ov.querySelector(".exc-diag-close");
+  if (closeBtn) closeBtn.addEventListener("click", closeRevItemPopup);
+
+  // 담당자 의견 — 표의 의견 컬럼과 같은 저장소(state.revOpinion, 키=품목코드)를 쓴다
+  var opIn = ov.querySelector(".rv-pop-op-in");
+  if (opIn) {
+    opIn.addEventListener("input", function() {
+      state.revOpinion = state.revOpinion || {};
+      var v = opIn.value.trim();
+      if (v) state.revOpinion[opKey] = v; else delete state.revOpinion[opKey];
+    });
+    opIn.addEventListener("change", function() {
+      if (typeof saveMeetingState === "function") saveMeetingState();
+      render("inventory-forecast");   // 표의 의견 셀 갱신 — 팝업은 body 직속이라 사라지지 않는다
+    });
+  }
 }
 
 // ── 바인딩 ────────────────────────────────────────────────────────────────────
@@ -1381,6 +1770,11 @@ function bindInventoryReview() {
       render("inventory-forecast");
       return;
     }
+
+    // 품목(leaf) 행 클릭 → AI 분석 팝업. 토글 버튼·의견 입력 클릭은 제외.
+    if (e.target.closest(".rv-op-in")) return;
+    var itemRow = e.target.closest("tr[data-rvitem]");
+    if (itemRow) { openRevItemPopup(itemRow.dataset.rvitem); return; }
   });
 
   // 검색 — 입력할 때마다 걸러진다. 렌더 후 커서를 되돌려야 타이핑이 끊기지 않는다.
