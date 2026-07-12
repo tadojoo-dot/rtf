@@ -1696,7 +1696,9 @@ function rtfHeadlineInv(items, mi, matScenario) {
   return { amount: agg.endingAmount, days: agg.inventoryDays, isTotal: false };
 }
 
-function renderRtfInventoryBar(items, baseItemsForDelta) {
+// [사용처 없음 — 정의만 남아 있던 죽은 코드] 2026-07 확인.
+// 아래 renderRtfMonthCards가 실제 화면이며, 그쪽은 공유 배너로 통일했다.
+function renderRtfInventoryBar_deprecated(items, baseItemsForDelta) {
   var months = getRtfMonths();
   if (!items || items.length === 0) return "";
 
@@ -1756,8 +1758,21 @@ function renderRtfInventoryBar(items, baseItemsForDelta) {
     "</tbody></table></div></div>";
 }
 
-// ── 월별 요약 카드 띠 ─────────────────────────────────────────────────────────
-function renderRtfMonthCards(items, baseItemsForDelta) {
+// ── 월별 요약 카드 띠 — 공유 3시나리오 배너로 통일 ────────────────────────────
+// 예전엔 자기 계산을 했는데 두 군데가 어긋나 있었다:
+//   · items    = RTF조정 품목집합만 (excessAdj가 안 실림)
+//   · matScen  = { fg: fgProdAdj, mat: matSimAdj } (matExcessAdj가 빠짐)
+// → 과잉감축을 아무리 해도 RTF판정 탭의 전체재고는 꿈쩍하지 않았다. 같은 회의에서
+//   화면을 옮기면 숫자가 달라져 "뭐가 맞는 거냐"가 된다.
+// 산출 HTML은 renderScenarioKpiBanner와 이미 동일했다(rtf-kpi-table 3행). 중복 구현이
+// 갈라진 것뿐이라 공유 배너를 그대로 쓴다. 본값 = 최종(감축까지), 칩 = (RTF +x)(감축 −y).
+// 1부에서 아직 감축이 없으면 감축 칩은 자동으로 안 뜬다 — 스포일러가 되지 않는다.
+function renderRtfMonthCards() {
+  return (typeof renderScenarioKpiBanner === "function") ? renderScenarioKpiBanner() : "";
+}
+
+// [사용처 없음 — 위 함수로 대체됨] 옛 자체계산 버전. 롤백 참고용.
+function renderRtfMonthCards_deprecated(items, baseItemsForDelta) {
   var months  = getRtfMonths();
   var hasDelta = !!baseItemsForDelta;
   // 조정 후 보기: 원부자재 롤포워드도 RTF조정 시나리오(생산·자재입고) 반영 — base는 원래계획(null)
@@ -1940,7 +1955,10 @@ function renderRtf() {
     ? renderMatrixSection(activeSection.title, activeSection.mode, matrixItems, activeSection.sectionId)
     : RTF_SECTION_OPTIONS.map((option) => renderMatrixSection(option.title, option.mode, matrixItems, option.sectionId)).join("");
 
-  const monthCardsHtml = renderRtfMonthCards(items, state.rtfViewMode === "adjusted" ? baseItems : null);
+  // 공유 3시나리오 배너 — 공급원인·과잉감축·재고진단·회의안건과 완전히 같은 숫자.
+  // (state.rtfViewMode 전/후 토글은 아래 매트릭스 표에만 적용된다. 상단 배너는 항상 3단 전부를
+  //  보여줘야 조정할 때마다 회의의 성과가 실시간으로 보인다.)
+  const monthCardsHtml = renderRtfMonthCards();
 
   return `<div class="rtf-screen rtf-excel-layout">
     ${infobarHtml}
