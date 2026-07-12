@@ -9,13 +9,72 @@ function detectRawType(fileName) {
   if (name.includes("적정재고"))         return "targetInventory";
   if (name.includes("나보타"))           return "nabota";
   if (name.includes("매출"))             return "salesActual";
-  // 결산자료/(26년 N월) 재고자산 결산.xlsx — 재고 총괄장의 1~6월 리뷰 원천.
+  // 결산자료 — 재고 총괄장의 1~6월 리뷰 원천.
   // 평소엔 fetch로 자동 로드하지만(start.bat 서버 모드), index.html을 파일로 직접 열면
   // fetch가 막히므로 파일 선택으로도 읽을 수 있어야 한다. "결산_RAW"보다 먼저 판정할 것.
+  //   · closing.json 하나만 골라도 됨 (사전계산, 1MB — 권장)
+  //   · 또는 (26년 N월) 재고자산 결산.xlsx 6개
+  if (name === "closing.json")       return "closingJson";
   if (name.includes("재고자산 결산")) return "closingMonthly";
   if (name.includes("결산실적_월별요약") || name.includes("결산_raw") || name.includes("결산_RAW")) return "actualMonthly";
   if (name.includes("RTF_RAW_보조양식")) return "rtfHelper";
   return "unknown";
+}
+
+// ── RAW 파일 자동 로드 ────────────────────────────────────────────────────────
+// 필요한 파일은 전부 프로젝트 폴더에 있다. start.bat이 그 폴더를 서버로 서빙하므로
+// 앱이 알아서 읽으면 된다 → 회의 당일 파일 선택 0회.
+//
+// index.html을 파일로 직접 열면(file://) 브라우저가 fetch를 막으므로 그때만 수동 선택.
+// 파일이 없으면 조용히 건너뛴다(선택 사항인 파일도 있다).
+const AUTO_RAW_FILES = [
+  "판매계획_공급계획_RAW.xlsx",
+  "기초재고_자재_RAW.xlsx",
+  "기초재고_재공품_RAW.xlsx",
+  "사업부 별 품목 기준정보.xlsx",
+  "BOM_RAW.xlsx",
+  "적정재고_RAW.xlsx",
+  "매출_RAW.xlsx",
+  "결산_RAW.xlsx",
+  "나보타_RAW.xlsx",
+];
+
+function setBootStatus(text, tone) {
+  const el = document.querySelector(".topbar-status span:nth-child(2)");
+  if (el) el.textContent = text;
+  const dot = document.querySelector(".topbar-status .status-dot");
+  if (dot) dot.style.background = tone === "ok" ? "var(--good)"
+                              : tone === "err" ? "var(--danger)" : "var(--warn)";
+}
+
+async function autoLoadRawFiles() {
+  if (typeof location !== "undefined" && location.protocol === "file:") {
+    setBootStatus("RAW 파일 선택 필요 (파일 모드)", "warn");
+    return false;
+  }
+
+  const files = [];
+  for (let i = 0; i < AUTO_RAW_FILES.length; i++) {
+    const name = AUTO_RAW_FILES[i];
+    setBootStatus(`데이터 읽는 중… ${i + 1}/${AUTO_RAW_FILES.length}`, "warn");
+    try {
+      const res = await fetch("./" + encodeURIComponent(name), { cache: "no-store" });
+      if (!res.ok) continue;
+      const buf = await res.arrayBuffer();
+      // processFiles는 File 인터페이스 중 name/size/arrayBuffer만 쓴다
+      files.push({ name, size: buf.byteLength, arrayBuffer: async () => buf });
+    } catch (e) { /* 없으면 건너뛴다 */ }
+  }
+
+  if (!files.length) {
+    setBootStatus("RAW 파일 선택 필요", "warn");
+    return false;
+  }
+  setBootStatus("데이터 처리 중…", "warn");
+  await processFiles(files);
+  const n = (state.mappedData.plan_monthly || []).length;
+  setBootStatus(n ? `데이터 연결 완료 · ${files.length}개 파일` : "데이터 읽기 실패", n ? "ok" : "err");
+  return true;
 }
 
 // ── 파일 처리 흐름 ────────────────────────────────────────────────────────────
@@ -27,10 +86,30 @@ async function processFiles(files) {
   render("data-check");
 
   const rawFiles = {};
+  state.closingJson = null;
   for (const file of files) {
     const rawType = detectRawType(file.name);
     // 결산자료는 월별로 6개가 들어오므로 rawType을 키로 쓰면 서로 덮어쓴다 → 파일명으로 구분
     const key = (rawType === "unknown" || rawType === "closingMonthly") ? file.name : rawType;
+
+    // 사전계산 JSON — 엑셀이 아니라 JSON이라 별도 처리 (파일 모드에서 이거 하나만 고르면 됨)
+    if (rawType === "closingJson") {
+      try {
+        const buf  = await file.arrayBuffer();
+        const text = new TextDecoder("utf-8").decode(buf);
+        state.closingJson = JSON.parse(text);
+        rawFiles[key] = { name: file.name, size: file.size, rawType,
+                          parseStatus: "success", parseSuccess: true,
+                          sheets: [], sheetNames: ["(사전계산 JSON)"],
+                          rowCount: state.closingJson.items ? state.closingJson.items.length : 0 };
+      } catch (error) {
+        rawFiles[key] = { name: file.name, size: file.size, rawType,
+                          parseStatus: "error", parseSuccess: false,
+                          parseMessage: error.message, sheets: [], sheetNames: [], rowCount: 0 };
+      }
+      continue;
+    }
+
     try {
       const workbook = await parseWorkbook(file);
       rawFiles[key] = {

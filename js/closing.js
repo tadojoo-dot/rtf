@@ -172,10 +172,7 @@ function parseClosingWorkbook(src, month) {
 // 결산 xlsx 6개를 브라우저에서 직접 파싱하면 12초간 UI가 멈춘다. 결산 파일은 회의 중
 // 바뀌지 않으므로 tools/build-closing.js가 미리 data/closing.json으로 떨궈둔다.
 // (start.bat이 결산 파일이 더 새로우면 자동 재생성)
-async function fetchClosingJson() {
-  var res = await fetch("./data/closing.json", { cache: "no-store" });
-  if (!res.ok) throw new Error("closing.json 없음 (HTTP " + res.status + ")");
-  var j = await res.json();
+function closingJsonToSnaps(j) {
   var F = j.fields;   // ["base","end","sale","ccOut","buyIn","prodIn","prodOut"]
   return j.months.map(function(month, mi) {
     var items = new Map();
@@ -190,6 +187,12 @@ async function fetchClosingJson() {
     return { month: month, items: items, wip: j.wip[mi] || { base:0, end:0, nabotaBase:0, nabotaEnd:0 },
              nabota: j.nabota[mi] || { base:0, end:0, sale:0 } };
   });
+}
+
+async function fetchClosingJson() {
+  var res = await fetch("./data/closing.json", { cache: "no-store" });
+  if (!res.ok) throw new Error("closing.json 없음 (HTTP " + res.status + ")");
+  return closingJsonToSnaps(await res.json());
 }
 
 // 사용자가 데이터점검 화면에서 직접 고른 결산 파일 (file:// 로 열었을 때의 유일한 경로)
@@ -209,10 +212,11 @@ function uploadedClosingSnaps() {
 }
 
 // ── 6개월 로드 → state.closing ────────────────────────────────────────────────
-// 경로 우선순위
-//   ① 사전계산 JSON (data/closing.json) — 39ms. start.bat 서버 모드의 기본 경로.
-//   ② 사용자가 고른 결산 xlsx — index.html을 파일로 직접 열면 fetch가 막히므로 이 경로뿐.
-//   ③ 결산 폴더 xlsx를 fetch — JSON이 없고 서버 모드일 때.
+// 경로 우선순위 — 사용자가 파일을 고를 일이 없게 하는 게 목표다.
+//   ① 사용자가 고른 closing.json (파일 모드에서 이거 하나만 고르면 끝)
+//   ② data/closing.json 자동 fetch — 39ms. start.bat 서버 모드의 기본 경로.
+//   ③ 사용자가 고른 결산 xlsx 6개
+//   ④ 결산 폴더 xlsx를 fetch — JSON이 없고 서버 모드일 때 (12초)
 async function loadClosingData(force) {
   if (!force && state.closing && state.closing.status === CLOSING_STATUS.DONE) return state.closing;
 
@@ -220,37 +224,53 @@ async function loadClosingData(force) {
 
   var snaps = [];
 
-  // ① 사전계산 JSON
-  try {
-    snaps = await fetchClosingJson();
-    state.closing.source = "json";
-  } catch (jsonErr) {
-    // ② 사용자가 직접 고른 결산 파일
-    var picked = uploadedClosingSnaps();
-    if (picked.length) {
-      snaps = picked;
-      state.closing.source = "upload";
-    } else if (typeof location !== "undefined" && location.protocol === "file:") {
-      // file:// 에서는 fetch가 원천 차단된다 → 여기서 끝. 무엇을 해야 하는지 정확히 알려준다.
-      state.closing.status = CLOSING_STATUS.ERROR;
-      state.closing.fileMode = true;
-      return state.closing;
-    } else {
-      // ③ 결산 폴더 xlsx 직접 파싱 (느림)
-      console.warn("[결산자료] 사전계산 JSON 미사용 → xlsx 직접 파싱:", jsonErr.message);
-      if (!window.XLSX) throw new Error("XLSX 라이브러리 연결 필요");
-      state.closing.source = "xlsx";
-      for (var i = 0; i < CLOSING_MONTHS.length; i++) {
-        var month = CLOSING_MONTHS[i];
-        var url   = CLOSING_DIR + encodeURIComponent(closingFileName(month));
-        try {
-          var res = await fetch(url, { cache: "no-store" });
-          if (!res.ok) throw new Error("HTTP " + res.status);
-          var buf = await res.arrayBuffer();
-          snaps.push(parseClosingWorkbook(closingBookToRows(readClosingBook(buf, month)), month));
-        } catch (err) {
-          state.closing.errors.push(month + ": " + (err && err.message ? err.message : String(err)));
-          snaps.push(null);
+  // ① 사용자가 고른 사전계산 JSON
+  if (state.closingJson) {
+    try {
+      snaps = closingJsonToSnaps(state.closingJson);
+      state.closing.source = "json-upload";
+    } catch (e) {
+      state.closing.errors.push("closing.json 형식 오류: " + e.message);
+    }
+  }
+
+  // ② 사전계산 JSON 자동 로드 (서버 모드의 기본 경로)
+  if (!snaps.length) {
+    try {
+      snaps = await fetchClosingJson();
+      state.closing.source = "json";
+    } catch (jsonErr) {
+      var fileMode = (typeof location !== "undefined" && location.protocol === "file:");
+
+      // ③ 사용자가 직접 고른 결산 xlsx 6개
+      var picked = uploadedClosingSnaps();
+      if (picked.length) {
+        snaps = picked;
+        state.closing.source = "upload";
+
+      } else if (fileMode) {
+        // file:// 에서는 fetch가 원천 차단된다 → 무엇을 해야 하는지 화면에서 안내
+        state.closing.status   = CLOSING_STATUS.ERROR;
+        state.closing.fileMode = true;
+        return state.closing;
+
+      } else {
+        // ④ 결산 폴더 xlsx 직접 파싱 (느림 — JSON이 없는 서버 모드)
+        console.warn("[결산자료] 사전계산 JSON 미사용 → xlsx 직접 파싱:", jsonErr.message);
+        if (!window.XLSX) throw new Error("XLSX 라이브러리 연결 필요");
+        state.closing.source = "xlsx";
+        for (var i = 0; i < CLOSING_MONTHS.length; i++) {
+          var month = CLOSING_MONTHS[i];
+          var url   = CLOSING_DIR + encodeURIComponent(closingFileName(month));
+          try {
+            var res = await fetch(url, { cache: "no-store" });
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            var buf = await res.arrayBuffer();
+            snaps.push(parseClosingWorkbook(closingBookToRows(readClosingBook(buf, month)), month));
+          } catch (err) {
+            state.closing.errors.push(month + ": " + (err && err.message ? err.message : String(err)));
+            snaps.push(null);
+          }
         }
       }
     }

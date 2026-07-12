@@ -624,9 +624,9 @@ function renderInventoryReview() {
             "<b>start.bat 으로 실행</b>" +
             "<p>결산자료가 자동으로 읽힙니다(0.04초). 파일을 고를 필요가 없습니다.</p></div>" +
           "<div class='rv-guide-box'><div class='rv-guide-n'>방법 2</div>" +
-            "<b>결산 파일을 직접 선택</b>" +
-            "<p>데이터점검 화면에서 다른 RAW 파일과 함께 <code>결산자료</code> 폴더의 " +
-            "<code>(26년 1~6월) 재고자산 결산.xlsx</code> <b>6개를 같이</b> 선택하세요.</p>" +
+            "<b>파일 하나만 더 선택</b>" +
+            "<p>데이터점검 화면에서 다른 RAW 파일과 함께 <code>data/closing.json</code> " +
+            "<b>하나만</b> 고르면 됩니다. (없으면 <code>결산자료</code> 폴더의 xlsx 6개)</p>" +
             "<button class='rv-guide-btn' onclick=\"render('data-check')\">데이터점검으로 이동</button></div>" +
         "</div></div></section>";
     }

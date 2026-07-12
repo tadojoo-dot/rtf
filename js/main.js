@@ -145,16 +145,22 @@ function renderDataCheck() {
     return [badge("warn", "대기"), "-", "-"];
   })();
 
+  const autoMode = typeof location !== "undefined" && location.protocol !== "file:";
   return `<section class="section-band">
     <div class="section-header">
-      <div><p class="eyebrow">local raw</p><h2>RAW 파일 선택</h2></div>
-      <p>필요한 RAW 엑셀 파일을 모두 선택하세요. 선택한 파일은 브라우저 메모리에서만 읽고 원본은 수정하지 않습니다.<br>
-         <b>재고 총괄장(재고전망)을 쓰려면 <code>결산자료</code> 폴더의 <code>(26년 1~6월) 재고자산 결산.xlsx</code> 6개도 함께 선택하세요.</b>
-         (start.bat으로 실행하면 자동으로 읽히므로 고를 필요 없습니다)</p>
+      <div><p class="eyebrow">local raw</p><h2>RAW 파일</h2></div>
+      ${autoMode
+        ? `<p><b>파일을 고를 필요가 없습니다.</b> start.bat이 프로젝트 폴더를 서버로 열어주므로
+             앱이 RAW 파일과 결산자료를 알아서 읽습니다. 아래는 확인용입니다.<br>
+             파일을 교체했다면 <b>Ctrl+F5</b>로 새로고침하면 다시 읽습니다.</p>`
+        : `<p><b>지금 index.html을 파일로 직접 연 상태입니다.</b> 브라우저가 폴더 접근을 막아서
+             파일을 직접 골라야 합니다. <b>start.bat으로 실행하면 아무것도 안 골라도 됩니다.</b><br>
+             직접 고르실 경우, 재고 총괄장을 쓰려면 <code>data/closing.json</code> <b>하나만</b> 더 고르면 됩니다
+             (없으면 <code>결산자료</code> 폴더의 xlsx 6개).</p>`}
     </div>
     <div class="upload-zone">
-      <label for="rawUpload"><strong>RAW 파일 선택</strong></label>
-      <input id="rawUpload" type="file" multiple accept=".xlsx,.xls,.xlsm,.csv" />
+      <label for="rawUpload"><strong>${autoMode ? "파일 직접 선택 (선택 사항)" : "RAW 파일 선택"}</strong></label>
+      <input id="rawUpload" type="file" multiple accept=".xlsx,.xls,.xlsm,.csv,.json" />
     </div>
   </section>
   <section class="section-band"><div class="section-header"><h2>필수 파일 연결 여부</h2></div>${renderTable(["필수 파일","상태","선택된 파일"], requiredRows)}</section>
@@ -819,3 +825,10 @@ function render(menuId) {
 
 // ── 시작 ─────────────────────────────────────────────────────────────────────
 render("meeting");
+
+// RAW 파일과 결산자료를 폴더에서 자동으로 읽는다 (start.bat 서버 모드).
+// 회의 당일 파일을 하나도 고를 필요가 없다.
+// index.html을 파일로 직접 열면 fetch가 막히므로 그때만 데이터점검에서 수동 선택.
+if (typeof autoLoadRawFiles === "function") {
+  autoLoadRawFiles().catch(function(e) { console.error("[자동 로드 실패]", e); });
+}
