@@ -861,19 +861,23 @@ function reviewTotals() {
 // 렌더
 // ═══════════════════════════════════════════════════════════════════════════
 
+// 억 단위 정수 — 화면 전체가 정수다 (formatMoney와 같은 이유).
+// 소수점을 남기면 배너는 "2,274억"인데 표는 "2,274.1억"이라 같은 화면에서 두 숫자로 보인다.
 function revMoney(won) {
   if (!Number.isFinite(won)) return "-";
-  return (won / 1e8).toFixed(1);
+  return Math.round(won / 1e8).toLocaleString("ko-KR");
 }
+// 0.5억 미만은 정수로 찍으면 "+0억"이 되어 노이즈다 → 아예 표시하지 않는다.
 function revDelta(won) {
-  if (!Number.isFinite(won) || Math.abs(won) < 5e6) return "<span class='rv-mut'>-</span>";
+  if (!Number.isFinite(won) || Math.abs(won) < 5e7) return "<span class='rv-mut'>-</span>";
   var up = won > 0;
   return "<span class='" + (up ? "rv-up" : "rv-down") + "'>" + (up ? "+" : "−") +
          revMoney(Math.abs(won)) + "</span>";
 }
 function revDaysDelta(d) {
-  if (!Number.isFinite(d)) return "";
-  return "<span class='" + (d > 0 ? "rv-up" : "rv-down") + "'>" + (d > 0 ? "+" : "") + d.toFixed(1) + "일</span>";
+  if (!Number.isFinite(d) || Math.round(d) === 0) return "";
+  return "<span class='" + (d > 0 ? "rv-up" : "rv-down") + "'>" + (d > 0 ? "+" : "") +
+         Math.round(d) + "일</span>";
 }
 // 재고일수(선행 커버리지) — 6월말 재고를 하반기 계획대로 소진할 때 버티는 일수(revForwardCoverDays).
 // 전사 재고일수(140일, 누적 매출원가 분모)와는 산식이 다른 품목·품목군 단위 참고치다.
@@ -1335,14 +1339,16 @@ function revChip(sev, main, sub) {
 function revScn(label, amt, days, prevAmt, prevDays, key) {
   var d  = (Number.isFinite(amt) && Number.isFinite(prevAmt)) ? amt - prevAmt : null;
   var dd = (Number.isFinite(days) && Number.isFinite(prevDays)) ? days - prevDays : null;
-  var moved = d !== null && Math.abs(d) >= 5e6;
+  // 0.5억 미만은 정수로 찍으면 "▲0억"이 되어 노이즈다 → 움직인 것으로 치지 않는다.
+  var moved = d !== null && Math.abs(d) >= 5e7;
   return "<div class='rv-scn-c rv-scn-" + key + (moved ? " rv-scn-on" : "") + "'>" +
     "<div class='rv-scn-l'>" + label + "</div>" +
     "<div class='rv-scn-v'>" + revMoney(amt) + "<small>억</small></div>" +
-    "<div class='rv-scn-y'>" + (Number.isFinite(days) ? days.toFixed(1) + "일" : "-") + "</div>" +
+    "<div class='rv-scn-y'>" + (Number.isFinite(days) ? Math.round(days) + "일" : "-") + "</div>" +
     (moved
       ? "<div class='rv-scn-d'>" + (d < 0 ? "▽" : "▲") + revMoney(Math.abs(d)) + "억" +
-        (dd !== null && Math.abs(dd) >= 0.1 ? " · " + (dd < 0 ? "▽" : "▲") + Math.abs(dd).toFixed(1) + "일" : "") +
+        (dd !== null && Math.round(Math.abs(dd)) >= 1
+          ? " · " + (dd < 0 ? "▽" : "▲") + Math.round(Math.abs(dd)) + "일" : "") +
         "</div>"
       : "<div class='rv-scn-d rv-scn-idle'>조정 없음</div>") +
   "</div>";
@@ -1418,11 +1424,11 @@ function renderInventoryReview() {
       "<div class='rv-kpis'>" +
         revKpi("총재고 · 6월말", revEok(jun).replace("억", ""), "억",
                "전월 " + revEok(may) + " · " + revDelta(jun - may) + "억", true) +
-        revKpi("재고일수", junD ? junD.toFixed(1) : "-", "일",
-               mayD ? "전월 " + mayD.toFixed(1) + "일 · " + revDaysDelta(junD - mayD) : "") +
+        revKpi("재고일수", junD ? Math.round(junD) : "-", "일",
+               mayD ? "전월 " + Math.round(mayD) + "일 · " + revDaysDelta(junD - mayD) : "") +
         revKpi("전년 동월 대비",
-               lyD ? ((junD - lyD) >= 0 ? "+" : "") + (junD - lyD).toFixed(1) : "-", "일",
-               lyD ? "25년 6월 " + lyD.toFixed(1) + "일 → " + junD.toFixed(1) + "일" : "") +
+               lyD ? ((junD - lyD) >= 0 ? "+" : "") + Math.round(junD - lyD) : "-", "일",
+               lyD ? "25년 6월 " + Math.round(lyD) + "일 → " + Math.round(junD) + "일" : "") +
       "</div>" +
     "</div>";
 

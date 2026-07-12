@@ -51,10 +51,13 @@ function formatBytes(bytes) {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
+// 억 단위 정수. 회의에서 소리내어 읽는 숫자라 소수점은 방해만 된다 —
+// "2,274.2억"보다 "2,274억"이 빨리 읽히고, 백만원 자리가 의사결정을 바꾸지 않는다.
+// 전체재고·재고금액·델타 칩이 전부 이 함수를 쓴다 (회의안건·RTF판정·공급원인·과잉감축).
 function formatMoney(value) {
   if (!Number.isFinite(value)) return NEED_DATA;
   if (value === 0) return "-";
-  return `${formatNumber(value / 100000000, 1)}억`;
+  return `${formatNumber(value / 100000000, 0)}억`;
 }
 
 // ── 날짜 / 월 ────────────────────────────────────────────────────────────────
