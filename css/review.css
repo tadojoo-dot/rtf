@@ -151,13 +151,19 @@
           color: var(--ink-2); font-size: 12px; font-weight: 800; line-height: 1; cursor: pointer; }
 .rv-tog-x { border-color: transparent; background: transparent; cursor: default; }
 
-/* 증가 기여도 — 숫자보다 막대가 한눈에 들어온다 */
-.rv-pbar   { display: inline-block; width: 54px; height: 7px; border-radius: 4px;
-             background: var(--line); overflow: hidden; vertical-align: middle; margin-right: 8px; }
-.rv-pbar i { display: block; height: 100%; background: var(--sc-rtf); border-radius: 4px; }
-.rv-pbar-hot { background: var(--warn) !important; }
-.rv-pct      { font-size: 12.5px; color: var(--muted); font-weight: 700; }
-.rv-pct-hot  { color: var(--warn-ink); font-weight: 800; }
+/* 증가 기여도 — 0을 가운데 두고 증가는 오른쪽(주황), 감소는 왼쪽(초록).
+   부호가 눈에 바로 읽힌다. 합이 정확히 100%가 되도록 조정행에도 기여도를 붙였다. */
+.rv-cbar   { position: relative; display: inline-block; width: 64px; height: 8px;
+             background: var(--line-2); border-radius: 2px;
+             vertical-align: middle; margin-right: 8px; overflow: hidden; }
+.rv-cbar::before { content: ""; position: absolute; left: 50%; top: 0; bottom: 0;
+                   width: 1px; background: var(--muted-2); }
+.rv-cbar i { position: absolute; top: 1px; bottom: 1px; display: block; border-radius: 1px; }
+.rv-cbar-up { background: var(--warn); }
+.rv-cbar-dn { background: var(--good); }
+.rv-pct     { font-size: 12.5px; color: var(--muted); font-weight: 700; }
+.rv-pct-hot { color: var(--warn-ink); font-weight: 800; }
+.rv-pct-dn  { color: var(--good); font-weight: 800; }
 
 /* ── 월별 뷰 셀 — 재고금액 / 재고일수 / 전월대비 3층 ──
    전월대비는 화살표다. 12개월 × 수백 행에 뱃지를 달면 알약밭이 되어

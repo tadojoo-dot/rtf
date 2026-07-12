@@ -245,25 +245,53 @@ function buildMatGroupMap() {
   return map;
 }
 
-// ── 조정행 (나보타 · 미착품 · 평가충당금) ─────────────────────────────────────
+// ── 조정행 (재공품 · 나보타 · 미착품 · 평가충당금) ────────────────────────────
+//
+// 이 행들이 있어야 표가 닫힌다. 검산(6월):
+//   유형별(자재수불) +201.4  재공품 −3.7  나보타 −16.9  미착품 +5.7  충당금 −3.5
+//   = +183.0억  = 공시기준 총증감 ✓  (차이 0.0억)
+//
+// ⚠ 나보타 실적은 반드시 **결산 실측**(자재수불 플랜트1220 + 재공품 1220)을 써야 한다.
+//   나보타_RAW는 기준이 8억 어긋나 있어(323 vs 315) 증감도 −10.8억으로 잘못 나온다.
+//   실측은 −16.9억이고, 이 값을 써야 합이 183억으로 닫힌다.
+//   나보타_RAW는 **전망 구간의 월별 증감분**을 얻는 용도로만 쓴다.
 function reviewAdjustments() {
   var meta = {};
   (state.mappedData.actuals_meta || []).forEach(function(r) { meta[r.month] = r; });
-  var nb = (typeof getNabotaInv === "function") ? getNabotaInv() : {};
-  var all = REVIEW_MONTHS.concat(FCST_MONTHS);
+  var nbRaw = (typeof getNabotaInv === "function") ? getNabotaInv() : {};
+  var c     = state.closing;
+  var all   = REVIEW_MONTHS.concat(FCST_MONTHS);
 
-  function series(pick) {
+  function metaSeries(key) {
     return all.map(function(m) {
-      var v = pick(m);
-      return Number.isFinite(v) ? v * 1e8 : null;   // 억 → 원
+      var v = meta[m] ? meta[m][key] : null;
+      return Number.isFinite(v) ? v * 1e8 : null;
     });
   }
+
+  // 재공품 (나보타 제외) — 실적은 결산 실측, 전망은 6월값 고정(BOM 소요 전개는 자재 쪽에서 반영)
+  var wip = all.map(function(_, i) {
+    if (i < 6) return c.wip[i] ? c.wip[i].end : null;
+    return c.wip[5] ? c.wip[5].end : null;
+  });
+
+  // 나보타 — 실적은 결산 실측, 전망은 6월 실측을 앵커로 나보타_RAW의 월별 증감만 얹는다
+  var nabota = all.map(function(m, i) {
+    if (i < 6) {
+      var s = c.nabota[i], w = c.wip[i];
+      return (s && w) ? s.end + w.nabotaEnd : null;
+    }
+    var anchor = (c.nabota[5] && c.wip[5]) ? c.nabota[5].end + c.wip[5].nabotaEnd : null;
+    var r6 = nbRaw[REVIEW_MONTHS[5]], rm = nbRaw[m];
+    if (!Number.isFinite(anchor) || !r6 || !rm) return anchor;
+    return anchor + (rm.invAmt - r6.invAmt) * 1e8;
+  });
+
   return {
-    // 나보타 실적은 결산_RAW 사업장 합계(315억)와 나보타_RAW(323억)가 8억 어긋난다(스펙 §9).
-    // 전망이 필요하므로 나보타_RAW를 쓴다.
-    nabota:    series(function(m) { return nb[m] ? nb[m].invAmt : null; }),
-    michak:    series(function(m) { return meta[m] ? meta[m].michakInv : null; }),
-    allowance: series(function(m) { return meta[m] ? meta[m].allowanceInv : null; }),
+    wip:       wip,
+    nabota:    nabota,
+    michak:    metaSeries("michakInv"),
+    allowance: metaSeries("allowanceInv"),
     cogs:      REVIEW_MONTHS.map(function(m) {
                  return meta[m] && Number.isFinite(meta[m].monthCogs) ? meta[m].monthCogs * 1e8 : null; }),
     totalInv:  REVIEW_MONTHS.map(function(m) {
@@ -346,7 +374,6 @@ function reviewTotals() {
   var adj = reviewAdjustments();
   var c   = state.closing;
 
-  var wip6 = c.wip[5] ? c.wip[5].end : 0;
   var hist = adj.totalInv.slice(0, 6);   // 실적은 공시기준 총재고 그대로 (대표 보고 숫자)
 
   function sumF(key, mi) {
@@ -354,17 +381,16 @@ function reviewTotals() {
     for (var i = 0; i < items.length; i++) t += items[i][key][mi] || 0;
     return t;
   }
-  // 전망 = 품목 전개 + 재공품(flat) + 나보타 + 미착 − 충당금
+  // 전망 = 품목 전개 + 재공품 + 나보타 + 미착 − 충당금
   // 미착·충당금은 전망이 없으면 6월 값으로 고정한다.
   function fcst(key) {
     return FCST_MONTHS.map(function(_, mi) {
       var k = 6 + mi;
-      var v = sumF(key, mi) + wip6;
-      if (Number.isFinite(adj.nabota[k])) v += adj.nabota[k];
-      var mi2 = Number.isFinite(adj.michak[k])    ? adj.michak[k]    : adj.michak[5];
-      var al2 = Number.isFinite(adj.allowance[k]) ? adj.allowance[k] : adj.allowance[5];
-      if (Number.isFinite(mi2)) v += mi2;
-      if (Number.isFinite(al2)) v += al2;
+      var v = sumF(key, mi);
+      [adj.wip[k], adj.nabota[k],
+       Number.isFinite(adj.michak[k])    ? adj.michak[k]    : adj.michak[5],
+       Number.isFinite(adj.allowance[k]) ? adj.allowance[k] : adj.allowance[5],
+      ].forEach(function(x) { if (Number.isFinite(x)) v += x; });
       return v;
     });
   }
@@ -376,17 +402,38 @@ function reviewTotals() {
     base:     fcst("fBase"),
     rtf:      fcst("fRtf"),
     exc:      fcst("fExc"),
+    // ── 재고일수 = 재고금액 ÷ 누적 매출원가 × 누적일수 ──
+    //
+    // 회사는 연초부터 누적으로 마감한다. 당월 매출원가만 쓰면 그 달이 튈 때 재고일수도
+    // 같이 튄다(2월이 118일로 꺼지는 식). 누적이 재고 수준을 안정적으로 말한다.
+    //   6월 = 2,714억 ÷ 누적 매출원가 3,516억 × 누적일수 181일 = 139.7일  ← 회사가 보는 140일
+    //   (당월 기준으로 하면 2,714 ÷ 572 × 30 = 142.3일이 나온다 — 회사 숫자와 다르다)
+    //
+    // 전망 구간도 누적을 그대로 이어간다. 상반기 실적 누적에 하반기 계획 누적을 더한다.
     histDays: REVIEW_MONTHS.map(function(m, mi) {
-      var inv = hist[mi], cg = adj.cogs[mi];
-      return (Number.isFinite(inv) && cg > 0) ? inv / cg * monthDays(m) : null;
+      var cumC = 0, cumD = 0;
+      for (var i = 0; i <= mi; i++) {
+        if (!(adj.cogs[i] > 0)) return null;
+        cumC += adj.cogs[i];
+        cumD += monthDays(REVIEW_MONTHS[i]);
+      }
+      return Number.isFinite(hist[mi]) ? hist[mi] / cumC * cumD : null;
     }),
     fcstDays: function(series) {
+      // 상반기 실적 누적을 출발점으로
+      var baseC = 0, baseD = 0;
+      for (var i = 0; i < 6; i++) {
+        if (adj.cogs[i] > 0) { baseC += adj.cogs[i]; baseD += monthDays(REVIEW_MONTHS[i]); }
+      }
+      var cumC = baseC, cumD = baseD;
       return FCST_MONTHS.map(function(m, mi) {
-        var cg = fCogs[mi];
-        return (cg > 0 && Number.isFinite(series[mi])) ? series[mi] / cg * monthDays(m) : null;
+        if (!(fCogs[mi] > 0)) return null;
+        cumC += fCogs[mi];
+        cumD += monthDays(m);
+        return Number.isFinite(series[mi]) ? series[mi] / cumC * cumD : null;
       });
     },
-    adj: adj, wip6: wip6, fCogs: fCogs,
+    adj: adj, fCogs: fCogs,
   };
 }
 
@@ -415,6 +462,19 @@ function revMos(mos) {
   var cls = mos >= 24 ? "rv-mos-x" : mos >= 12 ? "rv-mos-w" : "rv-mos-g";
   return "<span class='rv-mos " + cls + "'>" + (mos >= 100 ? Math.round(mos) : mos.toFixed(1)) + "</span>";
 }
+// 증가 기여도 — 막대로 보여야 크기가 한눈에 들어온다.
+// 증가는 오른쪽(주황), 감소는 왼쪽(초록)으로 뻗는다. 0을 가운데 두면 부호가 눈에 바로 읽힌다.
+function revContrib(pct) {
+  if (pct === null || pct === undefined) return "<span class='rv-mut'>-</span>";
+  var w = Math.min(50, Math.abs(pct) / 2);   // 100% = 반쪽 폭
+  var up = pct > 0;
+  return "<span class='rv-cbar'>" +
+    "<i class='" + (up ? "rv-cbar-up" : "rv-cbar-dn") + "' style='width:" + w.toFixed(0) + "%;" +
+      (up ? "left:50%" : "right:50%") + "'></i>" +
+    "</span><span class='rv-pct " + (up ? "rv-pct-hot" : "rv-pct-dn") + "'>" +
+    (up ? "+" : "−") + Math.abs(pct).toFixed(0) + "%</span>";
+}
+
 function revSpark(hist) {
   var v = hist.filter(function(x) { return Number.isFinite(x); });
   if (v.length < 2) return "";
@@ -513,9 +573,11 @@ function revSumTable(tree, T) {
       : revAgg(n.items);
 
     var pct = a.end / total * 100;
-    // 증가 기여도 — "이번 증가에 얼마나 기여했나". 감소한 행은 표시하지 않는다
-    // (음수 기여도는 "덜 늘렸다"는 뜻이라 회의에서 오해를 부른다).
-    var contrib = (headDelta > 0 && a.delta > 0) ? a.delta / headDelta * 100 : null;
+    // 증가 기여도 = 그 행의 증감 ÷ 총 증감. 감소한 행은 음수로 표시한다.
+    // 양수만 보여주면 합이 100%를 넘어(증가분만 더해지므로) "왜 119%냐"는 말이 나온다.
+    // 음수까지 포함하고 조정행(나보타·미착·충당금)에도 기여도를 붙이면 합이 정확히 100%가 되어
+    // 회의에서 검산해도 맞는다.
+    var contrib = (headDelta !== 0 && Math.abs(a.delta) >= 5e7) ? a.delta / headDelta * 100 : null;
     var cls = "";
     // BOM 어디에도 안 걸리고 출고도 없는 자재 = 불용. 감축이 아니라 처분 결정 대상.
     if (n.level === 1 && n.label === MAT_UNUSED_GROUP) cls = " rv-crit";
@@ -541,12 +603,7 @@ function revSumTable(tree, T) {
     rows += "<tr class='rv-l" + n.level + cls + "'>" + revRowHead(n, hasKid) +
       "<td class='rv-n rv-gsep'><b>" + revMoney(a.end) + "</b></td>" +
       "<td class='rv-n'>" + revDelta(a.delta) + "</td>" +
-      // 증가 기여도 — 막대로 보여야 크기가 한눈에 들어온다
-      "<td class='rv-n'>" + (contrib === null
-        ? "<span class='rv-mut'>-</span>"
-        : "<span class='rv-pbar'><i class='rv-pbar-hot' style='width:" +
-          Math.min(100, contrib).toFixed(0) + "%'></i></span>" +
-          "<span class='rv-pct rv-pct-hot'>" + contrib.toFixed(0) + "%</span>") + "</td>" +
+      "<td class='rv-n'>" + revContrib(contrib) + "</td>" +
       "<td class='rv-n rv-mut'>" + pct.toFixed(1) + "%</td>" +
       "<td class='rv-n rv-gsep rv-band'>" + revMos(a.mos) + "</td>" +
       "<td class='rv-band'>" + (cause || "<span class='rv-mut'>-</span>") + "</td>" +
@@ -570,18 +627,23 @@ function revSumTable(tree, T) {
 //   재고금액 (굵게) / 재고일수 (작게, 회색) / 전월대비 (▲▽ + 색)
 // 전월대비는 뱃지가 아니라 화살표다 — 12개월 × 수백 행에 뱃지를 달면 알약밭이 되어
 // 정작 강조해야 할 것(진단 뱃지)이 묻힌다. 뱃지는 드물게 나타나는 것에만 쓴다.
+// 월별 뷰는 스캔용이다 — 소수점은 눈만 어지럽힌다. 전부 정수 + 단위 명시.
+function revEok(won) {
+  if (!Number.isFinite(won)) return "-";
+  return Math.round(won / 1e8).toLocaleString("ko-KR") + "억";
+}
 function revMonCell(amt, days, prev, cls) {
   if (!Number.isFinite(amt)) return "<td class='rv-mc " + cls + "'><span class='rv-mut'>-</span></td>";
   var d = Number.isFinite(prev) ? amt - prev : null;
   var dh = "";
-  if (d !== null && Math.abs(d) >= 5e6) {
+  if (d !== null && Math.abs(d) >= 5e7) {   // 0.5억 미만은 노이즈 → 표시 안 함
     var up = d > 0;
     dh = "<span class='rv-mc-d " + (up ? "rv-up" : "rv-down") + "'>" +
-         (up ? "▲" : "▽") + revMoney(Math.abs(d)) + "</span>";
+         (up ? "▲" : "▽") + revEok(Math.abs(d)) + "</span>";
   }
   return "<td class='rv-mc " + cls + "'>" +
-    "<span class='rv-mc-a'>" + revMoney(amt) + "</span>" +
-    (Number.isFinite(days) ? "<span class='rv-mc-y'>" + days.toFixed(1) + "일</span>" : "") +
+    "<span class='rv-mc-a'>" + revEok(amt) + "</span>" +
+    (Number.isFinite(days) ? "<span class='rv-mc-y'>" + Math.round(days) + "일</span>" : "") +
     dh + "</td>";
 }
 
@@ -633,21 +695,35 @@ function revMonthTable(tree, T) {
 }
 
 // ── 합계 + 조정행 — 표를 다 더하면 헤드라인(공시기준)이 나온다 ────────────────
-function revAdjRow(label, val, note) {
+// 조정행도 기여도를 가져야 표를 다 더해 100%가 나온다.
+// (나보타가 19억 줄어든 것도 이번 달 총증감을 만든 요인이다)
+function revAdjRow(label, cur, prev, total, headDelta, note) {
+  var d = (Number.isFinite(cur) && Number.isFinite(prev)) ? cur - prev : null;
+  var c = (d !== null && headDelta !== 0 && Math.abs(d) >= 5e7) ? d / headDelta * 100 : null;
+  var pct = Number.isFinite(cur) ? (cur / total * 100).toFixed(1) + "%" : "-";
   return "<tr class='rv-adj'><td class='rv-name'>" + label + "</td>" +
-    "<td class='rv-n rv-gsep'>" + (Number.isFinite(val) ? revMoney(val) : "-") + "</td>" +
-    "<td colspan='6' class='rv-mut rv-l-note'>" + note + "</td></tr>";
+    "<td class='rv-n rv-gsep'>" + (Number.isFinite(cur) ? revMoney(cur) : "-") + "</td>" +
+    "<td class='rv-n'>" + (d !== null ? revDelta(d) : "<span class='rv-mut'>-</span>") + "</td>" +
+    "<td class='rv-n'>" + revContrib(c) + "</td>" +
+    "<td class='rv-n rv-mut'>" + pct + "</td>" +
+    "<td colspan='3' class='rv-mut rv-l-note rv-gsep'>" + note + "</td></tr>";
 }
+// 조정행 4개(재공품·나보타·미착품·평가충당금)가 다 있어야 표가 닫힌다.
+// 하나라도 빠지면 기여도 합이 100%가 안 된다 — 실제로 재공품이 빠져 9.9억이 안 맞았다.
 function revFooterSum(T) {
   var A = T.adj;
-  return revAdjRow("나보타 (통합관리)", A.nabota[5], "품목 전개 없음 — 총액만 관리") +
-    revAdjRow("미착품", A.michak[5], "공시 조정 항목") +
-    revAdjRow("평가충당금", A.allowance[5], "공시 조정 항목") +
+  var total = T.hist[5] || 1;
+  var hd = T.hist[5] - T.hist[4];
+  return revAdjRow("재공품", A.wip[5], A.wip[4], total, hd, "공정 중 재고 (별도 수불)") +
+    revAdjRow("나보타 (통합관리)", A.nabota[5], A.nabota[4], total, hd,
+              "품목 전개 없음 — 총액만 관리") +
+    revAdjRow("미착품", A.michak[5], A.michak[4], total, hd, "공시 조정 항목") +
+    revAdjRow("평가충당금", A.allowance[5], A.allowance[4], total, hd, "공시 조정 항목") +
     "<tr class='rv-total'><td class='rv-name'>총재고 (공시기준)</td>" +
       "<td class='rv-n rv-gsep'>" + revMoney(T.hist[5]) + "</td>" +
-      "<td class='rv-n'>" + revDelta(T.hist[5] - T.hist[4]) + "</td>" +
-      "<td class='rv-n'>100%</td>" +
-      "<td class='rv-n'>100%</td>" +
+      "<td class='rv-n'>" + revDelta(hd) + "</td>" +
+      "<td class='rv-n'><b>100%</b></td>" +
+      "<td class='rv-n'><b>100%</b></td>" +
       "<td class='rv-n rv-gsep'>" + (T.histDays[5] ? T.histDays[5].toFixed(1) + "일" : "-") + "</td>" +
       "<td colspan='2' class='rv-mut'>결산_RAW 합계와 일치</td></tr>";
 }
@@ -742,16 +818,16 @@ function renderInventoryReview() {
         "<h2 class='rv-title'>2026년 6월 결산 리뷰 <span>→ 하반기 전망</span></h2></div>" +
         "<div class='rv-hero-note'>공시기준 · 나보타 통합관리<br>재고일수는 매출원가 분모</div>" +
       "</div>" +
+      // 증가 기여도(thynC 93%)는 여기 넣지 않는다 — 진단 칩과 소견에 이미 있어
+      // 같은 말을 세 번 하게 된다. 히어로는 "재고가 얼마고 얼마나 나쁜가"만 답한다.
       "<div class='rv-kpis'>" +
-        revKpi("총재고 · 6월말", revMoney(jun), "억",
-               "전월 " + revMoney(may) + "억 · " + revDelta(jun - may) + "억", true) +
+        revKpi("총재고 · 6월말", revEok(jun).replace("억", ""), "억",
+               "전월 " + revEok(may) + " · " + revDelta(jun - may) + "억", true) +
         revKpi("재고일수", junD ? junD.toFixed(1) : "-", "일",
                mayD ? "전월 " + mayD.toFixed(1) + "일 · " + revDaysDelta(junD - mayD) : "") +
         revKpi("전년 동월 대비",
                lyD ? ((junD - lyD) >= 0 ? "+" : "") + (junD - lyD).toFixed(1) : "-", "일",
                lyD ? "25년 6월 " + lyD.toFixed(1) + "일 → " + junD.toFixed(1) + "일" : "") +
-        revKpi("6월 증가 기여", share ? Math.round(share) : "-", "%",
-               topG ? escapeHtml(topName) + " 단일 품목군 " + revDelta(topG[1].delta) + "억" : "") +
       "</div>" +
     "</div>";
 
@@ -783,21 +859,32 @@ function renderInventoryReview() {
         : "") + ".</div>";
   }
 
-  // ── 3단 시나리오 스트립 — 회의의 성과가 실시간으로 움직이는 자리 ──
-  // 공장 담당자가 판정을 누를 때마다 '과잉감축 후' 숫자가 내려간다. 그 하강폭이 오늘의 성과다.
-  var fdB = T.fcstDays(T.base), fdR = T.fcstDays(T.rtf), fdE = T.fcstDays(T.exc);
-  var L = 5;   // 12월 = 전망 마지막 달
-  var scn =
-    "<div class='rv-scn'>" +
-      "<div class='rv-scn-hd'>12월말 전망 <span>— 조정할 때마다 실시간으로 바뀝니다</span></div>" +
-      "<div class='rv-scn-row'>" +
-        revScn("원계획", T.base[L], fdB[L], null, null, "base") +
-        "<div class='rv-scn-arr'>→</div>" +
-        revScn("RTF 조정후", T.rtf[L], fdR[L], T.base[L], fdB[L], "rtf") +
-        "<div class='rv-scn-arr'>→</div>" +
-        revScn("과잉감축 후", T.exc[L], fdE[L], T.rtf[L], fdR[L], "exc") +
-      "</div>" +
-    "</div>";
+  // ── 3단 시나리오 스트립 ──
+  // 회의는 6월 결산 리뷰로 시작한다. 그 시점엔 조정이 하나도 없어서 3단이 전부 같은
+  // 숫자다 — 똑같은 숫자 세 개를 나란히 두면 의미가 없고 "6월 얘기 중인데 왜 12월?"이
+  // 된다. 그래서 조정이 생겼을 때만 나타나게 한다.
+  //   리뷰 시작        → 안 보임 (화면이 6월 얘기만 한다)
+  //   RTF·과잉감축 후  → 나타남 ("우리가 이만큼 줄였다")
+  // 보여줄 성과가 없으면 안 보이는 게 정직하다.
+  var hasAdj = (Object.keys(state.matSimAdj  || {}).length > 0) ||
+               (Object.keys(state.excessAdj  || {}).length > 0) ||
+               (typeof hasFgProdAdj === "function" && hasFgProdAdj());
+  var scn = "";
+  if (hasAdj) {
+    var fdB = T.fcstDays(T.base), fdR = T.fcstDays(T.rtf), fdE = T.fcstDays(T.exc);
+    var L = 5;   // 12월 = 전망 마지막 달
+    scn =
+      "<div class='rv-scn'>" +
+        "<div class='rv-scn-hd'>12월말 전망 <span>— 조정할 때마다 실시간으로 바뀝니다</span></div>" +
+        "<div class='rv-scn-row'>" +
+          revScn("원계획", T.base[L], fdB[L], null, null, "base") +
+          "<div class='rv-scn-arr'>→</div>" +
+          revScn("RTF 조정후", T.rtf[L], fdR[L], T.base[L], fdB[L], "rtf") +
+          "<div class='rv-scn-arr'>→</div>" +
+          revScn("과잉감축 후", T.exc[L], fdE[L], T.rtf[L], fdR[L], "exc") +
+        "</div>" +
+      "</div>";
+  }
 
   var tree  = buildReviewTree(items, tab);
   var table = (view === "mon") ? revMonthTable(tree, T) : revSumTable(tree, T);
@@ -818,14 +905,15 @@ function renderInventoryReview() {
     "<div class='rv-diag'><span class='rv-diag-lbl'>AI 진단</span>" + chips.join("") + "</div>" +
     opinion +
     "<div class='rv-card'>" +
-      "<div class='rv-card-hd'>총재고 추이 <span>1~6월 결산 실적 · 7~12월 3단 전망</span></div>" +
-      "<div class='rv-chart'><canvas id='revChart' height='300'></canvas></div>" +
+      "<div class='rv-card-hd'>총재고 추이 " +
+        "<span>막대 전체 높이 = 원계획 · 진한 부분 = 조정 후 남는 재고 · 위에 쌓인 층 = 우리가 줄인 만큼</span></div>" +
+      "<div class='rv-chart'><canvas id='revChart' height='320'></canvas></div>" +
       "<div class='rv-legend'>" +
         "<span><i class='rv-lg' style='background:var(--muted-2)'></i>실적(결산)</span>" +
-        "<span><i class='rv-lg' style='background:var(--sc-base)'></i>원계획</span>" +
-        "<span><i class='rv-lg' style='background:var(--sc-rtf)'></i>RTF 조정후</span>" +
-        "<span><i class='rv-lg' style='background:var(--sc-exc)'></i>과잉감축 후</span>" +
-        "<span><i class='rv-lg rv-lg-day'></i>재고일수</span>" +
+        "<span><i class='rv-lg' style='background:var(--sc-exc)'></i>조정 후 재고</span>" +
+        "<span><i class='rv-lg' style='background:var(--sc-rtf)'></i>RTF 조정으로 줄인 분</span>" +
+        "<span><i class='rv-lg' style='background:var(--sc-base)'></i>과잉감축으로 줄인 분</span>" +
+        "<span><i class='rv-lg rv-lg-day'></i>재고일수 (우측 축)</span>" +
       "</div>" +
     "</div>" +
     scn +
@@ -836,10 +924,10 @@ function renderInventoryReview() {
         "<b>재고금액 비중</b> = 그 행의 재고 ÷ 공시기준 총재고 (규모가 얼마나 되나)<br>" +
         "<b>재고월수</b> = 6월말 재고 ÷ 최근 3개월 평균 출고 " +
         "(제·상품 = <b>3평판</b>(판매금액) / 원부자재 = 생산출고. 코스트센터출고는 판매가 아니므로 제외)<br>" +
-        "<b>재고일수</b> — 실적 구간(1~6월)은 <b>결산 매출원가</b>가 분모입니다. " +
+        "<b>재고일수</b> = 재고금액 ÷ <b>누적 매출원가</b> × <b>누적일수</b> (연초부터 누적 — 회사 마감 방식). " +
+        "실적 구간(1~6월)은 결산 매출원가를 그대로 씁니다. " +
         "전망 구간(7~12월)은 매출원가가 마감 후에나 확정되므로 <b>판매계획 × 표준원가</b>로 추정하고, " +
-        "판매계획 파일이 전사 매출원가의 77%만 담고 있어 상반기 실측 보정계수(×1.301)를 적용합니다. " +
-        "<b>두 구간의 분모가 다릅니다.</b><br>" +
+        "판매계획 파일이 전사 매출원가의 77%만 담고 있어 상반기 실측 보정계수(×1.301)를 적용합니다.<br>" +
         "재고금액 = 결산 자재수불 기말 · <b>나보타(플랜트 1220)는 총액만</b> · 유형 = CN열 · " +
         "제·상품 품목군 = 기준정보 품목구분1 / 원부자재 = <b>BOM 역전개</b>(공용은 소요량 최대 품목군에 전액 귀속) · " +
         "<b>판매계획이 없는 재고는 0이 아니라 그대로 이월(flat)</b>되어 12월까지 수평선으로 남습니다." +
@@ -864,102 +952,143 @@ function revDrawChart() {
     return getComputedStyle(document.documentElement).getPropertyValue(k).trim();
   };
   var N = 12;
-  var pad = function(arr, off) {
-    var a = new Array(N).fill(null);
-    arr.forEach(function(v, i) { a[off + i] = Number.isFinite(v) ? v / 1e8 : null; });
-    return a;
-  };
-  var actual = pad(T.hist, 0);
-  var base   = pad(T.base, 6);
-  var rtf    = pad(T.rtf,  6);
-  var exc    = pad(T.exc,  6);
+  var E = function(v) { return Number.isFinite(v) ? v / 1e8 : null; };
+  var blank = function() { return new Array(N).fill(null); };
 
-  // 재고일수 뱃지 — 실적은 마감 매출원가, 전망은 최종(과잉감축) 시나리오
+  // ── 막대는 한 달에 하나. 층으로 쌓아서 "우리가 걷어낸 만큼"이 드러나게 한다. ──
+  //   전체 높이 = 원계획.  진한 층 = 최종(과잉감축 후) 재고.  그 위 두 층 = 우리가 줄인 분량.
+  //   조정 전에는 위 두 층이 0이라 막대 하나만 보이고, 조정할수록 층이 자란다.
+  //   나란한 막대 3개로는 (회의 시작 시 셋이 같은 값이라) 볼 게 없다.
+  var actual = blank();   // 1~6월 실적
+  var final_ = blank();   // 7~12월 최종(과잉감축 후)
+  var cutExc = blank();   // 과잉감축으로 줄인 분량
+  var cutRtf = blank();   // RTF 조정으로 줄인 분량 (증산이면 음수 → 0 처리하고 툴팁에만)
+  T.hist.forEach(function(v, i) { actual[i] = E(v); });
+  FCST_MONTHS.forEach(function(_, i) {
+    var k = 6 + i;
+    var b = T.base[i], r = T.rtf[i], e = T.exc[i];
+    final_[k] = E(e);
+    cutExc[k] = E(Math.max(0, r - e));   // RTF조정후 → 과잉감축후 로 줄인 만큼
+    cutRtf[k] = E(Math.max(0, b - r));   // 원계획 → RTF조정후 로 줄인 만큼
+  });
+
+  // 재고일수 — 라인으로 우측 축에 올린다. 금액은 ±4%밖에 안 움직여 막대로는 안 보이지만
+  // 재고일수는 140 → 130일대로 뚜렷하게 내려간다. 회의의 메시지는 여기서 읽힌다.
   var fdE  = T.fcstDays(T.exc);
-  var days = new Array(N).fill(null);
+  var days = blank();
   T.histDays.forEach(function(d, i) { days[i] = d; });
   fdE.forEach(function(d, i) { days[6 + i] = d; });
 
-  var bar = function(label, data, color) {
-    return { label: label, data: data, backgroundColor: color, borderColor: color,
-             borderWidth: 0, borderRadius: 4, categoryPercentage: 0.72, barPercentage: 0.92 };
+  var bar = function(label, data, color, stack) {
+    return { type: "bar", label: label, data: data, stack: stack,
+             backgroundColor: color, borderColor: color, borderWidth: 0,
+             borderRadius: 3, categoryPercentage: 0.6, barPercentage: 0.9,
+             order: 2, yAxisID: "y" };
   };
 
-  var daysPlugin = {
-    id: "revDays",
+  // 재고일수 뱃지 — 라인 위에 붙인다. x축 라벨 자리에 그리면 월 이름과 겹친다.
+  var daysBadge = {
+    id: "revDaysBadge",
     afterDatasetsDraw: function(chart) {
+      var meta = chart.getDatasetMeta(3);   // 재고일수 라인
+      if (!meta || !meta.data) return;
       var x = chart.ctx;
-      var area = chart.chartArea;
       x.save();
       x.textAlign = "center";
-      x.font = "700 11px system-ui";
-      chart.getDatasetMeta(0).data.forEach(function(_, i) {
+      meta.data.forEach(function(el, i) {
         var d = days[i];
-        if (!Number.isFinite(d)) return;
-        // 그 달의 막대 중 가장 왼쪽 x를 기준으로 가운데를 잡는다
-        var xs = [];
-        chart.data.datasets.forEach(function(_, di) {
-          var el = chart.getDatasetMeta(di).data[i];
-          if (el && Number.isFinite(el.x) && chart.data.datasets[di].data[i] !== null) xs.push(el.x);
-        });
-        if (!xs.length) return;
-        var cx = xs.reduce(function(a, b) { return a + b; }, 0) / xs.length;
-        var t  = d.toFixed(0) + "일";
+        if (!Number.isFinite(d) || !el) return;
+        var t  = Math.round(d) + "일";
+        x.font = "800 11px system-ui";
         var tw = x.measureText(t).width + 12, th = 18;
-        var ty = area.bottom + 6;
+        var ty = el.y - th - 7;                       // 점 위로 띄운다
+        if (ty < chart.chartArea.top) ty = el.y + 8;  // 위가 좁으면 아래로
         var isFcst = i >= 6;
-        x.fillStyle   = isFcst ? "rgba(22,163,74,.10)" : "rgba(15,118,110,.10)";
+        x.fillStyle   = CSS("--surface");
         x.strokeStyle = isFcst ? CSS("--good") : CSS("--days");
-        x.lineWidth = 1;
+        x.lineWidth   = 1.2;
         x.beginPath();
-        x.roundRect(cx - tw / 2, ty, tw, th, 5);
+        x.roundRect(el.x - tw / 2, ty, tw, th, 5);
         x.fill(); x.stroke();
-        x.fillStyle = isFcst ? CSS("--good") : CSS("--days");
+        x.fillStyle    = isFcst ? CSS("--good") : CSS("--days");
         x.textBaseline = "middle";
-        x.fillText(t, cx, ty + th / 2);
+        x.fillText(t, el.x, ty + th / 2 + 0.5);
       });
       x.restore();
     },
   };
 
+  // 실적 / 전망 경계선
+  var divider = {
+    id: "revDivider",
+    beforeDatasetsDraw: function(chart) {
+      var xs = chart.scales.x, a = chart.chartArea;
+      if (!xs) return;
+      var px = xs.getPixelForValue(5) + (xs.getPixelForValue(6) - xs.getPixelForValue(5)) / 2;
+      var x = chart.ctx;
+      x.save();
+      x.setLineDash([5, 4]);
+      x.strokeStyle = CSS("--line");
+      x.lineWidth = 1.5;
+      x.beginPath(); x.moveTo(px, a.top); x.lineTo(px, a.bottom); x.stroke();
+      x.setLineDash([]);
+      x.fillStyle = CSS("--muted");
+      x.font = "700 11px system-ui";
+      x.textAlign = "center";
+      x.fillText("실적", px - 34, a.top + 12);
+      x.fillText("전망", px + 34, a.top + 12);
+      x.restore();
+    },
+  };
+
+  var maxDay = Math.max.apply(null, days.filter(Number.isFinite).concat([150]));
+
   _revChart = new Chart(cv.getContext("2d"), {
-    type: "bar",
     data: {
       labels: T.months.map(monthLabel),
       datasets: [
-        bar("실적", actual, CSS("--muted-2")),
-        bar("원계획", base, CSS("--sc-base")),
-        bar("RTF 조정후", rtf, CSS("--sc-rtf")),
-        bar("과잉감축 후", exc, CSS("--sc-exc")),
+        bar("실적(결산)",    actual, CSS("--muted-2"), "s"),
+        bar("과잉감축 후",   final_, CSS("--sc-exc"),  "s"),
+        bar("RTF 조정 감축", cutRtf, CSS("--sc-rtf"),  "s"),
+        // ↑ 3개까지가 막대. 아래는 라인 (daysBadge가 index 3을 참조하므로 순서 유지)
+        { type: "line", label: "재고일수", data: days, yAxisID: "y1",
+          borderColor: CSS("--days"), backgroundColor: "transparent",
+          borderWidth: 2.5, pointRadius: 4, pointBackgroundColor: CSS("--surface"),
+          pointBorderWidth: 2, tension: 0.25, spanGaps: true, order: 0 },
+        bar("과잉감축 절감", cutExc, CSS("--sc-base"), "s"),
       ],
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      layout: { padding: { bottom: 26, top: 8 } },
+      layout: { padding: { top: 28 } },
       interaction: { mode: "index", intersect: false },
       plugins: {
         legend: { display: false },
         tooltip: {
           callbacks: {
             label: function(c) {
-              if (c.raw === null) return null;
-              return c.dataset.label + ": " + Math.round(c.raw).toLocaleString() + "억";
-            },
-            afterBody: function(items) {
-              var d = days[items[0].dataIndex];
-              return Number.isFinite(d) ? "재고일수 " + d.toFixed(1) + "일" : "";
+              if (c.raw === null || c.raw === 0) return null;
+              var u = c.dataset.yAxisID === "y1" ? "일" : "억";
+              return c.dataset.label + ": " + Math.round(c.raw).toLocaleString() + u;
             },
           },
         },
       },
       scales: {
-        x: { grid: { display: false }, ticks: { font: { size: 12, weight: "700" } } },
-        y: { beginAtZero: true,
-             grid: { color: CSS("--line-2") },
-             ticks: { callback: function(v) { return v.toLocaleString(); }, font: { size: 11 } } },
+        x:  { stacked: true, grid: { display: false },
+              ticks: { font: { size: 12, weight: "700" } } },
+        y:  { stacked: true, beginAtZero: true, position: "left",
+              title: { display: true, text: "재고금액 (억)", font: { size: 11, weight: "700" } },
+              grid: { color: CSS("--line-2") },
+              ticks: { callback: function(v) { return v.toLocaleString(); }, font: { size: 11 } } },
+        y1: { position: "right", beginAtZero: false,
+              min: 0, max: Math.ceil(maxDay / 20) * 20 + 20,
+              title: { display: true, text: "재고일수", font: { size: 11, weight: "700" } },
+              grid: { display: false },
+              ticks: { callback: function(v) { return v + "일"; }, font: { size: 11 } } },
       },
     },
-    plugins: [daysPlugin],
+    plugins: [divider, daysBadge],
   });
 }
 
