@@ -5,17 +5,29 @@ cd /d "%~dp0"
 set PORT=8787
 set URL=http://127.0.0.1:%PORT%/index.html
 
-echo RTF Dashboard를 로컬 서버 모드로 엽니다.
-echo 주소: %URL%
+echo.
+echo  RTF Dashboard - 로컬 서버 모드
+echo  주소: %URL%
+echo.
+echo  파일을 고를 필요가 없습니다. RAW 파일과 결산자료를 자동으로 읽습니다.
+echo  이 창은 닫지 마세요. 닫으면 서버가 꺼집니다.
 echo.
 
-rem 결산자료(1~6월)가 closing.json보다 새로우면 다시 계산한다.
-rem xlsx를 브라우저에서 직접 파싱하면 12초간 멈추므로 미리 만들어 둔다.
-rem 새 달 결산 파일을 넣었다면 tools/build-closing.js의 MONTHS에 월을 추가할 것.
-echo [결산자료] 사전 계산 확인 중...
-node tools\build-closing.js --if-stale
-echo.
+:: 결산자료가 사전계산 JSON보다 새로우면 다시 계산한다 (없으면 그냥 넘어감).
+:: 브라우저에서 결산 xlsx를 직접 파싱하면 12초간 멈추므로 미리 만들어 둔다.
+if exist "tools\build-closing.js" (
+  echo  [결산자료] 사전 계산 확인 중...
+  node "tools\build-closing.js" --if-stale
+  echo.
+)
 
-start "RTF local server" /min node -e "const http=require('http'),fs=require('fs'),path=require('path');const root=process.cwd();const types={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.json':'application/json; charset=utf-8','.xlsx':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','.xlsm':'application/vnd.ms-excel.sheet.macroEnabled.12','.xls':'application/vnd.ms-excel'};http.createServer((req,res)=>{const u=new URL(req.url,'http://127.0.0.1');let p=decodeURIComponent(u.pathname);if(p==='/'||p==='')p='/index.html';const f=path.normalize(path.join(root,p));if(!f.startsWith(root)){res.writeHead(403);return res.end('Forbidden');}fs.readFile(f,(e,d)=>{if(e){res.writeHead(404);return res.end('Not found');}res.writeHead(200,{'Content-Type':types[path.extname(f).toLowerCase()]||'application/octet-stream','Cache-Control':'no-store'});res.end(d);});}).listen(%PORT%,'127.0.0.1');"
-timeout /t 2 > nul
+:: 정적 서버 (프로젝트 폴더를 그대로 서빙). 이 노드 프로세스가 서버다.
+start "RTF local server" /min node "tools\serve.js" %PORT%
+
+:: 서버가 뜰 때까지 잠깐 기다린 뒤 브라우저를 연다.
+ping -n 3 127.0.0.1 > nul
 start "" "%URL%"
+
+echo  브라우저를 열었습니다. 이 창을 닫으면 서버가 꺼집니다.
+echo.
+pause

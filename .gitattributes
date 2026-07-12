@@ -1,0 +1,17 @@
+# 배치 파일은 CRLF가 필수다.
+# LF만 있으면 cmd가 줄을 잘못 잘라 명령이 깨진다 (rem → em 이 되는 식).
+# 실제로 이것 때문에 start.bat이 서버를 못 띄운 적이 있다.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 나머지는 워킹트리에서 OS 기본을 따르되 저장소에는 LF로 정규화
+*.js   text
+*.css  text
+*.html text
+*.json text
+*.md   text
+
+# 엑셀은 바이너리 — diff/머지 시도 금지
+*.xlsx binary
+*.xlsm binary
+*.xls  binary
