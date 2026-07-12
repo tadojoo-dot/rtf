@@ -55,6 +55,9 @@ function buildReviewItems() {
     });
   });
 
+  // 원부자재 전망: 3시나리오 자재 흐름(BOM 롤포워드)을 품목코드별 금액 델타로 집계
+  var matFcst = buildMatFcstMap();
+
   // 원부자재는 기준정보로 못 붙는다(매핑률 16.4%) → BOM 역전개로 품목군을 귀속시킨다
   var matGroups = buildMatGroupMap();
 
@@ -91,10 +94,28 @@ function buildReviewItems() {
     var avg3 = n3 ? s3 / n3 : 0;
 
     var f = fcstByCode.get(it.itemCode);
-    // 판매계획이 없는 품목은 나갈 경로가 없다 → 0이 아니라 6월말 재고를 그대로 이월(flat)
-    var fBase = f ? f.base : FCST_MONTHS.map(function() { return end6; });
-    var fRtf  = f ? f.rtf  : fBase;
-    var fExc  = f ? f.exc  : fBase;
+    var fBase, fRtf, fExc, shortF = null, hasMatFlow = false;
+    if (isFg) {
+      // 판매계획이 없는 품목은 나갈 경로가 없다 → 0이 아니라 6월말 재고를 그대로 이월(flat)
+      fBase = f ? f.base : FCST_MONTHS.map(function() { return end6; });
+      fRtf  = f ? f.rtf  : fBase;
+      fExc  = f ? f.exc  : fBase;
+    } else {
+      var mf = matFcst && matFcst.get(it.itemCode);
+      if (mf) {
+        // 결산 6월말을 기준점으로, 자재 흐름 델타(rtf.js:computeMatRollforwardDeltas와 동일 산식)를
+        // 얹는다. 물리 재고는 음수 불가 → 0 클램프.
+        fBase = FCST_MONTHS.map(function(_, mi) { return Math.max(0, end6 + mf.dBase[mi]); });
+        fRtf  = FCST_MONTHS.map(function(_, mi) { return Math.max(0, end6 + mf.dRtf[mi]);  });
+        fExc  = FCST_MONTHS.map(function(_, mi) { return Math.max(0, end6 + mf.dExc[mi]);  });
+        shortF = mf.short.some(function(v) { return v > 0; }) ? mf.short : null;
+        hasMatFlow = true;
+      } else {
+        // BOM에 안 걸리거나(불용) 단위 불일치 → 흐름 계산 불가. 계산 불가는 계산 불가다.
+        // 지어내지 말고 6월말 그대로 이월(flat)하고, hasMatFlow=false로 표시한다.
+        fBase = fRtf = fExc = FCST_MONTHS.map(function() { return end6; });
+      }
+    }
 
     items.push({
       itemCode: it.itemCode, itemName: it.itemName,
@@ -107,14 +128,55 @@ function buildReviewItems() {
       sale6: m6.sale, cc6: m6.ccOut, buy6: m6.buyIn, prod6: m6.prodIn, prodOut6: m6.prodOut,
       avg3out: avg3,   // 제·상품=3평판(판매) / 원부자재=3개월 평균 생산출고
       mos3: avg3 > 0 ? end6 / avg3 : (end6 > 0 ? Infinity : null),   // 재고월수
-      hasPlan: !!f,
+      hasPlan: isFg ? !!f : hasMatFlow,
       fBase: fBase, fRtf: fRtf, fExc: fExc,
+      shortF: shortF, hasMatFlow: hasMatFlow,   // 부족 배지용 (원부자재만)
     });
   });
 
   _reviewCache = items;
   _reviewCacheEpoch = (window._renderEpoch || 0);
   return items;
+}
+
+// ── 원부자재 3시나리오 전망: BOM 롤포워드 → 품목코드별 금액 델타 ─────────────
+// 왜 델타인가: BOM matFlows의 현재고(row.flow.baseQty)는 결산 6월말 재고(end6)와
+// 원천이 다른 스냅샷이라 절대값을 그대로 쓰면 6→7월에 점프가 난다. rtf.js의
+// computeMatRollforwardDeltas가 앵커(공시 총재고)에 얹는 것과 똑같은 산식으로
+// "6월말 대비 증감분"만 뽑아 end6에 얹으면 총계가 자동으로 맞는다.
+function buildMatFcstMap() {
+  if (typeof calcMatFlowRows !== "function") return null;
+  var base = calcMatFlowRows(null, null);
+  if (!base) return null;   // BOM 미전개 → 계산 불가
+  var rtf = calcMatFlowRows(state.fgProdAdj, state.matSimAdj) || base;
+  var exc = calcMatFlowRows(
+    Object.assign({}, state.fgProdAdj || {}, state.excessAdj    || {}),
+    Object.assign({}, state.matSimAdj || {}, state.matExcessAdj || {})) || base;
+
+  var map = new Map();   // itemCode(componentCode) → { dBase[6], dRtf[6], dExc[6], short[6] } (원)
+  function get(code) {
+    var m = map.get(code);
+    if (!m) {
+      m = { dBase: [0,0,0,0,0,0], dRtf: [0,0,0,0,0,0], dExc: [0,0,0,0,0,0], short: [0,0,0,0,0,0] };
+      map.set(code, m);
+    }
+    return m;
+  }
+  // 플랜트를 합산해 품목코드 단위로 델타를 쌓는다 (결산도 플랜트 합산 기준)
+  function accum(rows, key, withShort) {
+    rows.forEach(function(row) {
+      if (!Number.isFinite(row.flow.unitVal)) return;   // 단위 불일치 → 이 row는 건너뛴다
+      var m = get(row.flow.componentCode);
+      FCST_MONTHS.forEach(function(_, mi) {
+        m[key][mi] += (Math.max(0, row.ending[mi]) - Math.max(0, row.flow.baseQty)) * row.flow.unitVal;
+        if (withShort) m.short[mi] += Math.max(0, -row.ending[mi]) * row.flow.unitVal;
+      });
+    });
+  }
+  accum(base, "dBase", false);
+  accum(rtf,  "dRtf",  false);
+  accum(exc,  "dExc",  true);   // 부족 배지는 실제 표시되는 감축후(fExc) 시나리오 기준
+  return map;
 }
 
 // ── BOM 역전개: 원부자재 → 품목군 귀속 ───────────────────────────────────────
@@ -572,7 +634,7 @@ function reviewTotals() {
     for (var i = 0; i < items.length; i++) t += items[i][key][mi] || 0;
     return t;
   }
-  // 전망 = 품목 전개 + 재공품 + 나보타 + 미착 − 충당금
+  // 전망 = 품목 전개 + 재공품 + 나보타 + 미착 − 충당금 (폴백 전용 — 공용 엔진 미연결 시)
   // 미착·충당금은 전망이 없으면 6월 값으로 고정한다.
   function fcst(key) {
     return FCST_MONTHS.map(function(_, mi) {
@@ -587,12 +649,50 @@ function reviewTotals() {
   }
   var fCogs = reviewForecastCogs();
 
+  // ── 전망 총재고·재고일수 = 공용 엔진(rtf.js) ─────────────────────────────────
+  // KPI 배너(renderScenarioKpiBanner)·회의안건/재고진단 차트가 전부 rtfHeadlineInv(앵커+델타)
+  // 로 총재고를 낸다. 여기서 품목합산으로 따로 조립하면 총계가 어긋난다 — 같은 함수를 쓴다.
+  // matScenario 조합은 renderScenarioKpiBanner(rtf.js:1600-1622)와 완전히 같은 패턴.
+  // rtfHeadlineInv는 원(won) 단위 — hist/fcst 기존 값도 전부 원 단위라 그대로 맞는다.
+  var sc     = (typeof computeScenarioItemSets === "function") ? computeScenarioItemSets() : null;
+  var anchor = (typeof getActualsAnchor        === "function") ? getActualsAnchor()        : null;
+  var base, rtf, exc, fcstDaysArr = null;
+
+  if (sc && anchor && typeof rtfHeadlineInv === "function" && typeof rtfDisclosureDays === "function") {
+    var matScenRtf   = { fg: state.fgProdAdj, mat: state.matSimAdj };
+    var matScenFinal = {
+      fg:  Object.assign({}, state.fgProdAdj || {}, state.excessAdj    || {}),
+      mat: Object.assign({}, state.matSimAdj || {}, state.matExcessAdj || {}),
+    };
+    var fItems = sc.hasExcess ? sc.final : sc.rtfAdj;
+
+    base = FCST_MONTHS.map(function(_, mi) { return rtfHeadlineInv(sc.base, mi, null).amount; });
+    rtf  = FCST_MONTHS.map(function(_, mi) {
+      return sc.hasRtfAdj ? rtfHeadlineInv(sc.rtfAdj, mi, matScenRtf).amount
+                          : rtfHeadlineInv(sc.base, mi, null).amount;
+    });
+    exc  = FCST_MONTHS.map(function(_, mi) { return rtfHeadlineInv(fItems, mi, matScenFinal).amount; });
+
+    fcstDaysArr = {
+      base: FCST_MONTHS.map(function(_, mi) { return rtfDisclosureDays(sc.base, mi, null); }),
+      rtf:  FCST_MONTHS.map(function(_, mi) {
+        return sc.hasRtfAdj ? rtfDisclosureDays(sc.rtfAdj, mi, matScenRtf) : rtfDisclosureDays(sc.base, mi, null);
+      }),
+      exc:  FCST_MONTHS.map(function(_, mi) { return rtfDisclosureDays(fItems, mi, matScenFinal); }),
+    };
+  } else {
+    // 폴백: 기존 품목합산 방식 그대로 유지 (데이터 미연결 시)
+    base = fcst("fBase");
+    rtf  = fcst("fRtf");
+    exc  = fcst("fExc");
+  }
+
   return {
     months:   REVIEW_MONTHS.concat(FCST_MONTHS),
     hist:     hist,
-    base:     fcst("fBase"),
-    rtf:      fcst("fRtf"),
-    exc:      fcst("fExc"),
+    base:     base,
+    rtf:      rtf,
+    exc:      exc,
     // ── 재고일수 = 재고금액 ÷ 누적 매출원가 × 누적일수 ──
     //
     // 회사는 연초부터 누적으로 마감한다. 당월 매출원가만 쓰면 그 달이 튈 때 재고일수도
@@ -600,7 +700,7 @@ function reviewTotals() {
     //   6월 = 2,714억 ÷ 누적 매출원가 3,516억 × 누적일수 181일 = 139.7일  ← 회사가 보는 140일
     //   (당월 기준으로 하면 2,714 ÷ 572 × 30 = 142.3일이 나온다 — 회사 숫자와 다르다)
     //
-    // 전망 구간도 누적을 그대로 이어간다. 상반기 실적 누적에 하반기 계획 누적을 더한다.
+    // 실적(1~6월)은 그대로 결산 매출원가 누적. 이 방식은 안 바꾼다.
     histDays: REVIEW_MONTHS.map(function(m, mi) {
       var cumC = 0, cumD = 0;
       for (var i = 0; i <= mi; i++) {
@@ -610,8 +710,15 @@ function reviewTotals() {
       }
       return Number.isFinite(hist[mi]) ? hist[mi] / cumC * cumD : null;
     }),
+    // 전망(7~12월) 재고일수 — 공용 엔진(rtfDisclosureDays)이 있으면 그 결과를 시리즈 참조로
+    // 돌려준다(KPI 배너·차트와 동일 산식). 없으면 기존 매출원가 누적 방식으로 폴백.
     fcstDays: function(series) {
-      // 상반기 실적 누적을 출발점으로
+      if (fcstDaysArr) {
+        if (series === base) return fcstDaysArr.base;
+        if (series === rtf)  return fcstDaysArr.rtf;
+        if (series === exc)  return fcstDaysArr.exc;
+      }
+      // 폴백(구방식) — 상반기 실적 누적을 출발점으로 매출원가 누적 적용
       var baseC = 0, baseD = 0;
       for (var i = 0; i < 6; i++) {
         if (adj.cogs[i] > 0) { baseC += adj.cogs[i]; baseD += monthDays(REVIEW_MONTHS[i]); }
@@ -691,7 +798,8 @@ function revSpark(hist) {
 // ── 트리 (유형 > 품목군 > 품목) ───────────────────────────────────────────────
 function revAgg(items) {
   var a = { end: 0, delta: 0, out3: 0, sale: 0, cc: 0, buy: 0, prod: 0,
-            hist: [0,0,0,0,0,0], fBase: [0,0,0,0,0,0], fRtf: [0,0,0,0,0,0], fExc: [0,0,0,0,0,0] };
+            hist: [0,0,0,0,0,0], fBase: [0,0,0,0,0,0], fRtf: [0,0,0,0,0,0], fExc: [0,0,0,0,0,0],
+            shortF: [0,0,0,0,0,0] };   // 부족 금액 롤업 (원부자재 배지용)
   items.forEach(function(it) {
     a.end += it.end6; a.delta += it.delta; a.out3 += it.avg3out;
     a.sale += it.sale6; a.cc += it.cc6; a.buy += it.buy6; a.prod += it.prod6;
@@ -700,6 +808,7 @@ function revAgg(items) {
       a.fBase[i] += it.fBase[i] || 0;
       a.fRtf[i]  += it.fRtf[i]  || 0;
       a.fExc[i]  += it.fExc[i]  || 0;
+      if (it.shortF) a.shortF[i] += it.shortF[i] || 0;
     }
   });
   // 롤업 재고월수 — 금액 기준이라 합산해서 나눌 수 있다 (수량이면 단위가 달라 불가)
@@ -906,7 +1015,7 @@ function revEok(won) {
   if (!Number.isFinite(won)) return "-";
   return Math.round(won / 1e8).toLocaleString("ko-KR") + "억";
 }
-function revMonCell(amt, days, prev, cls) {
+function revMonCell(amt, days, prev, cls, shortWon) {
   if (!Number.isFinite(amt)) return "<td class='rv-mc " + cls + "'><span class='rv-mut'>-</span></td>";
   var d = Number.isFinite(prev) ? amt - prev : null;
   var dh = "";
@@ -915,10 +1024,13 @@ function revMonCell(amt, days, prev, cls) {
     dh = "<span class='rv-mc-d " + (up ? "rv-up" : "rv-down") + "'>" +
          (up ? "▲" : "▽") + revEok(Math.abs(d)) + "</span>";
   }
+  // 부족 배지 — 원부자재 흐름이 0 밑으로 내려간 달만. 계획이 물리적으로 못 채우는 만큼을 드러낸다.
+  var shortBadge = (Number.isFinite(shortWon) && shortWon > 0)
+    ? "<span class='rv-short'>부족 " + revEok(shortWon) + "</span>" : "";
   return "<td class='rv-mc " + cls + "'>" +
     "<span class='rv-mc-a'>" + revEok(amt) + "</span>" +
     (Number.isFinite(days) ? "<span class='rv-mc-y'>" + Math.round(days) + "일</span>" : "") +
-    dh + "</td>";
+    dh + shortBadge + "</td>";
 }
 
 function revMonthTable(tree, T) {
@@ -940,7 +1052,7 @@ function revMonthTable(tree, T) {
     if (!revVisible(n, byId)) return;
     var hasKid = !!(tree[i + 1] && tree[i + 1].parent === n.id);
     var a = n.item
-      ? { hist: n.item.hist, fExc: n.item.fExc, delta: n.item.delta }
+      ? { hist: n.item.hist, fExc: n.item.fExc, delta: n.item.delta, shortF: n.item.shortF }
       : revAgg(n.items);
     var cls = (n.level === 1 && a.delta > 50e8) ? " rv-hot" : "";
 
@@ -950,7 +1062,8 @@ function revMonthTable(tree, T) {
     }
     for (var j = 0; j < 6; j++) {
       var prev = j === 0 ? a.hist[5] : a.fExc[j - 1];
-      cells += revMonCell(a.fExc[j], null, prev, "rv-fcst" + (j === 0 ? " rv-gsep" : ""));
+      var sVal = a.shortF ? a.shortF[j] : null;
+      cells += revMonCell(a.fExc[j], null, prev, "rv-fcst" + (j === 0 ? " rv-gsep" : ""), sVal);
     }
     rows += "<tr class='rv-l" + n.level + cls + "'>" + revRowHead(n, hasKid) + cells + "</tr>";
   });
@@ -1212,18 +1325,7 @@ function renderInventoryReview() {
   return "<div class='rv'>" + hero +
     "<div class='rv-diag'><span class='rv-diag-lbl'>AI 진단</span>" + chips.join("") + "</div>" +
     opinion +
-    "<div class='rv-card'>" +
-      "<div class='rv-card-hd'>총재고 추이 " +
-        "<span>막대 전체 높이 = 원계획 · 진한 부분 = 조정 후 남는 재고 · 위에 쌓인 층 = 우리가 줄인 만큼</span></div>" +
-      "<div class='rv-chart'><canvas id='revChart' height='320'></canvas></div>" +
-      "<div class='rv-legend'>" +
-        "<span><i class='rv-lg' style='background:var(--muted-2)'></i>실적(결산)</span>" +
-        "<span><i class='rv-lg' style='background:var(--sc-exc)'></i>조정 후 재고</span>" +
-        "<span><i class='rv-lg' style='background:var(--sc-rtf)'></i>RTF 조정으로 줄인 분</span>" +
-        "<span><i class='rv-lg' style='background:var(--sc-base)'></i>과잉감축으로 줄인 분</span>" +
-        "<span><i class='rv-lg rv-lg-day'></i>재고일수 (우측 축)</span>" +
-      "</div>" +
-    "</div>" +
+    renderScenarioChartCard("rv") +
     scn +
     "<div class='rv-card'>" + bar +
       "<div class='rv-scroll'>" + table + "</div>" +
@@ -1245,169 +1347,12 @@ function renderInventoryReview() {
     "</div></div>";
 }
 
-// ── 차트 ──────────────────────────────────────────────────────────────────────
-// 1~6월 실적 막대 + 7~12월 3단 막대(원계획 / RTF조정 / 과잉감축) + 재고일수 뱃지.
-// 회의안건 차트(summary.js daysTagsPlugin)와 같은 문법 — 뱃지는 월당 하나뿐이라 소음이 안 된다.
-var _revChart = null;
-
-function revDrawChart() {
-  var cv = document.getElementById("revChart");
-  if (!cv || !window.Chart) return;
-  var T = reviewTotals();
-  if (!T) return;
-
-  if (_revChart) { _revChart.destroy(); _revChart = null; }
-
-  var CSS = function(k) {
-    return getComputedStyle(document.documentElement).getPropertyValue(k).trim();
-  };
-  var N = 12;
-  var E = function(v) { return Number.isFinite(v) ? v / 1e8 : null; };
-  var blank = function() { return new Array(N).fill(null); };
-
-  // ── 막대는 한 달에 하나. 층으로 쌓아서 "우리가 걷어낸 만큼"이 드러나게 한다. ──
-  //   전체 높이 = 원계획.  진한 층 = 최종(과잉감축 후) 재고.  그 위 두 층 = 우리가 줄인 분량.
-  //   조정 전에는 위 두 층이 0이라 막대 하나만 보이고, 조정할수록 층이 자란다.
-  //   나란한 막대 3개로는 (회의 시작 시 셋이 같은 값이라) 볼 게 없다.
-  var actual = blank();   // 1~6월 실적
-  var final_ = blank();   // 7~12월 최종(과잉감축 후)
-  var cutExc = blank();   // 과잉감축으로 줄인 분량
-  var cutRtf = blank();   // RTF 조정으로 줄인 분량 (증산이면 음수 → 0 처리하고 툴팁에만)
-  T.hist.forEach(function(v, i) { actual[i] = E(v); });
-  FCST_MONTHS.forEach(function(_, i) {
-    var k = 6 + i;
-    var b = T.base[i], r = T.rtf[i], e = T.exc[i];
-    final_[k] = E(e);
-    cutExc[k] = E(Math.max(0, r - e));   // RTF조정후 → 과잉감축후 로 줄인 만큼
-    cutRtf[k] = E(Math.max(0, b - r));   // 원계획 → RTF조정후 로 줄인 만큼
-  });
-
-  // 재고일수 — 라인으로 우측 축에 올린다. 금액은 ±4%밖에 안 움직여 막대로는 안 보이지만
-  // 재고일수는 140 → 130일대로 뚜렷하게 내려간다. 회의의 메시지는 여기서 읽힌다.
-  var fdE  = T.fcstDays(T.exc);
-  var days = blank();
-  T.histDays.forEach(function(d, i) { days[i] = d; });
-  fdE.forEach(function(d, i) { days[6 + i] = d; });
-
-  var bar = function(label, data, color, stack) {
-    return { type: "bar", label: label, data: data, stack: stack,
-             backgroundColor: color, borderColor: color, borderWidth: 0,
-             borderRadius: 3, categoryPercentage: 0.6, barPercentage: 0.9,
-             order: 2, yAxisID: "y" };
-  };
-
-  // 재고일수 뱃지 — 라인 위에 붙인다. x축 라벨 자리에 그리면 월 이름과 겹친다.
-  var daysBadge = {
-    id: "revDaysBadge",
-    afterDatasetsDraw: function(chart) {
-      var meta = chart.getDatasetMeta(3);   // 재고일수 라인
-      if (!meta || !meta.data) return;
-      var x = chart.ctx;
-      x.save();
-      x.textAlign = "center";
-      meta.data.forEach(function(el, i) {
-        var d = days[i];
-        if (!Number.isFinite(d) || !el) return;
-        var t  = Math.round(d) + "일";
-        x.font = "800 11px system-ui";
-        var tw = x.measureText(t).width + 12, th = 18;
-        var ty = el.y - th - 7;                       // 점 위로 띄운다
-        if (ty < chart.chartArea.top) ty = el.y + 8;  // 위가 좁으면 아래로
-        var isFcst = i >= 6;
-        x.fillStyle   = CSS("--surface");
-        x.strokeStyle = isFcst ? CSS("--good") : CSS("--days");
-        x.lineWidth   = 1.2;
-        x.beginPath();
-        x.roundRect(el.x - tw / 2, ty, tw, th, 5);
-        x.fill(); x.stroke();
-        x.fillStyle    = isFcst ? CSS("--good") : CSS("--days");
-        x.textBaseline = "middle";
-        x.fillText(t, el.x, ty + th / 2 + 0.5);
-      });
-      x.restore();
-    },
-  };
-
-  // 실적 / 전망 경계선
-  var divider = {
-    id: "revDivider",
-    beforeDatasetsDraw: function(chart) {
-      var xs = chart.scales.x, a = chart.chartArea;
-      if (!xs) return;
-      var px = xs.getPixelForValue(5) + (xs.getPixelForValue(6) - xs.getPixelForValue(5)) / 2;
-      var x = chart.ctx;
-      x.save();
-      x.setLineDash([5, 4]);
-      x.strokeStyle = CSS("--line");
-      x.lineWidth = 1.5;
-      x.beginPath(); x.moveTo(px, a.top); x.lineTo(px, a.bottom); x.stroke();
-      x.setLineDash([]);
-      x.fillStyle = CSS("--muted");
-      x.font = "700 11px system-ui";
-      x.textAlign = "center";
-      x.fillText("실적", px - 34, a.top + 12);
-      x.fillText("전망", px + 34, a.top + 12);
-      x.restore();
-    },
-  };
-
-  var maxDay = Math.max.apply(null, days.filter(Number.isFinite).concat([150]));
-
-  _revChart = new Chart(cv.getContext("2d"), {
-    data: {
-      labels: T.months.map(revMonthLabel),
-      datasets: [
-        bar("실적(결산)",    actual, CSS("--muted-2"), "s"),
-        bar("과잉감축 후",   final_, CSS("--sc-exc"),  "s"),
-        bar("RTF 조정 감축", cutRtf, CSS("--sc-rtf"),  "s"),
-        // ↑ 3개까지가 막대. 아래는 라인 (daysBadge가 index 3을 참조하므로 순서 유지)
-        { type: "line", label: "재고일수", data: days, yAxisID: "y1",
-          borderColor: CSS("--days"), backgroundColor: "transparent",
-          borderWidth: 2.5, pointRadius: 4, pointBackgroundColor: CSS("--surface"),
-          pointBorderWidth: 2, tension: 0.25, spanGaps: true, order: 0 },
-        bar("과잉감축 절감", cutExc, CSS("--sc-base"), "s"),
-      ],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      layout: { padding: { top: 28 } },
-      interaction: { mode: "index", intersect: false },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: function(c) {
-              if (c.raw === null || c.raw === 0) return null;
-              var u = c.dataset.yAxisID === "y1" ? "일" : "억";
-              return c.dataset.label + ": " + Math.round(c.raw).toLocaleString() + u;
-            },
-          },
-        },
-      },
-      scales: {
-        x:  { stacked: true, grid: { display: false },
-              ticks: { font: { size: 12, weight: "700" } } },
-        y:  { stacked: true, beginAtZero: true, position: "left",
-              title: { display: true, text: "재고금액 (억)", font: { size: 11, weight: "700" } },
-              grid: { color: CSS("--line-2") },
-              ticks: { callback: function(v) { return v.toLocaleString(); }, font: { size: 11 } } },
-        y1: { position: "right", beginAtZero: false,
-              min: 0, max: Math.ceil(maxDay / 20) * 20 + 20,
-              title: { display: true, text: "재고일수", font: { size: 11, weight: "700" } },
-              grid: { display: false },
-              ticks: { callback: function(v) { return v + "일"; }, font: { size: 11 } } },
-      },
-    },
-    plugins: [divider, daysBadge],
-  });
-}
-
 // ── 바인딩 ────────────────────────────────────────────────────────────────────
 function bindInventoryReview() {
   var root = document.querySelector(".rv");
   if (!root) return;
 
-  revDrawChart();
+  mountScenarioChart("rv");
 
   root.addEventListener("click", function(e) {
     var tog = e.target.closest("[data-rvtog]");

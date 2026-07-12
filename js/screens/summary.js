@@ -191,20 +191,7 @@ function renderSummary() {
       "</tr>";
   }).join("");
 
-  var chartSection = hasData
-    ? "<div class=\"sum-card sum-chart-card\">" +
-        "<div class=\"sum-chart-header\">" +
-          "<h3>연간 수급 추이</h3>" +
-          "<div class=\"sum-scenario-btns\">" +
-            "<button class=\"sum-scen-btn\" data-scenario=\"기존\">기존</button>" +
-            "<button class=\"sum-scen-btn\" data-scenario=\"RTF조정\">RTF조정</button>" +
-            "<button class=\"sum-scen-btn\" data-scenario=\"과잉조정\">과잉조정</button>" +
-          "</div>" +
-        "</div>" +
-        "<div class=\"sum-chart-wrap\"><canvas id=\"sumInvChart\"></canvas></div>" +
-        "<div id=\"sumChartLegend\" class=\"sum-chart-legend\"></div>" +
-      "</div>"
-    : "";
+  var chartSection = hasData ? renderScenarioChartCard("sum") : "";
 
   var headlineHtml = hasData ? renderHeadlineStrip() : "";
 
@@ -231,8 +218,7 @@ function screenButtonLabel(screenId) {
 
 // ── 종합현황 차트 ─────────────────────────────────────────────────────────────
 
-var _summaryChartInst = null;
-var _summaryScenario  = "기존"; // "기존" | "RTF조정" | "과잉조정"
+var _scenChartInst = {}; // idPrefix → Chart 인스턴스 (회의안건 "sum" · 재고진단 "rv" 공용)
 
 var FONT = "'Pretendard Variable', Pretendard, 'Apple SD Gothic Neo', sans-serif";
 
@@ -254,20 +240,46 @@ function _drawRoundRect(ctx, x, y, w, h, r) {
   }
 }
 
-function bindSummary() {
+// ── 연간 수급 추이 카드 (HTML만) — idPrefix로 canvas/legend id·버튼 host를 구분해
+//    회의안건("sum")과 재고진단("rv")이 완전히 같은 차트를 공유한다.
+function renderScenarioChartCard(idPrefix) {
+  return "<div class=\"sum-card sum-chart-card\">" +
+      "<div class=\"sum-chart-header\">" +
+        "<h3>연간 수급 추이</h3>" +
+        "<div class=\"sum-scenario-btns\" data-scenario-host=\"" + idPrefix + "\">" +
+          "<button class=\"sum-scen-btn\" data-scenario=\"기존\">기존</button>" +
+          "<button class=\"sum-scen-btn\" data-scenario=\"RTF조정\">RTF조정</button>" +
+          "<button class=\"sum-scen-btn\" data-scenario=\"과잉조정\">과잉조정</button>" +
+        "</div>" +
+      "</div>" +
+      "<div class=\"sum-chart-wrap\"><canvas id=\"" + idPrefix + "InvChart\"></canvas></div>" +
+      "<div id=\"" + idPrefix + "ChartLegend\" class=\"sum-chart-legend\"></div>" +
+    "</div>";
+}
+
+function mountScenarioChart(idPrefix) {
   if (!window.Chart) return;
-  var canvas = document.querySelector("#sumInvChart");
+  var canvas = document.querySelector("#" + idPrefix + "InvChart");
   if (!canvas) return;
-  if (_summaryChartInst) { _summaryChartInst.destroy(); _summaryChartInst = null; }
+  if (_scenChartInst[idPrefix]) { _scenChartInst[idPrefix].destroy(); delete _scenChartInst[idPrefix]; }
+  if (typeof computeScenarioItemSets !== "function" || typeof getRtfMonths !== "function" ||
+      typeof computeRtfItems !== "function" || typeof rtfHeadlineInv !== "function" ||
+      typeof rtfDisclosureDays !== "function") return;
 
   var allMonths = [];
   for (var m = 1; m <= 12; m++) allMonths.push("2026-" + (m < 10 ? "0" + m : "" + m));
-  var rtfMonths   = getRtfMonths();
+  var months      = getRtfMonths();               // 전망 6개월(앵커월 다음 달부터, 예: 2026-07~12)
   var rtfItemsArr = computeRtfItems(undefined, true);
+  var anchor      = typeof getActualsAnchor === "function" ? getActualsAnchor() : null;
 
-  var hasRtfAdj    = Object.keys(state.matSimAdj  || {}).length > 0 ||
-                     (typeof hasFgProdAdj === "function" && hasFgProdAdj());
-  var hasExcessAdj = Object.keys(state.excessAdj  || {}).length > 0;
+  var scenSet = computeScenarioItemSets();
+  var matScenRtf   = { fg: state.fgProdAdj, mat: state.matSimAdj };
+  var matScenFinal = {
+    fg:  Object.assign({}, state.fgProdAdj || {}, state.excessAdj    || {}),
+    mat: Object.assign({}, state.matSimAdj || {}, state.matExcessAdj || {}),
+  };
+  var hasRtfAdj    = scenSet.hasRtfAdj;
+  var hasCut       = scenSet.hasExcess || Object.keys(state.matExcessAdj || {}).length > 0;
   var matAdjBomMap = hasRtfAdj ? buildBomMaxProducibleMap(state.matSimAdj, state.fgProdAdj) : null;
 
   // ── 실적 값 조회 ──────────────────────────────────────────────────────────
@@ -279,23 +291,13 @@ function bindSummary() {
     if (metric === "invAmt")    return rows.reduce(function(s, r) { return s + (r.invAmt    || 0); }, 0);
     if (metric === "salesAmt")  return rows.reduce(function(s, r) { return s + (r.salesAmt  || 0); }, 0);
     if (metric === "supplyAmt") return rows.reduce(function(s, r) { return s + (r.supplyAmt || 0); }, 0);
-    if (metric === "invDays") {
-      var vals = rows.filter(function(r) { return Number.isFinite(r.invDays); });
-      return vals.length ? vals.reduce(function(s, r) { return s + r.invDays; }, 0) / vals.length : null;
-    }
     return null;
   }
 
-  var lastActualIdx = -1;
-  allMonths.forEach(function(m, i) {
-    if ((state.mappedData.actuals_monthly || []).some(function(r) { return r.month === m && r.plant === "전체"; }))
-      lastActualIdx = i;
-  });
-
-  // ── 기존 시나리오 데이터 ──────────────────────────────────────────────────
+  // ── 판매·공급 막대(전 시나리오 공통, 기존 로직 유지) ────────────────────────
   var salesData = allMonths.map(function(m) {
-    if (!rtfMonths.includes(m)) return getActuals(m, "salesAmt");
-    var ri = rtfMonths.indexOf(m), total = 0, has = false;
+    if (!months.includes(m)) return getActuals(m, "salesAmt");
+    var ri = months.indexOf(m), total = 0, has = false;
     rtfItemsArr.forEach(function(item) {
       var ms = item.monthlyStatus[ri];
       if (ms && item.hasCost && Number.isFinite(ms.salesQty)) { total += ms.salesQty * item.standardCost; has = true; }
@@ -304,8 +306,8 @@ function bindSummary() {
   });
 
   var supplyData = allMonths.map(function(m) {
-    if (!rtfMonths.includes(m)) return getActuals(m, "supplyAmt");
-    var ri = rtfMonths.indexOf(m), total = 0, has = false;
+    if (!months.includes(m)) return getActuals(m, "supplyAmt");
+    var ri = months.indexOf(m), total = 0, has = false;
     rtfItemsArr.forEach(function(item) {
       var ms = item.monthlyStatus[ri];
       if (ms && item.hasCost && Number.isFinite(ms.supplyQty)) { total += ms.supplyQty * item.standardCost; has = true; }
@@ -314,40 +316,59 @@ function bindSummary() {
   });
 
   var invActData = allMonths.map(function(m) {
-    return rtfMonths.includes(m) ? null : getActuals(m, "invAmt");
+    return months.includes(m) ? null : getActuals(m, "invAmt");
   });
-  var joinVal = lastActualIdx >= 0 ? invActData[lastActualIdx] : null;
 
-  var invBaseData = allMonths.map(function() { return null; });
-  if (lastActualIdx >= 0 && joinVal !== null) invBaseData[lastActualIdx] = joinVal;
-  rtfMonths.forEach(function(m, ri) {
-    var idx = allMonths.indexOf(m); if (idx < 0) return;
-    var total = 0;
-    rtfItemsArr.forEach(function(item) {
-      var ms = item.monthlyStatus[ri];
-      if (ms && Number.isFinite(ms.endingAmount)) total += ms.endingAmount;
+  // ── 재고금액 라인(공용 엔진) ──────────────────────────────────────────────
+  // 전체재고 = 결산 앵커 + 완제품·상품 변동 + 원부자재 롤포워드 + 미착품·평가충당금 + 나보타(rtfHeadlineInv/totalInvAmountWon).
+  // 앵커월은 전망 구간(months)에 포함되지 않으므로, 실적 라인과 이어지도록 앵커월 자체 값을
+  // 전망 라인에도 공유점으로 심는다(임의 보정이 아니라 같은 앵커 값 재사용 — delta=0인 지점).
+  function buildInvLine(items, matScenario) {
+    var arr = allMonths.map(function() { return null; });
+    if (anchor) {
+      var aIdx = allMonths.indexOf(anchor.month);
+      if (aIdx >= 0) arr[aIdx] = anchor.totalInvWon / 1e8;
+    }
+    months.forEach(function(m, mi) {
+      var idx = allMonths.indexOf(m); if (idx < 0) return;
+      var inv = rtfHeadlineInv(items, mi, matScenario);
+      arr[idx] = Number.isFinite(inv.amount) ? inv.amount / 1e8 : null;
     });
-    invBaseData[idx] = total / 100000000;
-  });
+    return arr;
+  }
 
-  var daysBaseData = allMonths.map(function(m) {
-    if (!rtfMonths.includes(m)) return getActuals(m, "invDays");
-    var ri = rtfMonths.indexOf(m), tQty = 0, tSales = 0;
-    rtfItemsArr.forEach(function(item) {
-      var ms = item.monthlyStatus[ri]; if (!ms) return;
-      if (Number.isFinite(ms.endingQty)) tQty   += ms.endingQty;
-      if (ms.salesQty > 0)               tSales += ms.salesQty / monthDays(m);
+  // ── 재고일수 뱃지(공시기준: 재고금액 ÷ 누적매출원가 × 경과일수) ─────────────
+  // 실적 구간은 결산 원본(getActualsMeta().cumCogs)으로 직접 계산, 전망 구간은 rtfDisclosureDays.
+  function buildDaysLine(items, matScenario) {
+    var arr = allMonths.map(function() { return null; });
+    var meta = typeof getActualsMeta === "function" ? getActualsMeta() : {};
+    allMonths.forEach(function(m, idx) {
+      if (months.includes(m)) return;
+      var mm = meta[m], invAmtB = getActuals(m, "invAmt");
+      if (mm && Number.isFinite(mm.cumCogs) && mm.cumCogs > 0 && Number.isFinite(invAmtB)) {
+        var monthNo = Number(m.slice(5, 7));
+        arr[idx] = invAmtB * (monthNo * 30) / mm.cumCogs;
+      }
     });
-    return tSales > 0 ? tQty / tSales : null;
-  });
+    months.forEach(function(m, mi) {
+      var idx = allMonths.indexOf(m); if (idx < 0) return;
+      var dv = rtfDisclosureDays(items, mi, matScenario);
+      arr[idx] = Number.isFinite(dv) ? dv : null;
+    });
+    return arr;
+  }
 
-  // ── RTF조정 시나리오 데이터 ───────────────────────────────────────────────
+  // ── 기존(원계획) 시나리오 ─────────────────────────────────────────────────
+  var invBaseData  = buildInvLine(scenSet.base, null);
+  var daysBaseData = buildDaysLine(scenSet.base, null);
+
+  // ── RTF조정 시나리오 ──────────────────────────────────────────────────────
   var rtfDeltaData = null, invRtfData = null, daysRtfData = null;
 
   if (hasRtfAdj && matAdjBomMap) {
     rtfDeltaData = allMonths.map(function(m) {
-      if (!rtfMonths.includes(m)) return null;
-      var ri = rtfMonths.indexOf(m), rtfTotal = 0, baseTotal = 0;
+      if (!months.includes(m)) return null;
+      var ri = months.indexOf(m), rtfTotal = 0, baseTotal = 0;
       rtfItemsArr.forEach(function(item) {
         var ms = item.monthlyStatus[ri]; if (!ms || !item.hasCost) return;
         var adj = computeAdjMonthly(item, matAdjBomMap)[ri];
@@ -359,88 +380,43 @@ function bindSummary() {
       return delta > 0 ? delta : 0;
     });
 
-    invRtfData = allMonths.map(function() { return null; });
-    if (lastActualIdx >= 0 && joinVal !== null) invRtfData[lastActualIdx] = joinVal;
-    rtfMonths.forEach(function(m, ri) {
-      var idx = allMonths.indexOf(m); if (idx < 0) return;
-      var total = 0;
-      rtfItemsArr.forEach(function(item) {
-        var adj = computeAdjMonthly(item, matAdjBomMap)[ri];
-        var endAmt = adj ? adj.endingAmount : (item.monthlyStatus[ri] && item.monthlyStatus[ri].endingAmount);
-        if (Number.isFinite(endAmt)) total += endAmt;
-      });
-      invRtfData[idx] = total / 100000000;
-    });
-
-    daysRtfData = allMonths.map(function(m) {
-      if (!rtfMonths.includes(m)) return getActuals(m, "invDays");
-      var ri = rtfMonths.indexOf(m), tQty = 0, tSales = 0;
-      rtfItemsArr.forEach(function(item) {
-        var adj = computeAdjMonthly(item, matAdjBomMap)[ri];
-        var endQty = adj ? adj.endingQty : (item.monthlyStatus[ri] && item.monthlyStatus[ri].endingQty);
-        var ms = item.monthlyStatus[ri];
-        if (Number.isFinite(endQty)) tQty += endQty;
-        if (ms && ms.salesQty > 0)   tSales += ms.salesQty / monthDays(m);
-      });
-      return tSales > 0 ? tQty / tSales : null;
-    });
+    invRtfData  = buildInvLine(scenSet.rtfAdj, matScenRtf);
+    daysRtfData = buildDaysLine(scenSet.rtfAdj, matScenRtf);
   }
 
-  // ── 과잉조정 시나리오 데이터 ──────────────────────────────────────────────
+  // ── 과잉조정 시나리오 ─────────────────────────────────────────────────────
   var invExcessData = null, daysExcessData = null;
 
-  if (hasExcessAdj) {
-    invExcessData = allMonths.map(function() { return null; });
-    if (lastActualIdx >= 0 && joinVal !== null) invExcessData[lastActualIdx] = joinVal;
-    rtfMonths.forEach(function(m, ri) {
-      var idx = allMonths.indexOf(m); if (idx < 0) return;
-      var total = 0;
-      rtfItemsArr.forEach(function(item) {
-        var ex = computeExcessMonthly(item, matAdjBomMap)[ri];
-        var endAmt = ex ? ex.endingAmount : (item.monthlyStatus[ri] && item.monthlyStatus[ri].endingAmount);
-        if (Number.isFinite(endAmt)) total += endAmt;
-      });
-      invExcessData[idx] = total / 100000000;
-    });
-
-    daysExcessData = allMonths.map(function(m) {
-      if (!rtfMonths.includes(m)) return getActuals(m, "invDays");
-      var ri = rtfMonths.indexOf(m), tQty = 0, tSales = 0;
-      rtfItemsArr.forEach(function(item) {
-        var ex = computeExcessMonthly(item, matAdjBomMap)[ri];
-        var endQty = ex ? ex.endingQty : (item.monthlyStatus[ri] && item.monthlyStatus[ri].endingQty);
-        var ms = item.monthlyStatus[ri];
-        if (Number.isFinite(endQty)) tQty += endQty;
-        if (ms && ms.salesQty > 0)   tSales += ms.salesQty / monthDays(m);
-      });
-      return tSales > 0 ? tQty / tSales : null;
-    });
+  if (hasCut) {
+    var fItems = scenSet.hasExcess ? scenSet.final : scenSet.rtfAdj;
+    invExcessData  = buildInvLine(fItems, matScenFinal);
+    daysExcessData = buildDaysLine(fItems, matScenFinal);
   }
 
-  // ── 시나리오 버튼 연결 ────────────────────────────────────────────────────
-  document.querySelectorAll("[data-scenario]").forEach(function(btn) {
-    var sc = btn.dataset.scenario;
-    var enabled = sc === "기존" || (sc === "RTF조정" && hasRtfAdj) || (sc === "과잉조정" && hasExcessAdj);
+  // ── 시나리오 버튼 연결 (idPrefix 스코프) ─────────────────────────────────
+  document.querySelectorAll("[data-scenario-host=\"" + idPrefix + "\"] [data-scenario]").forEach(function(btn) {
+    var s = btn.dataset.scenario;
+    var enabled = s === "기존" || (s === "RTF조정" && hasRtfAdj) || (s === "과잉조정" && hasCut);
     btn.disabled = !enabled;
-    btn.classList.toggle("active", sc === _summaryScenario);
+    btn.classList.toggle("active", s === state.chartScenario);
     btn.onclick = function() {
-      if (!enabled || sc === _summaryScenario) return;
-      _summaryScenario = sc;
-      bindSummary();
+      if (!enabled || s === state.chartScenario) return;
+      state.chartScenario = s;
+      mountScenarioChart(idPrefix);
     };
   });
 
   // ── 시나리오별 datasets 구성 ──────────────────────────────────────────────
   var salesBg = allMonths.map(function(m) {
-    return rtfMonths.includes(m) ? "rgba(30,58,138,0.28)" : "rgba(30,58,138,0.85)";
+    return months.includes(m) ? "rgba(30,58,138,0.28)" : "rgba(30,58,138,0.85)";
   });
-  var supplyBgFull  = allMonths.map(function(m) { return rtfMonths.includes(m) ? "rgba(55,65,81,0.28)" : "rgba(55,65,81,0.85)"; });
-  var supplyBgLight = allMonths.map(function(m) { return rtfMonths.includes(m) ? "rgba(55,65,81,0.15)" : "rgba(55,65,81,0.5)"; });
-  var rtfDeltaBg    = allMonths.map(function(m) { return rtfMonths.includes(m) ? "rgba(59,130,246,0.7)" : "transparent"; });
+  var supplyBgFull  = allMonths.map(function(m) { return months.includes(m) ? "rgba(55,65,81,0.28)" : "rgba(55,65,81,0.85)"; });
+  var supplyBgLight = allMonths.map(function(m) { return months.includes(m) ? "rgba(55,65,81,0.15)" : "rgba(55,65,81,0.5)"; });
+  var rtfDeltaBg    = allMonths.map(function(m) { return months.includes(m) ? "rgba(59,130,246,0.7)" : "transparent"; });
 
-  var sc = _summaryScenario;
-  if (sc === "RTF조정" && !hasRtfAdj)    sc = "기존";
-  if (sc === "과잉조정" && !hasExcessAdj) sc = hasRtfAdj ? "RTF조정" : "기존";
+  var sc = state.chartScenario || "기존";
+  if (sc === "RTF조정" && !hasRtfAdj) sc = "기존";
+  if (sc === "과잉조정" && !hasCut)   sc = hasRtfAdj ? "RTF조정" : "기존";
 
   var datasets, activeInvLineIdx, invActLineIdx, activeDaysData, activeInvData;
 
@@ -490,7 +466,7 @@ function bindSummary() {
   function leg(cls, label) {
     return "<span class=\"sum-leg " + cls + "\">" + label + "</span>";
   }
-  var legendEl = document.querySelector("#sumChartLegend");
+  var legendEl = document.querySelector("#" + idPrefix + "ChartLegend");
   if (legendEl) {
     var lgItems = [
       leg("sum-leg-sales-act",   "실적 판매"),
@@ -541,7 +517,7 @@ function bindSummary() {
       ctx.textAlign = "center";
 
       allMonths.forEach(function(m, i) {
-        var isFcst   = rtfMonths.includes(m);
+        var isFcst   = months.includes(m);
         var lineVal  = isFcst ? activeInvData[i] : invActData[i];
         if (lineVal === null || lineVal === undefined) return;
 
@@ -586,7 +562,7 @@ function bindSummary() {
   };
 
   // ── 차트 생성 ─────────────────────────────────────────────────────────────
-  _summaryChartInst = new Chart(canvas.getContext("2d"), {
+  _scenChartInst[idPrefix] = new Chart(canvas.getContext("2d"), {
     type: "bar",
     data: { labels: allMonths.map(monthLabel), datasets: datasets },
     options: {
@@ -613,5 +589,9 @@ function bindSummary() {
     },
     plugins: [datalabelsPlugin, daysTagsPlugin],
   });
+}
+
+function bindSummary() {
+  mountScenarioChart("sum");
 }
 

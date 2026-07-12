@@ -197,6 +197,10 @@
              font-variant-numeric: tabular-nums; }
 .rv-tbl-mon .rv-total .rv-mc-a { font-size: 15.5px; font-weight: 800; }
 .rv-tbl-mon .rv-total .rv-mc-y { font-size: 12.5px; font-weight: 700; color: var(--days); }
+/* 부족 배지 — 원부자재 흐름이 0 밑으로 내려간 달. 계획이 물리적으로 못 채우는 만큼을 드러낸다. */
+.rv-short  { display: inline-block; font-size: 10.5px; font-weight: 800; color: var(--danger);
+             background: #fbe9e9; border: 1px solid var(--danger); border-radius: 5px;
+             padding: 1px 6px; margin-top: 2px; white-space: nowrap; }
 .rv-tbl thead th small { display: block; font-size: 10px; font-weight: 700;
                          color: var(--brand); letter-spacing: .04em; margin-top: 2px; }
 
