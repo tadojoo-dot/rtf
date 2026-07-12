@@ -53,6 +53,40 @@
          padding: 14px 18px; font-size: 14.5px; line-height: 1.75; color: var(--ink-2); }
 .rv-op b { color: var(--ink); font-weight: 800; }
 
+/* ── 차트 ── */
+.rv-card-hd { padding: 14px 18px 12px; border-bottom: 1px solid var(--line);
+              font-size: 15px; font-weight: 800; color: var(--ink); }
+.rv-card-hd span { font-weight: 500; font-size: 13px; color: var(--muted); margin-left: 8px; }
+.rv-chart { padding: 14px 12px 4px; height: 300px; }
+.rv-chart canvas { width: 100% !important; }
+.rv-legend { display: flex; gap: 18px; flex-wrap: wrap; padding: 4px 18px 14px;
+             font-size: 12.5px; color: var(--muted); }
+.rv-lg { display: inline-block; width: 11px; height: 11px; border-radius: 3px;
+         margin-right: 6px; vertical-align: -1px; }
+.rv-lg-day { border: 1px solid var(--days); background: transparent; border-radius: 999px; }
+
+/* ── 3단 시나리오 스트립 — 회의의 성과가 실시간으로 움직이는 자리 ── */
+.rv-scn { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.rv-scn-hd { padding: 13px 18px; border-bottom: 1px solid var(--line);
+             font-size: 15px; font-weight: 800; color: var(--ink); }
+.rv-scn-hd span { font-weight: 500; font-size: 13px; color: var(--muted); }
+.rv-scn-row { display: flex; align-items: stretch; }
+.rv-scn-c { flex: 1; padding: 18px 22px; border-left: 4px solid transparent; }
+.rv-scn-base { border-left-color: var(--sc-base); }
+.rv-scn-rtf  { border-left-color: var(--sc-rtf); }
+.rv-scn-exc  { border-left-color: var(--sc-exc); }
+.rv-scn-on   { background: var(--surface-2); }
+.rv-scn-l { font-size: 12.5px; font-weight: 800; color: var(--muted); letter-spacing: .03em; }
+.rv-scn-v { margin-top: 6px; font-size: 30px; font-weight: 800; letter-spacing: -.03em;
+            color: var(--ink); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.rv-scn-v small { font-size: 15px; font-weight: 700; color: var(--muted); margin-left: 3px; }
+.rv-scn-y { margin-top: 2px; font-size: 15px; font-weight: 700; color: var(--days);
+            font-variant-numeric: tabular-nums; }
+.rv-scn-d { margin-top: 8px; font-size: 13.5px; font-weight: 800; color: var(--good); }
+.rv-scn-idle { color: var(--muted); font-weight: 500; }
+.rv-scn-arr { display: flex; align-items: center; padding: 0 6px;
+              font-size: 20px; color: var(--muted-2); }
+
 /* ── 카드 ── */
 .rv-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .rv-bar { display: flex; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
@@ -117,11 +151,29 @@
           color: var(--ink-2); font-size: 12px; font-weight: 800; line-height: 1; cursor: pointer; }
 .rv-tog-x { border-color: transparent; background: transparent; cursor: default; }
 
-/* 비중 — 숫자보다 막대가 한눈에 들어온다 */
+/* 증가 기여도 — 숫자보다 막대가 한눈에 들어온다 */
 .rv-pbar   { display: inline-block; width: 54px; height: 7px; border-radius: 4px;
              background: var(--line); overflow: hidden; vertical-align: middle; margin-right: 8px; }
 .rv-pbar i { display: block; height: 100%; background: var(--sc-rtf); border-radius: 4px; }
-.rv-pct    { font-size: 12.5px; color: var(--muted); font-weight: 700; }
+.rv-pbar-hot { background: var(--warn) !important; }
+.rv-pct      { font-size: 12.5px; color: var(--muted); font-weight: 700; }
+.rv-pct-hot  { color: var(--warn-ink); font-weight: 800; }
+
+/* ── 월별 뷰 셀 — 재고금액 / 재고일수 / 전월대비 3층 ──
+   전월대비는 화살표다. 12개월 × 수백 행에 뱃지를 달면 알약밭이 되어
+   정작 강조해야 할 진단 뱃지가 묻힌다. */
+.rv-tbl-mon tbody td { height: auto; padding: 7px 10px; }
+.rv-mc     { text-align: center; white-space: nowrap; }
+.rv-mc-a   { display: block; font-size: 14px; font-weight: 700; color: var(--ink);
+             font-variant-numeric: tabular-nums; }
+.rv-mc-y   { display: block; font-size: 11.5px; color: var(--muted); margin-top: 1px;
+             font-variant-numeric: tabular-nums; }
+.rv-mc-d   { display: block; font-size: 11.5px; font-weight: 700; margin-top: 1px;
+             font-variant-numeric: tabular-nums; }
+.rv-tbl-mon .rv-total .rv-mc-a { font-size: 15.5px; font-weight: 800; }
+.rv-tbl-mon .rv-total .rv-mc-y { font-size: 12.5px; font-weight: 700; color: var(--days); }
+.rv-tbl thead th small { display: block; font-size: 10px; font-weight: 700;
+                         color: var(--brand); letter-spacing: .04em; margin-top: 2px; }
 
 .rv-up   { color: var(--danger); font-weight: 800; }
 .rv-down { color: var(--good);   font-weight: 800; }
