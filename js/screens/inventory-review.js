@@ -988,10 +988,24 @@ function buildReviewTree(items, tab, T) {
     return d || String(a.label).localeCompare(String(b.label), "ko-KR");
   };
 
+  // 유형 행도 선택한 컬럼으로 정렬한다 (기본 = 변동 기여도 내림차순).
+  // 고정 순서(TYPE_ORDER)를 쓰면 원료(−2.3%)가 구매반제품(+0.9%)·자재(+0.4%)보다 위에 온다 —
+  // 기여도로 정렬해 놓고 최상위만 딴 순서면 표를 못 믿는다.
+  // TYPE_ORDER는 동점(둘 다 0)일 때의 타이브레이커로만 남긴다.
   var nodes = [];
-  TYPE_ORDER.forEach(function(type) {
-    var ti = pool.filter(function(it) { return it.type === type; });
-    if (!ti.length) return;
+  var types = TYPE_ORDER
+    .map(function(type) {
+      var ti = pool.filter(function(it) { return it.type === type; });
+      return ti.length ? { label: type, items: ti, agg: revAgg(ti), ord: TYPE_ORDER.indexOf(type) } : null;
+    })
+    .filter(Boolean)
+    .sort(function(a, b) {
+      var d = (revSortValue(a.agg, sk, total, head) - revSortValue(b.agg, sk, total, head)) * sd;
+      return d || (a.ord - b.ord);
+    });
+
+  types.forEach(function(tn) {
+    var type = tn.label, ti = tn.items;
     nodes.push({ id: "t|" + type, parent: null, level: 0, label: type, items: ti });
 
     var groups = {};
@@ -1520,10 +1534,11 @@ function renderInventoryReview() {
       "<div class='rv-scroll'>" + table + "</div>" +
       "<div class='rv-note'>" +
         "<div class='rv-note-wf'>증가 요인 <b>+" + revMoney(wf.pos) + "억</b> · 감소 요인 <b>−" +
-          revMoney(Math.abs(wf.neg)) + "억</b> · 순증 <b>" +
+          revMoney(Math.abs(wf.neg)) + "억</b> · 변동 총량 <b>" + revMoney(wf.abs) + "억</b> · 순증 <b>" +
           (Number.isFinite(headDelta) ? (headDelta >= 0 ? "+" : "−") + revMoney(Math.abs(headDelta)) : "-") +
           "억</b></div>" +
-        "<b>증가 기여도</b> = 그 행의 증가액 ÷ 증가 요인 합계 (누가 이번 증가를 만들었나) · " +
+        "<b>변동 기여도</b> = 그 행의 증감 ÷ <b>변동 총량</b>(|증가| + |감소|) — 이번 달 재고를 움직인 것 중 " +
+        "이 행이 차지하는 몫. 모든 행의 절대 기여도를 더하면 정확히 100%가 된다. · " +
         "<b>재고금액 비중</b> = 그 행의 재고 ÷ 공시기준 총재고 (규모가 얼마나 되나)<br>" +
         "<b>재고일수</b>(품목·품목군·유형 행) = 6월말 재고를 하반기 계획(제·상품 = 판매계획 / 원부자재 = BOM 소요)대로 " +
         "소진할 때 버티는 일수(선행 커버리지). 계획 구간(6개월)을 넘으면 계획 말기 속도로 외삽. 나갈 계획이 없으면 <b>∞</b>. " +
