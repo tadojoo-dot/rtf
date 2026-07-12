@@ -2,7 +2,8 @@
 // 회의 진행에 따라 점진 공개: 조정 입력 전에는 ②③이 "확정 전" 대기 카드로 표시
 function renderHeadlineStrip() {
   if (typeof computeHeadlineTriple !== "function") return "";
-  var h = computeHeadlineTriple();
+  // 기준월 = 전망 첫 달(7월). 조정이 가장 먼저 닿는 달이라 회의 중에 효과가 즉시 보인다.
+  var h = computeHeadlineTriple("first");
   if (!h) return "";
 
   // 재고·일수·품절 모두 감소 = 좋음(초록), 증가 = 나쁨(빨강)

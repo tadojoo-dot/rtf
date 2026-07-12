@@ -1533,15 +1533,25 @@ function computeScenarioItemSets() {
 }
 
 // ── 3단 헤드라인(현재→RTF조정후→감축후) — 회의안건 상단 띠 공용 계산 ─────────
-// 기준월 = 연말(12월, 없으면 마지막 계획월). 원부자재는 3단 전부 실제 롤포워드(완제품
-// 공급계획 BOM전개 소요 vs 자재 자체 입고계획) 반영 — totalInvAmountWon이 matScenario로 처리.
+// 원부자재는 3단 전부 실제 롤포워드(완제품 공급계획 BOM전개 소요 vs 자재 자체 입고계획) 반영
+// — totalInvAmountWon이 matScenario로 처리.
 // rtf/fin은 해당 조정이 없으면 null → 화면에서 "확정 전" 대기 카드로 점진 공개
-function computeHeadlineTriple() {
+//
+// basis: 기준월을 고른다.
+//   "first" → 전망 첫 달(7월). 조정이 가장 먼저 닿는 달이라 효과가 즉시 보인다.
+//   "last" / 생략 → 연말(12월, 없으면 마지막 계획월). 연간 목표 대비 결산용.
+// 화면마다 다른 달을 쓰면 "왜 숫자가 다르냐"가 되므로, 쓰는 쪽에서 명시적으로 넘긴다.
+function computeHeadlineTriple(basis) {
   var months = getRtfMonths();
   if (!months.length) return null;
-  var mi = months.length - 1;
-  for (var i = months.length - 1; i >= 0; i--) {
-    if (months[i].slice(5, 7) === "12") { mi = i; break; }
+  var mi;
+  if (basis === "first") {
+    mi = 0;
+  } else {
+    mi = months.length - 1;
+    for (var i = months.length - 1; i >= 0; i--) {
+      if (months[i].slice(5, 7) === "12") { mi = i; break; }
+    }
   }
   var sc = computeScenarioItemSets();
   // 자재 시나리오: 원래=무조정 / RTF조정후=matSimAdj·fgProdAdj / 감축후=+excessAdj·matExcessAdj(우선)

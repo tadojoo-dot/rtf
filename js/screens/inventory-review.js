@@ -1486,10 +1486,14 @@ function renderInventoryReview() {
   var scn = "";
   if (hasAdj) {
     var fdB = T.fcstDays(T.base), fdR = T.fcstDays(T.rtf), fdE = T.fcstDays(T.exc);
-    var L = 5;   // 12월 = 전망 마지막 달
+    // 기준월 = 전망 첫 달(7월). 회의안건 결과헤드라인·공급원인/과잉감축 배너와 같은 달이어야
+    // 한다 — 화면마다 다른 달을 쓰면 회의에서 "왜 숫자가 다르냐"가 나온다.
+    // 7월은 조정이 가장 먼저 닿는 달이라 조정 효과가 즉시 보인다.
+    var L = 0;
+    var LM = monthLabel(FCST_MONTHS[L]) + "말";
     scn =
       "<div class='rv-scn'>" +
-        "<div class='rv-scn-hd'>12월말 전망 <span>— 조정할 때마다 실시간으로 바뀝니다</span></div>" +
+        "<div class='rv-scn-hd'>" + LM + " 전망 <span>— 조정할 때마다 실시간으로 바뀝니다</span></div>" +
         "<div class='rv-scn-row'>" +
           revScn("원계획", T.base[L], fdB[L], null, null, "base") +
           "<div class='rv-scn-arr'>→</div>" +

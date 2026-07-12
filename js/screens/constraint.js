@@ -3391,11 +3391,14 @@ function renderCstFgMatTable(mats, months, supplyMap, simAdj, fg) {
 }
 
 // ── 화면 렌더 ─────────────────────────────────────────────────────────────────
-// ── KPI 배너 한 줄 요약 (접힌 상태에서도 12월 3단 숫자는 남긴다) ───────────────
-// computeHeadlineTriple()(rtf.js)는 12월 기준 {month, base, rtf, fin} 3단 값을 그대로 낸다.
+// ── KPI 배너 한 줄 요약 (접힌 상태에서도 3단 숫자는 남긴다) ────────────────────
+// 기준월 = 전망 첫 달(7월) — 회의안건 결과헤드라인과 같은 달이어야 한다.
+// 화면마다 다른 달을 쓰면 회의에서 "왜 숫자가 다르냐"가 나온다.
+// 7월은 조정이 가장 먼저 닿는 달이라 조정할 때마다 이 한 줄이 즉시 움직인다.
+// 과잉감축(renderExcBannerSection)도 이 헬퍼를 그대로 쓴다.
 function _cstHeadlineSummaryHtml() {
   if (typeof computeHeadlineTriple !== "function") return null;
-  var t = computeHeadlineTriple();
+  var t = computeHeadlineTriple("first");
   if (!t) return null;
   var scen = t.fin || t.rtf || t.base;
   if (!scen) return null;
