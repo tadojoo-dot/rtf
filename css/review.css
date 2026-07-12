@@ -145,3 +145,22 @@
 .rv-note { font-size: 12.5px; line-height: 1.75; color: var(--muted);
            padding: 13px 16px; border-top: 1px solid var(--line); }
 .rv-note b { color: var(--ink-2); font-weight: 700; }
+
+/* ── file:// 로 열었을 때의 안내 (fetch가 막혀 결산자료를 못 읽는 상태) ── */
+.rv-guide { padding: 32px 36px; }
+.rv-guide h2 { margin: 0 0 10px; font-size: 22px; font-weight: 800; color: var(--ink); }
+.rv-guide > p { margin: 0 0 24px; font-size: 15px; line-height: 1.75; color: var(--ink-2); }
+.rv-guide-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.rv-guide-box { border: 1px solid var(--line); border-radius: 10px; padding: 20px 22px;
+                background: var(--surface-2); border-top: 4px solid var(--brand); }
+.rv-guide-box:last-child { border-top-color: var(--muted-2); }
+.rv-guide-n { font-size: 12px; font-weight: 800; color: var(--brand);
+              letter-spacing: .06em; margin-bottom: 10px; }
+.rv-guide-box:last-child .rv-guide-n { color: var(--muted); }
+.rv-guide-box b { display: block; font-size: 17px; font-weight: 800; color: var(--ink); margin-bottom: 8px; }
+.rv-guide-box p { margin: 0; font-size: 14px; line-height: 1.75; color: var(--ink-2); }
+.rv-guide-box code { background: var(--surface); border: 1px solid var(--line);
+                     border-radius: 4px; padding: 1px 6px; font-size: 13px; }
+.rv-guide-btn { margin-top: 14px; border: 1px solid var(--brand); background: var(--brand);
+                color: #fff; font-size: 14px; font-weight: 700;
+                padding: 9px 18px; border-radius: 8px; cursor: pointer; }

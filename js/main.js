@@ -121,10 +121,36 @@ function renderDataCheck() {
     return [escapeHtml(file.label), parsed ? badge("ok","연결 완료") : badge("missing","미연결"), parsed ? escapeHtml(parsed.name) : "-"];
   });
   const counts = state.mappedData;
+
+  // 결산자료(1~6월) — 재고 총괄장의 원천. 세 경로 중 하나로 들어온다.
+  //   json   = data/closing.json 자동 로드 (start.bat 서버 모드, 0.04초)
+  //   upload = 사용자가 결산 xlsx 6개를 직접 선택 (index.html을 파일로 직접 연 경우)
+  //   xlsx   = 결산 폴더를 fetch로 직접 파싱 (json이 없는 서버 모드, 12초)
+  const cl = state.closing;
+  const clRow = (() => {
+    if (cl && cl.status === "done") {
+      const src = { json: "자동 로드 (사전계산)", upload: "선택한 파일에서 읽음", xlsx: "폴더에서 직접 파싱" }[cl.source] || cl.source;
+      return [badge("ok", "연결 완료"),
+              `${(cl.loaded || []).length}개월 · 품목 ${formatNumber(cl.items ? cl.items.size : 0)}개`,
+              escapeHtml(src)];
+    }
+    if (cl && cl.fileMode) {
+      return [badge("missing", "미연결"),
+              "index.html을 파일로 직접 연 상태 — 브라우저가 폴더 접근을 막습니다",
+              "<b>start.bat으로 실행</b>하거나, 위에서 <b>결산자료 폴더의 6개 파일을 함께 선택</b>하세요"];
+    }
+    if (cl && cl.status === "error") {
+      return [badge("missing", "읽기 실패"), escapeHtml((cl.errors || []).join(" / ")), "-"];
+    }
+    return [badge("warn", "대기"), "-", "-"];
+  })();
+
   return `<section class="section-band">
     <div class="section-header">
       <div><p class="eyebrow">local raw</p><h2>RAW 파일 선택</h2></div>
-      <p>필요한 RAW 엑셀 파일을 모두 선택하세요. 선택한 파일은 브라우저 메모리에서만 읽고 원본은 수정하지 않습니다.</p>
+      <p>필요한 RAW 엑셀 파일을 모두 선택하세요. 선택한 파일은 브라우저 메모리에서만 읽고 원본은 수정하지 않습니다.<br>
+         <b>재고 총괄장(재고전망)을 쓰려면 <code>결산자료</code> 폴더의 <code>(26년 1~6월) 재고자산 결산.xlsx</code> 6개도 함께 선택하세요.</b>
+         (start.bat으로 실행하면 자동으로 읽히므로 고를 필요 없습니다)</p>
     </div>
     <div class="upload-zone">
       <label for="rawUpload"><strong>RAW 파일 선택</strong></label>
@@ -132,6 +158,7 @@ function renderDataCheck() {
     </div>
   </section>
   <section class="section-band"><div class="section-header"><h2>필수 파일 연결 여부</h2></div>${renderTable(["필수 파일","상태","선택된 파일"], requiredRows)}</section>
+  <section class="section-band"><div class="section-header"><h2>결산자료 (재고 총괄장용 · 1~6월)</h2></div>${renderTable(["상태","내용","경로"], [clRow])}</section>
   <section class="section-band"><div class="section-header"><h2>읽기 상태</h2></div>${renderTable(["파일명","크기","RAW 유형","읽기 상태","시트명","행 수"], uploadRows)}</section>
   <section class="section-band"><div class="section-header"><h2>매핑 결과</h2></div>${renderTable(["테이블","행 수"], [
     ["판매/공급계획", formatNumber(counts.plan_monthly.length)],

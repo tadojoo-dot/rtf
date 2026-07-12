@@ -9,6 +9,10 @@ function detectRawType(fileName) {
   if (name.includes("적정재고"))         return "targetInventory";
   if (name.includes("나보타"))           return "nabota";
   if (name.includes("매출"))             return "salesActual";
+  // 결산자료/(26년 N월) 재고자산 결산.xlsx — 재고 총괄장의 1~6월 리뷰 원천.
+  // 평소엔 fetch로 자동 로드하지만(start.bat 서버 모드), index.html을 파일로 직접 열면
+  // fetch가 막히므로 파일 선택으로도 읽을 수 있어야 한다. "결산_RAW"보다 먼저 판정할 것.
+  if (name.includes("재고자산 결산")) return "closingMonthly";
   if (name.includes("결산실적_월별요약") || name.includes("결산_raw") || name.includes("결산_RAW")) return "actualMonthly";
   if (name.includes("RTF_RAW_보조양식")) return "rtfHelper";
   return "unknown";
@@ -25,7 +29,8 @@ async function processFiles(files) {
   const rawFiles = {};
   for (const file of files) {
     const rawType = detectRawType(file.name);
-    const key = rawType === "unknown" ? file.name : rawType;
+    // 결산자료는 월별로 6개가 들어오므로 rawType을 키로 쓰면 서로 덮어쓴다 → 파일명으로 구분
+    const key = (rawType === "unknown" || rawType === "closingMonthly") ? file.name : rawType;
     try {
       const workbook = await parseWorkbook(file);
       rawFiles[key] = {
@@ -47,6 +52,16 @@ async function processFiles(files) {
   state.uploadedFiles = Object.values(rawFiles);
   state.mappedData = mapRawData(rawFiles);
 
+  // 결산자료는 시트를 해제하기 전에 읽어야 한다.
+  // 평소엔 data/closing.json을 fetch하지만(39ms), index.html을 파일로 직접 열면 fetch가
+  // 막히므로 사용자가 고른 결산 xlsx의 시트를 그 자리에서 파싱해야 한다.
+  if (typeof loadClosingData === "function") {
+    try {
+      const c = await loadClosingData(true);
+      if (c && c.errors && c.errors.length) console.warn("[결산자료]", c.errors);
+    } catch (e) { console.error("[결산자료 로드 실패]", e); }
+  }
+
   // 매핑 완료 후 원본 시트 데이터 해제 — mappedData로 이미 추출했으므로 메모리 반환
   Object.values(state.rawFiles).forEach(function(f) { f.sheets = []; });
 
@@ -60,15 +75,6 @@ async function processFiles(files) {
   }
 
   render(state.currentMenuId);
-
-  // 결산자료(1~6월)는 업로드가 아니라 폴더에서 fetch로 읽는다 → 백그라운드로 로드 후 재렌더.
-  // item_master가 매핑된 뒤여야 품목군 조인이 되므로 이 시점에 시작.
-  if (typeof loadClosingData === "function") {
-    loadClosingData().then(function(c) {
-      if (c && c.errors && c.errors.length) console.warn("[결산자료]", c.errors);
-      render(state.currentMenuId);
-    }).catch(function(e) { console.error("[결산자료 로드 실패]", e); });
-  }
 }
 
 async function parseWorkbook(file) {

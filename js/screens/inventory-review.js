@@ -613,10 +613,26 @@ function revChip(sev, main, sub) {
 
 function renderInventoryReview() {
   if (!state.closing || state.closing.status !== CLOSING_STATUS.DONE) {
+    // file:// 로 열면 브라우저가 fetch를 원천 차단한다 → 결산 파일을 직접 고르게 안내.
+    if (state.closing && state.closing.fileMode) {
+      return "<section class='section-band'><div class='rv-guide'>" +
+        "<h2>결산자료를 연결해 주세요</h2>" +
+        "<p>지금 <b>index.html을 파일로 직접 연 상태</b>라서 브라우저가 폴더 접근을 막고 있습니다. " +
+        "둘 중 하나를 하시면 됩니다.</p>" +
+        "<div class='rv-guide-2'>" +
+          "<div class='rv-guide-box'><div class='rv-guide-n'>방법 1 — 권장</div>" +
+            "<b>start.bat 으로 실행</b>" +
+            "<p>결산자료가 자동으로 읽힙니다(0.04초). 파일을 고를 필요가 없습니다.</p></div>" +
+          "<div class='rv-guide-box'><div class='rv-guide-n'>방법 2</div>" +
+            "<b>결산 파일을 직접 선택</b>" +
+            "<p>데이터점검 화면에서 다른 RAW 파일과 함께 <code>결산자료</code> 폴더의 " +
+            "<code>(26년 1~6월) 재고자산 결산.xlsx</code> <b>6개를 같이</b> 선택하세요.</p>" +
+            "<button class='rv-guide-btn' onclick=\"render('data-check')\">데이터점검으로 이동</button></div>" +
+        "</div></div></section>";
+    }
     var msg = (state.closing && state.closing.status === CLOSING_STATUS.ERROR)
       ? "결산자료를 읽지 못했습니다.<br><span class='rv-mut'>" +
-        escapeHtml((state.closing.errors || []).join(" / ")) + "</span><br>" +
-        "<span class='rv-mut'>index.html을 파일로 직접 열면 안 됩니다 — start.bat으로 실행하세요.</span>"
+        escapeHtml((state.closing.errors || []).join(" / ")) + "</span>"
       : "결산자료 로딩 중…";
     return "<section class='section-band'><div class='section-header'><h2>재고 총괄장</h2><p>" +
            msg + "</p></div></section>";

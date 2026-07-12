@@ -52,10 +52,41 @@ function readClosingBook(buf, month) {
   return { wb: wb, matName: matName, wipName: wipName };
 }
 
-// ── 워크북 1개 → 품목별 월 스냅샷 ─────────────────────────────────────────────
-function parseClosingWorkbook(book, month) {
-  var wb = book.wb, matName = book.matName, wipName = book.wipName;
-  var rows = XLSX.utils.sheet_to_json(wb.Sheets[matName], { header: 1, defval: null, raw: true });
+// XLSX 워크북 → { matRows, wipRows } (파일 선택 경로와 형태를 맞추기 위한 어댑터)
+function closingBookToRows(book) {
+  return {
+    matRows: XLSX.utils.sheet_to_json(book.wb.Sheets[book.matName], { header: 1, defval: null, raw: true }),
+    wipRows: book.wipName
+      ? XLSX.utils.sheet_to_json(book.wb.Sheets[book.wipName], { header: 1, defval: null, raw: true })
+      : null,
+  };
+}
+
+// 파일 선택(processFiles)으로 들어온 결산 파일에서 필요한 두 시트를 뽑는다.
+// data.js의 parseWorkbook이 이미 sheet_to_json을 끝낸 형태({name, rows}[])로 준다.
+function closingSheetsToRows(sheets, month) {
+  var pick = function(prefix) {
+    return (sheets || []).find(function(s) {
+      return s.name.indexOf(prefix) === 0 && s.name.indexOf("피벗") < 0;
+    });
+  };
+  var mat = pick("자재수불");
+  var wip = pick("재공품수불");
+  if (!mat) throw new Error(month + ": '자재수불' 시트를 찾을 수 없습니다");
+  return { matRows: mat.rows, wipRows: wip ? wip.rows : null };
+}
+
+// 파일명 → 월 (예: "(26년 6월) 재고자산 결산.xlsx" → "2026-06")
+function closingMonthFromName(name) {
+  var m = String(name || "").match(/\((\d{2})년\s*(\d{1,2})월\)/);
+  if (!m) return null;
+  return "20" + m[1] + "-" + String(Number(m[2])).padStart(2, "0");
+}
+
+// ── 시트 rows → 품목별 월 스냅샷 ──────────────────────────────────────────────
+function parseClosingWorkbook(src, month) {
+  var rows    = src.matRows;
+  var wipRows = src.wipRows;
 
   // 헤더행 탐색 (5월까지 index 2, 1~4월도 2 — 다만 방어적으로 스캔)
   var hr = -1;
@@ -123,8 +154,8 @@ function parseClosingWorkbook(book, month) {
 
   // 재공품 (별도 시트) — 플랜트 4, 자재코드 5, 재공기초 14, 재공기말 17
   var wip = { base: 0, end: 0, nabotaBase: 0, nabotaEnd: 0 };
-  if (wipName) {
-    var wr = XLSX.utils.sheet_to_json(wb.Sheets[wipName], { header: 1, defval: null, raw: true });
+  if (wipRows) {
+    var wr = wipRows;
     for (var w = 1; w < wr.length; w++) {
       var x = wr[w];
       if (!x || x[5] == null || x[5] === "") continue;
@@ -161,32 +192,66 @@ async function fetchClosingJson() {
   });
 }
 
+// 사용자가 데이터점검 화면에서 직접 고른 결산 파일 (file:// 로 열었을 때의 유일한 경로)
+function uploadedClosingSnaps() {
+  var out = [];
+  Object.values(state.rawFiles || {}).forEach(function(f) {
+    if (f.rawType !== "closingMonthly" || !f.parseSuccess) return;
+    var month = closingMonthFromName(f.name);
+    if (!month) return;
+    try {
+      out.push(parseClosingWorkbook(closingSheetsToRows(f.sheets, month), month));
+    } catch (e) {
+      console.warn("[결산자료] " + f.name + " 파싱 실패:", e.message);
+    }
+  });
+  return out;
+}
+
 // ── 6개월 로드 → state.closing ────────────────────────────────────────────────
+// 경로 우선순위
+//   ① 사전계산 JSON (data/closing.json) — 39ms. start.bat 서버 모드의 기본 경로.
+//   ② 사용자가 고른 결산 xlsx — index.html을 파일로 직접 열면 fetch가 막히므로 이 경로뿐.
+//   ③ 결산 폴더 xlsx를 fetch — JSON이 없고 서버 모드일 때.
 async function loadClosingData(force) {
   if (!force && state.closing && state.closing.status === CLOSING_STATUS.DONE) return state.closing;
 
   state.closing = { status: CLOSING_STATUS.LOADING, months: CLOSING_MONTHS.slice(), errors: [], source: null };
 
   var snaps = [];
+
+  // ① 사전계산 JSON
   try {
     snaps = await fetchClosingJson();
     state.closing.source = "json";
   } catch (jsonErr) {
-    // 폴백: 결산 xlsx를 직접 파싱 (느림 — JSON을 못 찾은 경우에만)
-    console.warn("[결산자료] 사전계산 JSON 미사용 → xlsx 직접 파싱:", jsonErr.message);
-    if (!window.XLSX) throw new Error("XLSX 라이브러리 연결 필요");
-    state.closing.source = "xlsx";
-    for (var i = 0; i < CLOSING_MONTHS.length; i++) {
-      var month = CLOSING_MONTHS[i];
-      var url   = CLOSING_DIR + encodeURIComponent(closingFileName(month));
-      try {
-        var res = await fetch(url, { cache: "no-store" });
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        var buf = await res.arrayBuffer();
-        snaps.push(parseClosingWorkbook(readClosingBook(buf, month), month));
-      } catch (err) {
-        state.closing.errors.push(month + ": " + (err && err.message ? err.message : String(err)));
-        snaps.push(null);
+    // ② 사용자가 직접 고른 결산 파일
+    var picked = uploadedClosingSnaps();
+    if (picked.length) {
+      snaps = picked;
+      state.closing.source = "upload";
+    } else if (typeof location !== "undefined" && location.protocol === "file:") {
+      // file:// 에서는 fetch가 원천 차단된다 → 여기서 끝. 무엇을 해야 하는지 정확히 알려준다.
+      state.closing.status = CLOSING_STATUS.ERROR;
+      state.closing.fileMode = true;
+      return state.closing;
+    } else {
+      // ③ 결산 폴더 xlsx 직접 파싱 (느림)
+      console.warn("[결산자료] 사전계산 JSON 미사용 → xlsx 직접 파싱:", jsonErr.message);
+      if (!window.XLSX) throw new Error("XLSX 라이브러리 연결 필요");
+      state.closing.source = "xlsx";
+      for (var i = 0; i < CLOSING_MONTHS.length; i++) {
+        var month = CLOSING_MONTHS[i];
+        var url   = CLOSING_DIR + encodeURIComponent(closingFileName(month));
+        try {
+          var res = await fetch(url, { cache: "no-store" });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          var buf = await res.arrayBuffer();
+          snaps.push(parseClosingWorkbook(closingBookToRows(readClosingBook(buf, month)), month));
+        } catch (err) {
+          state.closing.errors.push(month + ": " + (err && err.message ? err.message : String(err)));
+          snaps.push(null);
+        }
       }
     }
   }
