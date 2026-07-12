@@ -829,6 +829,23 @@ render("meeting");
 // RAW 파일과 결산자료를 폴더에서 자동으로 읽는다 (start.bat 서버 모드).
 // 회의 당일 파일을 하나도 고를 필요가 없다.
 // index.html을 파일로 직접 열면 fetch가 막히므로 그때만 데이터점검에서 수동 선택.
-if (typeof autoLoadRawFiles === "function") {
-  autoLoadRawFiles().catch(function(e) { console.error("[자동 로드 실패]", e); });
-}
+//
+// 그다음 회의 상태(의견·판정·조정)를 복구한다. 데이터가 먼저 들어와 있어야
+// 판정 키가 실제 품목과 매칭된다.
+(async function boot() {
+  try {
+    if (typeof autoLoadRawFiles === "function") await autoLoadRawFiles();
+  } catch (e) { console.error("[자동 로드 실패]", e); }
+
+  try {
+    if (typeof loadMeetingState === "function") {
+      var src = await loadMeetingState();
+      if (src) {
+        console.log("[회의 상태] 복구됨 (" + src + ")");
+        render(state.currentMenuId);
+      } else if (typeof renderSaveBadge === "function") {
+        renderSaveBadge();
+      }
+    }
+  } catch (e) { console.error("[회의 상태 복구 실패]", e); }
+})();

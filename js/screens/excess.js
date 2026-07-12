@@ -1273,6 +1273,10 @@ function saveAiSession() {
       savedAt: new Date().toISOString(),
     }));
   } catch (e) { /* 저장 실패는 치명적이지 않음 (프라이빗 모드 등) */ }
+
+  // localStorage는 브라우저가 죽거나 캐시를 지우면 날아간다. 회의 몇 시간치를 그렇게
+  // 잃을 수는 없어서 파일로도 남긴다 (meeting-state.js → data/meeting.json).
+  if (typeof saveMeetingState === "function") saveMeetingState();
 }
 function loadAiSession() {
   try {

@@ -512,8 +512,43 @@ function revAgg(items) {
   return a;
 }
 
-function buildReviewTree(items, tab) {
-  var pool = items.filter(function(it) { return tab === "mat" ? !it.isFg : it.isFg; });
+// 정렬 키 → 값. 계층은 유지하고 형제끼리만 정렬한다.
+// 유형(최상위)은 정렬하지 않는다 — 회의에서 얘기하는 순서(제·상품 먼저, 자재 나중)라
+// 매번 순서가 바뀌면 진행이 흔들린다.
+function revSortValue(agg, key, total, headDelta) {
+  switch (key) {
+    case "end":     return agg.end;
+    case "delta":   return agg.delta;
+    case "contrib": return headDelta !== 0 ? agg.delta / headDelta : 0;
+    case "share":   return agg.end / (total || 1);
+    case "mos":     return agg.mos === Infinity ? 1e9 : (agg.mos === null ? -1 : agg.mos);
+    default:
+      // 월별 뷰 — "m0" ~ "m11" (재고금액 기준)
+      if (/^m\d+$/.test(key)) {
+        var i = Number(key.slice(1));
+        return i < 6 ? (agg.hist[i] || 0) : (agg.fExc[i - 6] || 0);
+      }
+      return agg.end;
+  }
+}
+
+function buildReviewTree(items, tab, T) {
+  var q = (state.revSearch || "").trim().toLowerCase();
+  var pool = items.filter(function(it) {
+    if (tab === "mat" ? it.isFg : !it.isFg) return false;
+    if (!q) return true;
+    return (it.itemCode + " " + it.itemName + " " + it.group).toLowerCase().indexOf(q) >= 0;
+  });
+
+  var total = T.hist[5] || 1;
+  var head  = T.hist[5] - T.hist[4];
+  var sk = (state.revSort && state.revSort.key) || "contrib";
+  var sd = (state.revSort && state.revSort.dir) || -1;
+  var cmp = function(a, b) {
+    var d = (revSortValue(a.agg, sk, total, head) - revSortValue(b.agg, sk, total, head)) * sd;
+    return d || String(a.label).localeCompare(String(b.label), "ko-KR");
+  };
+
   var nodes = [];
   TYPE_ORDER.forEach(function(type) {
     var ti = pool.filter(function(it) { return it.type === type; });
@@ -522,18 +557,30 @@ function buildReviewTree(items, tab) {
 
     var groups = {};
     ti.forEach(function(it) { (groups[it.group] = groups[it.group] || []).push(it); });
+
     Object.keys(groups)
-      .sort(function(a, b) { return revAgg(groups[b]).end - revAgg(groups[a]).end; })
-      .forEach(function(g) {
-        var gid = "t|" + type + "|g|" + g;
-        nodes.push({ id: gid, parent: "t|" + type, level: 1, label: g, items: groups[g] });
-        groups[g].slice().sort(function(a, b) { return b.end6 - a.end6; }).forEach(function(it, i) {
-          nodes.push({ id: gid + "|i|" + i, parent: gid, level: 2,
-                       label: it.itemName || it.itemCode, items: [it], item: it });
-        });
+      .map(function(g) { return { label: g, items: groups[g], agg: revAgg(groups[g]) }; })
+      .sort(cmp)
+      .forEach(function(gn) {
+        var gid = "t|" + type + "|g|" + gn.label;
+        nodes.push({ id: gid, parent: "t|" + type, level: 1, label: gn.label, items: gn.items });
+
+        gn.items
+          .map(function(it) { return { label: it.itemName || it.itemCode, item: it, agg: revItemAgg(it) }; })
+          .sort(cmp)
+          .forEach(function(inode, i) {
+            nodes.push({ id: gid + "|i|" + i, parent: gid, level: 2,
+                         label: inode.label, items: [inode.item], item: inode.item });
+          });
       });
   });
   return nodes;
+}
+
+// 품목 하나를 집계 형태로 (정렬·렌더가 같은 구조를 쓰도록)
+function revItemAgg(it) {
+  return { end: it.end6, delta: it.delta, mos: it.mos3, hist: it.hist, fExc: it.fExc,
+           sale: it.sale6, cc: it.cc6, buy: it.buy6, prod: it.prod6 };
 }
 
 // 조상이 하나라도 접혀 있으면 안 보인다 (부모만 보면 유형을 접었는데 품목이 남는다)
@@ -548,10 +595,34 @@ function revVisible(n, byId) {
 }
 function revRowHead(n, hasKid) {
   var open = state.revOpen.has(n.id);
+  // 품목 행에는 품목코드를 앞에 — 담당자가 SAP에서 바로 찾을 수 있어야 한다
+  var code = n.item
+    ? "<span class='rv-code'>" + escapeHtml(n.item.itemCode) + "</span> "
+    : "";
   return "<td class='rv-name'><span class='rv-tw'>" +
     (hasKid ? "<button class='rv-tog' data-rvtog='" + escapeHtml(n.id) + "'>" + (open ? "−" : "+") + "</button>"
             : "<span class='rv-tog rv-tog-x'></span>") +
-    escapeHtml(n.label) + "</span></td>";
+    code + escapeHtml(n.label) + "</span></td>";
+}
+
+// 정렬 가능한 헤더 — 클릭하면 내림차순 ↔ 오름차순
+function revTh(key, label, cls) {
+  var s  = state.revSort || {};
+  var on = s.key === key;
+  var ar = on ? (s.dir < 0 ? "▼" : "▲") : "";
+  return "<th class='rv-th-sort " + (cls || "") + (on ? " rv-th-on" : "") +
+    "' data-rvsort='" + key + "'>" + label +
+    "<span class='rv-th-ar'>" + ar + "</span></th>";
+}
+
+// 담당자 의견 — 회의 전에 미리 채운다. AI가 모르는 맥락(전략비축 등)이 들어가는 자리.
+function revOpinionCell(n) {
+  if (!n.item) return "<td class='rv-band'></td>";
+  var v = (state.revOpinion || {})[n.item.itemCode] || "";
+  return "<td class='rv-band rv-op-cell'>" +
+    "<input class='rv-op-in' data-rvop='" + escapeHtml(n.item.itemCode) + "' " +
+    "value='" + escapeHtml(v) + "' placeholder='의견 입력' />" +
+    "</td>";
 }
 
 // ── 요약 뷰 ───────────────────────────────────────────────────────────────────
@@ -607,17 +678,19 @@ function revSumTable(tree, T) {
       "<td class='rv-n rv-mut'>" + pct.toFixed(1) + "%</td>" +
       "<td class='rv-n rv-gsep rv-band'>" + revMos(a.mos) + "</td>" +
       "<td class='rv-band'>" + (cause || "<span class='rv-mut'>-</span>") + "</td>" +
+      revOpinionCell(n) +
       "<td class='rv-n rv-gsep'>" + revSpark(a.hist) + "</td></tr>";
   });
 
   return "<table class='rv-tbl'><thead><tr>" +
     "<th class='rv-th-name'>구분</th>" +
-    "<th class='rv-gsep'>6월말 재고금액<small>억</small></th>" +
-    "<th>전월대비</th>" +
-    "<th class='rv-th-pct'>증가 기여도</th>" +
-    "<th>재고금액 비중</th>" +
-    "<th class='rv-gsep rv-band'>재고월수</th>" +
+    revTh("end",     "6월말 재고금액<small>억</small>", "rv-gsep") +
+    revTh("delta",   "전월대비") +
+    revTh("contrib", "증가 기여도", "rv-th-pct") +
+    revTh("share",   "재고금액 비중") +
+    revTh("mos",     "재고월수", "rv-gsep rv-band") +
     "<th class='rv-band rv-th-cause'>6월 증가 원인</th>" +
+    "<th class='rv-band rv-th-op'>담당자 의견</th>" +
     "<th class='rv-gsep'>1~6월 추이</th></tr></thead>" +
     "<tbody>" + rows + revFooterSum(T) + "</tbody></table>";
 }
@@ -655,8 +728,8 @@ function revMonthTable(tree, T) {
   var fd = T.fcstDays(T.exc);
 
   var head = T.months.map(function(m, i) {
-    return "<th class='" + (i === 0 || i === 6 ? "rv-gsep " : "") + (i >= 6 ? "rv-band" : "") + "'>" +
-      monthLabel(m) + (i === 6 ? "<small>전망</small>" : "") + "</th>";
+    var cls = (i === 0 || i === 6 ? "rv-gsep " : "") + (i >= 6 ? "rv-band" : "");
+    return revTh("m" + i, monthLabel(m) + (i === 6 ? "<small>전망</small>" : ""), cls);
   }).join("");
 
   var rows = "";
@@ -706,7 +779,7 @@ function revAdjRow(label, cur, prev, total, headDelta, note) {
     "<td class='rv-n'>" + (d !== null ? revDelta(d) : "<span class='rv-mut'>-</span>") + "</td>" +
     "<td class='rv-n'>" + revContrib(c) + "</td>" +
     "<td class='rv-n rv-mut'>" + pct + "</td>" +
-    "<td colspan='3' class='rv-mut rv-l-note rv-gsep'>" + note + "</td></tr>";
+    "<td colspan='4' class='rv-mut rv-l-note rv-gsep'>" + note + "</td></tr>";
 }
 // 조정행 4개(재공품·나보타·미착품·평가충당금)가 다 있어야 표가 닫힌다.
 // 하나라도 빠지면 기여도 합이 100%가 안 된다 — 실제로 재공품이 빠져 9.9억이 안 맞았다.
@@ -724,8 +797,8 @@ function revFooterSum(T) {
       "<td class='rv-n'>" + revDelta(hd) + "</td>" +
       "<td class='rv-n'><b>100%</b></td>" +
       "<td class='rv-n'><b>100%</b></td>" +
-      "<td class='rv-n rv-gsep'>" + (T.histDays[5] ? T.histDays[5].toFixed(1) + "일" : "-") + "</td>" +
-      "<td colspan='2' class='rv-mut'>결산_RAW 합계와 일치</td></tr>";
+      "<td class='rv-n rv-gsep'>" + (T.histDays[5] ? T.histDays[5].toFixed(0) + "일" : "-") + "</td>" +
+      "<td colspan='3' class='rv-mut'>결산_RAW 합계와 일치 · 기여도 합계 100%</td></tr>";
 }
 
 // ── 메인 렌더 ─────────────────────────────────────────────────────────────────
@@ -793,6 +866,22 @@ function renderInventoryReview() {
   var D     = reviewDiagnosis();
   var tab   = state.revTab  || "fg";
   var view  = state.revView || "sum";
+
+  // 처음 열 때는 유형 전체 + 증가 기여도 상위 3개 품목군을 펼쳐둔다.
+  // 다 접힌 채로 열면 유형 7줄만 보이고 정작 이번 달 주범(thynC)이 안 보인다.
+  // 회의를 켜자마자 눈앞에 있어야 한다. (한 번만 — 사용자가 접으면 그대로 둔다)
+  if (!state.revOpenInit) {
+    state.revOpenInit = true;
+    TYPE_ORDER.forEach(function(t) { state.revOpen.add("t|" + t); });
+    (D.topGroups || []).slice(0, 3).forEach(function(g) {
+      var name = g[0];
+      items.some(function(it) {
+        if (it.group !== name) return false;
+        state.revOpen.add("t|" + it.type + "|g|" + name);
+        return true;
+      });
+    });
+  }
 
   var jun = T.hist[5], may = T.hist[4];
   var junD = T.histDays[5], mayD = T.histDays[4];
@@ -886,9 +975,11 @@ function renderInventoryReview() {
       "</div>";
   }
 
-  var tree  = buildReviewTree(items, tab);
+  var tree  = buildReviewTree(items, tab, T);
   var table = (view === "mon") ? revMonthTable(tree, T) : revSumTable(tree, T);
 
+  // 회의 중 담당자가 "우리 품목 어디 있냐"고 묻는다. 검색창 하나가 시간을 크게 줄인다.
+  var hits = tree.filter(function(n) { return n.level === 2; }).length;
   var bar =
     "<div class='rv-bar'>" +
       "<div class='rv-seg'>" +
@@ -898,6 +989,14 @@ function renderInventoryReview() {
       "<div class='rv-seg'>" +
         "<button data-rvview='sum'" + (view === "sum" ? " class='on'" : "") + ">요약 뷰</button>" +
         "<button data-rvview='mon'" + (view === "mon" ? " class='on'" : "") + ">월별 뷰</button>" +
+      "</div>" +
+      "<div class='rv-search'>" +
+        "<input id='revSearch' value='" + escapeHtml(state.revSearch || "") +
+          "' placeholder='품목코드 · 품목명 · 품목군 검색' />" +
+        (state.revSearch
+          ? "<span class='rv-search-n'>" + hits + "품목</span>" +
+            "<button class='rv-search-x' id='revSearchX'>✕</button>"
+          : "") +
       "</div>" +
     "</div>";
 
@@ -1111,5 +1210,46 @@ function bindInventoryReview() {
     if (tb) { state.revTab = tb.dataset.rvtab; render("inventory-forecast"); return; }
     var vw = e.target.closest("[data-rvview]");
     if (vw) { state.revView = vw.dataset.rvview; render("inventory-forecast"); return; }
+
+    // 정렬 — 같은 컬럼을 다시 누르면 방향이 바뀐다
+    var th = e.target.closest("[data-rvsort]");
+    if (th) {
+      var k = th.dataset.rvsort;
+      var s = state.revSort || {};
+      state.revSort = (s.key === k) ? { key: k, dir: -s.dir } : { key: k, dir: -1 };
+      render("inventory-forecast");
+      return;
+    }
+    if (e.target.id === "revSearchX") {
+      state.revSearch = "";
+      render("inventory-forecast");
+      return;
+    }
+  });
+
+  // 검색 — 입력할 때마다 걸러진다. 렌더 후 커서를 되돌려야 타이핑이 끊기지 않는다.
+  var sb = document.getElementById("revSearch");
+  if (sb) {
+    sb.addEventListener("input", function() {
+      state.revSearch = sb.value;
+      var pos = sb.selectionStart;
+      render("inventory-forecast");
+      var nb = document.getElementById("revSearch");
+      if (nb) { nb.focus(); nb.setSelectionRange(pos, pos); }
+    });
+  }
+
+  // 담당자 의견 — 입력 즉시 상태에 담고, 포커스를 벗어날 때 저장한다.
+  // 회의 전에 미리 채워두는 자리다. AI가 모르는 맥락(전략비축 등)이 여기 들어간다.
+  root.querySelectorAll("[data-rvop]").forEach(function(el) {
+    el.addEventListener("input", function() {
+      state.revOpinion = state.revOpinion || {};
+      var v = el.value.trim();
+      if (v) state.revOpinion[el.dataset.rvop] = v;
+      else   delete state.revOpinion[el.dataset.rvop];
+    });
+    el.addEventListener("change", function() {
+      if (typeof saveMeetingState === "function") saveMeetingState();
+    });
   });
 }

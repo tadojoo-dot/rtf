@@ -61,6 +61,10 @@ const state = {
   revTab:  "fg",          // 재고 총괄장: "fg"(제·상품) | "mat"(원부자재)
   revView: "sum",         // "sum"(요약 뷰) | "mon"(월별 뷰)
   revOpen: new Set(),     // 펼쳐진 트리 노드 id (유형 > 품목군 > 품목)
+  revOpenInit: false,     // 첫 렌더에서 유형 + 증가 상위 3개 품목군을 자동 펼침
+  revSort: { key: "contrib", dir: -1 },  // 기본 = 증가 기여도 내림차순 (열자마자 주범이 맨 위)
+  revSearch: "",          // 품목 검색 (코드·품목명·품목군)
+  revOpinion: {},         // 담당자 의견: 품목코드 → 문자열. 회의 전에 미리 채운다.
   rtfExpanded: false,
   expandedItemGroups: new Set(),
   rtfDisplayMode: "qty",
