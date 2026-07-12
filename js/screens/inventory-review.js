@@ -421,6 +421,64 @@ function buildCauseMap() {
   return map;
 }
 
+var CAUSE_CLS = { under: "rv-b-danger", noplan: "rv-b-danger" };
+
+// 품목 행 — 그 품목의 원인 배지
+function revCauseBadges(c, item) {
+  var out = "";
+  if (c && c.causes.length) {
+    out += c.causes.map(function(x) {
+      return "<span class='rv-badge " + (CAUSE_CLS[x.k] || "rv-b-warn") + "'>" +
+        escapeHtml(x.label) + "</span>";
+    }).join("");
+    if (Number.isFinite(c.cv)) out += revCvBadge(c.cv);
+  }
+  // 공용 자재 — 소요량 최대 품목군에 전액 귀속했음을 드러낸다.
+  // 숨기지 않아야 "왜 여기 넣었냐"에 답할 수 있다.
+  if (item && item.sharedN > 1) {
+    out += "<span class='rv-badge rv-b-shared' title='" +
+      escapeHtml(item.shared.join(" · ")) + "'>공용 " + item.sharedN + "</span>";
+  }
+  return out || "<span class='rv-mut'>-</span>";
+}
+
+// 품목군·유형 행 — 하위 품목의 원인을 증가액 기준으로 집계해 대표 원인을 보여준다.
+// 원인마다 "그 원인에 해당하는 품목들의 증가액 합"을 달아, 어느 원인이 얼마나 큰지 보이게 한다.
+function revGroupCauseBadges(items, causes, agg) {
+  if (!agg || agg.delta <= 5e8) return "<span class='rv-mut'>-</span>";
+
+  var byCause = {};   // k → { label, amt }
+  items.forEach(function(it) {
+    if (it.delta <= 0) return;
+    var c = causes.get(it.itemCode);
+    if (!c || !c.causes.length) return;
+    c.causes.forEach(function(x) {
+      var b = byCause[x.k];
+      if (!b) { b = byCause[x.k] = { k: x.k, amt: 0, n: 0 }; }
+      b.amt += it.delta;
+      b.n++;
+    });
+  });
+
+  var LABEL = { surge: "입고급증", under: "판매부진", moq: "MOQ 제약",
+                "new": "신규진입", noplan: "하반기 계획없음" };
+  var list = Object.keys(byCause).map(function(k) { return byCause[k]; })
+    .sort(function(a, b) { return b.amt - a.amt; })
+    .slice(0, 3);
+
+  if (!list.length) {
+    // 원인이 하나도 안 잡히면 최소한 입고 경로만 — "원인 미상"이라고 쓰지 않는다
+    var via = agg.buy >= agg.prod ? "구매" : "생산";
+    return "<span class='rv-badge rv-b-warn'>" + via + "입고 " +
+           revMoney(Math.max(agg.buy, agg.prod)) + "억</span>";
+  }
+  return list.map(function(b) {
+    return "<span class='rv-badge " + (CAUSE_CLS[b.k] || "rv-b-warn") + "'>" +
+      escapeHtml(LABEL[b.k] || b.k) + " <b>+" + revMoney(b.amt) + "억</b>" +
+      (b.n > 1 ? " <small>" + b.n + "품목</small>" : "") + "</span>";
+  }).join("");
+}
+
 // 수요변동 배지 — % 로 쓴다. "CV 0.06"은 설명이 필요하지만 "수요변동 6%"는 그냥 읽힌다.
 function revCvBadge(cv) {
   if (!Number.isFinite(cv)) return "";
@@ -588,12 +646,16 @@ function revDaysDelta(d) {
   if (!Number.isFinite(d)) return "";
   return "<span class='" + (d > 0 ? "rv-up" : "rv-down") + "'>" + (d > 0 ? "+" : "") + d.toFixed(1) + "일</span>";
 }
-// 재고월수 — 24개월↑ 위험 / 12~24 주의 / 미만 정상. 출고 0은 ∞(소진 불가).
+// 재고일수(3평판 기준) — 재고금액 ÷ 최근 3개월 평균 출고 × 30일.
+// 전사 재고일수(140일)는 누적 매출원가가 분모라 방식이 다르다. 그래서 컬럼명에 (3평판)을 붙인다.
+//   360일(1년) 초과 = 주의 / 720일(2년) 초과 = 위험 / 출고 0 = ∞(소진 불가)
 function revMos(mos) {
   if (mos === null || mos === undefined) return "<span class='rv-mut'>-</span>";
   if (mos === Infinity) return "<span class='rv-mos rv-mos-x'>∞</span>";
-  var cls = mos >= 24 ? "rv-mos-x" : mos >= 12 ? "rv-mos-w" : "rv-mos-g";
-  return "<span class='rv-mos " + cls + "'>" + (mos >= 100 ? Math.round(mos) : mos.toFixed(1)) + "</span>";
+  var days = mos * 30;
+  var cls = days >= 720 ? "rv-mos-x" : days >= 360 ? "rv-mos-w" : "rv-mos-g";
+  return "<span class='rv-mos " + cls + "'>" +
+    Math.round(days).toLocaleString("ko-KR") + "<small>일</small></span>";
 }
 // 증가 기여도 — 막대로 보여야 크기가 한눈에 들어온다.
 // 증가는 오른쪽(주황), 감소는 왼쪽(초록)으로 뻗는다. 0을 가운데 두면 부호가 눈에 바로 읽힌다.
@@ -748,12 +810,21 @@ function revTh(key, label, cls) {
     "<span class='rv-th-ar'>" + ar + "</span></th>";
 }
 
-// 담당자 의견 — 회의 전에 미리 채운다. AI가 모르는 맥락(전략비축 등)이 들어가는 자리.
+// 의견 — 회의 전에 미리 채운다. AI가 데이터로 알 수 없는 맥락(전략비축 등)이 들어가는 자리.
+// 품목뿐 아니라 유형·품목군 행에서도 쓸 수 있어야 한다. 회의에서는 대부분 품목군 단위로
+// 얘기하고, 품목까지 펼치지 않은 상태에서 의견을 남기고 싶어 한다.
+//   품목   → 키 = 품목코드
+//   품목군 → 키 = "g|사업부 / 품목군"
+//   유형   → 키 = "t|유형"
+function revOpinionKey(n) {
+  if (n.item) return n.item.itemCode;
+  return (n.level === 0 ? "t|" : "g|") + n.label;
+}
 function revOpinionCell(n) {
-  if (!n.item) return "<td class='rv-band'></td>";
-  var v = (state.revOpinion || {})[n.item.itemCode] || "";
+  var k = revOpinionKey(n);
+  var v = (state.revOpinion || {})[k] || "";
   return "<td class='rv-band rv-op-cell'>" +
-    "<input class='rv-op-in' data-rvop='" + escapeHtml(n.item.itemCode) + "' " +
+    "<input class='rv-op-in' data-rvop='" + escapeHtml(k) + "' " +
     "value='" + escapeHtml(v) + "' placeholder='의견 입력' />" +
     "</td>";
 }
@@ -789,28 +860,11 @@ function revSumTable(tree, T) {
     else if (n.level === 1 && a.delta > 50e8)          cls = " rv-hot";
     else if (a.mos === Infinity && a.end > 10e8)       cls = " rv-crit";
 
-    // "왜 늘었나" — 담당자가 설명하기 전에 화면이 먼저 답한다
-    var cause = "";
-    if (n.item) {
-      var c = causes.get(n.item.itemCode);
-      if (c && c.causes.length) {
-        cause += c.causes.map(function(x) {
-          var cls = x.k === "under" || x.k === "noplan" ? "rv-b-danger" : "rv-b-warn";
-          return "<span class='rv-badge " + cls + "'>" + escapeHtml(x.label) + "</span>";
-        }).join("");
-        if (Number.isFinite(c.cv)) cause += revCvBadge(c.cv);
-      }
-      // 공용 자재 — 소요량 최대 품목군에 전액 귀속했음을 드러낸다.
-      // 숨기지 않아야 "왜 여기 넣었냐"에 답할 수 있다.
-      if (n.item.sharedN > 1) {
-        cause += "<span class='rv-badge rv-b-shared' title='" +
-          escapeHtml(n.item.shared.join(" · ")) + "'>공용 " + n.item.sharedN + "</span>";
-      }
-    } else if (a.delta > 5e8) {
-      // 집계 행 — 구매입고인지 생산입고인지만
-      var via = a.buy >= a.prod ? "구매" : "생산";
-      cause += "<span class='rv-badge rv-b-warn'>" + via + "입고 " + revMoney(Math.max(a.buy, a.prod)) + "억</span>";
-    }
+    // "왜 늘었나" — 담당자가 설명하기 전에 화면이 먼저 답한다.
+    // 품목군·유형 행에도 표시한다. 회의에서는 대부분 품목군 단위로 얘기하고,
+    // 품목까지 펼치지 않은 상태에서도 원인이 보여야 한다.
+    var cause = n.item ? revCauseBadges(causes.get(n.item.itemCode), n.item)
+                       : revGroupCauseBadges(n.items, causes, a);
 
     rows += "<tr class='rv-l" + n.level + cls + "'>" + revRowHead(n, hasKid) +
       "<td class='rv-n rv-gsep'><b>" + revMoney(a.end) + "</b></td>" +
@@ -818,20 +872,20 @@ function revSumTable(tree, T) {
       "<td class='rv-n'>" + revContrib(contrib) + "</td>" +
       "<td class='rv-n rv-mut'>" + pct.toFixed(1) + "%</td>" +
       "<td class='rv-n rv-gsep rv-band'>" + revMos(a.mos) + "</td>" +
-      "<td class='rv-band'>" + (cause || "<span class='rv-mut'>-</span>") + "</td>" +
+      "<td class='rv-band rv-cause-cell'>" + cause + "</td>" +
       revOpinionCell(n) +
       "<td class='rv-n rv-gsep'>" + revSpark(a.hist) + "</td></tr>";
   });
 
   return "<table class='rv-tbl'><thead><tr>" +
     "<th class='rv-th-name'>구분</th>" +
-    revTh("end",     "6월말 재고금액<small>억</small>", "rv-gsep") +
+    revTh("end",     "6월말 재고금액 (억)", "rv-gsep rv-th-amt") +
     revTh("delta",   "전월대비") +
     revTh("contrib", "증가 기여도", "rv-th-pct") +
     revTh("share",   "재고금액 비중") +
-    revTh("mos",     "재고월수", "rv-gsep rv-band") +
+    revTh("mos",     "재고일수 (3평판)", "rv-gsep rv-band rv-th-days") +
     "<th class='rv-band rv-th-cause'>6월 증가 원인</th>" +
-    "<th class='rv-band rv-th-op'>담당자 의견</th>" +
+    "<th class='rv-band rv-th-op'>의견</th>" +
     "<th class='rv-gsep'>1~6월 추이</th></tr></thead>" +
     "<tbody>" + rows + revFooterSum(T) + "</tbody></table>";
 }
@@ -841,6 +895,12 @@ function revSumTable(tree, T) {
 //   재고금액 (굵게) / 재고일수 (작게, 회색) / 전월대비 (▲▽ + 색)
 // 전월대비는 뱃지가 아니라 화살표다 — 12개월 × 수백 행에 뱃지를 달면 알약밭이 되어
 // 정작 강조해야 할 것(진단 뱃지)이 묻힌다. 뱃지는 드물게 나타나는 것에만 쓴다.
+// 월 라벨 — 공용 monthLabel()은 1월에만 "2026년 1월"처럼 연도를 붙인다(연 경계 표시용).
+// 총괄장은 1~12월이 한 해 안에서 이어지므로 그 컬럼만 넓어지고 줄이 틀어진다. 그냥 "1월".
+function revMonthLabel(m) {
+  return Number(m.slice(5, 7)) + "월";
+}
+
 // 월별 뷰는 스캔용이다 — 소수점은 눈만 어지럽힌다. 전부 정수 + 단위 명시.
 function revEok(won) {
   if (!Number.isFinite(won)) return "-";
@@ -868,9 +928,11 @@ function revMonthTable(tree, T) {
   // 나눠 쓸 수 없으므로(계획 파일이 77%만 커버) 개별 행에는 표시하지 않는다.
   var fd = T.fcstDays(T.exc);
 
+  // 전망 구간은 "전망" 글자를 붙이지 않고 색으로 구분한다.
+  // 7월에만 글자를 넣으면 그 컬럼만 헤더가 높아져 줄이 틀어진다.
   var head = T.months.map(function(m, i) {
-    var cls = (i === 0 || i === 6 ? "rv-gsep " : "") + (i >= 6 ? "rv-band" : "");
-    return revTh("m" + i, monthLabel(m) + (i === 6 ? "<small>전망</small>" : ""), cls);
+    var cls = (i === 0 || i === 6 ? "rv-gsep " : "") + (i >= 6 ? "rv-fcst" : "");
+    return revTh("m" + i, revMonthLabel(m), cls);
   }).join("");
 
   var rows = "";
@@ -888,7 +950,7 @@ function revMonthTable(tree, T) {
     }
     for (var j = 0; j < 6; j++) {
       var prev = j === 0 ? a.hist[5] : a.fExc[j - 1];
-      cells += revMonCell(a.fExc[j], null, prev, "rv-band" + (j === 0 ? " rv-gsep" : ""));
+      cells += revMonCell(a.fExc[j], null, prev, "rv-fcst" + (j === 0 ? " rv-gsep" : ""));
     }
     rows += "<tr class='rv-l" + n.level + cls + "'>" + revRowHead(n, hasKid) + cells + "</tr>";
   });
@@ -900,7 +962,7 @@ function revMonthTable(tree, T) {
   });
   T.exc.forEach(function(v, i) {
     var prev = i === 0 ? T.hist[5] : T.exc[i - 1];
-    tot += revMonCell(v, fd[i], prev, "rv-band" + (i === 0 ? " rv-gsep" : ""));
+    tot += revMonCell(v, fd[i], prev, "rv-fcst" + (i === 0 ? " rv-gsep" : ""));
   });
   tot += "</tr>";
 
@@ -1008,21 +1070,8 @@ function renderInventoryReview() {
   var tab   = state.revTab  || "fg";
   var view  = state.revView || "sum";
 
-  // 처음 열 때는 유형 전체 + 증가 기여도 상위 3개 품목군을 펼쳐둔다.
-  // 다 접힌 채로 열면 유형 7줄만 보이고 정작 이번 달 주범(thynC)이 안 보인다.
-  // 회의를 켜자마자 눈앞에 있어야 한다. (한 번만 — 사용자가 접으면 그대로 둔다)
-  if (!state.revOpenInit) {
-    state.revOpenInit = true;
-    TYPE_ORDER.forEach(function(t) { state.revOpen.add("t|" + t); });
-    (D.topGroups || []).slice(0, 3).forEach(function(g) {
-      var name = g[0];
-      items.some(function(it) {
-        if (it.group !== name) return false;
-        state.revOpen.add("t|" + it.type + "|g|" + name);
-        return true;
-      });
-    });
-  }
+  // 기본은 전부 접힘 — 유형 행만 보인다. 증가 원인·의견이 유형·품목군 행에도 표시되므로
+  // 펼치지 않아도 무엇이 문제인지 읽힌다. 필요할 때만 파고든다.
 
   var jun = T.hist[5], may = T.hist[4];
   var junD = T.histDays[5], mayD = T.histDays[4];
@@ -1144,6 +1193,12 @@ function renderInventoryReview() {
         "<button data-rvview='sum'" + (view === "sum" ? " class='on'" : "") + ">요약 뷰</button>" +
         "<button data-rvview='mon'" + (view === "mon" ? " class='on'" : "") + ">월별 뷰</button>" +
       "</div>" +
+      (view === "mon"
+        ? "<div class='rv-mon-legend'>" +
+            "<span><i class='rv-lg-act'></i>1~6월 실적</span>" +
+            "<span><i class='rv-lg-fc'></i>7~12월 전망</span>" +
+          "</div>"
+        : "") +
       "<div class='rv-search'>" +
         "<input id='revSearch' value='" + escapeHtml(state.revSearch || "") +
           "' placeholder='품목코드 · 품목명 · 품목군 검색' />" +
@@ -1175,8 +1230,10 @@ function renderInventoryReview() {
       "<div class='rv-note'>" +
         "<b>증가 기여도</b> = 그 행의 증가액 ÷ 이번 달 총 증가액 (누가 이번 증가를 만들었나) · " +
         "<b>재고금액 비중</b> = 그 행의 재고 ÷ 공시기준 총재고 (규모가 얼마나 되나)<br>" +
-        "<b>재고월수</b> = 6월말 재고 ÷ 최근 3개월 평균 출고 " +
-        "(제·상품 = <b>3평판</b>(판매금액) / 원부자재 = 생산출고. 코스트센터출고는 판매가 아니므로 제외)<br>" +
+        "<b>재고일수 (3평판)</b> = 6월말 재고 ÷ 최근 3개월 평균 출고 × 30일 " +
+        "(제·상품 = <b>3평판</b>(판매금액) / 원부자재 = 생산출고). " +
+        "360일 초과 = 주의 · 720일 초과 = 위험 · <b>∞</b> = 최근 3개월 출고 0(소진 불가). " +
+        "<span class='rv-mut'>※ 아래 총재고 행의 재고일수(140일)는 <b>누적 매출원가</b>가 분모라 산식이 다릅니다.</span><br>" +
         "<b>재고일수</b> = 재고금액 ÷ <b>누적 매출원가</b> × <b>누적일수</b> (연초부터 누적 — 회사 마감 방식). " +
         "실적 구간(1~6월)은 결산 매출원가를 그대로 씁니다. " +
         "전망 구간(7~12월)은 매출원가가 마감 후에나 확정되므로 <b>판매계획 × 표준원가</b>로 추정하고, " +
@@ -1298,7 +1355,7 @@ function revDrawChart() {
 
   _revChart = new Chart(cv.getContext("2d"), {
     data: {
-      labels: T.months.map(monthLabel),
+      labels: T.months.map(revMonthLabel),
       datasets: [
         bar("실적(결산)",    actual, CSS("--muted-2"), "s"),
         bar("과잉감축 후",   final_, CSS("--sc-exc"),  "s"),

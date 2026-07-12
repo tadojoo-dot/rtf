@@ -113,10 +113,14 @@
                    padding: 11px 12px; white-space: nowrap;
                    border-bottom: 2px solid var(--line-2);
                    border-left: 1px solid var(--line); }
-.rv-tbl thead th:first-child { text-align: left; border-left: 0; }
+/* 헤더는 전부 가운데. 본문 첫 컬럼만 트리 들여쓰기 때문에 왼쪽 정렬을 유지한다. */
+.rv-tbl thead th:first-child { text-align: center; border-left: 0; }
 .rv-th-name  { min-width: 300px; }
-.rv-th-pct   { min-width: 120px; }
-.rv-th-cause { min-width: 190px; text-align: left !important; }
+.rv-th-pct   { min-width: 130px; }
+/* 헤더가 두 줄로 접히지 않게 — "6월말 재고금액 (억)"이 한 행에 들어와야 한다 */
+.rv-th-amt   { min-width: 150px; }
+.rv-th-cause { min-width: 280px; }
+.rv-th-op    { min-width: 200px; }
 
 .rv-tbl tbody td { height: 42px; padding: 0 12px;
                    text-align: center; vertical-align: middle; white-space: nowrap;
@@ -128,6 +132,17 @@
 /* 컬럼 그룹 구분 — 세로 영역이 안 갈리면 눈이 행을 놓친다 */
 .rv-gsep { border-left: 2px solid var(--line-2) !important; }
 .rv-band { background: var(--surface-2); }
+
+/* 전망 구간 — "전망" 글자를 7월에만 붙이면 그 컬럼만 헤더가 높아져 줄이 틀어진다.
+   글자 대신 색으로 구분한다. */
+.rv-fcst { background: var(--brand-wash); }
+.rv-tbl thead th.rv-fcst { background: var(--brand-wash); color: var(--brand); }
+.rv-mon-legend { display: flex; align-items: center; gap: 14px;
+                 font-size: 12.5px; color: var(--muted); }
+.rv-mon-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px;
+                   margin-right: 6px; vertical-align: -2px; border: 1px solid var(--line); }
+.rv-lg-act { background: var(--surface); }
+.rv-lg-fc  { background: var(--brand-wash); border-color: var(--brand) !important; }
 
 /* 위계: 유형(lv0) → 품목군(lv1) → 품목(lv2) */
 .rv-l0 td { background: var(--surface-2); font-weight: 800; font-size: 15px; height: 48px;
@@ -204,9 +219,13 @@
 /* 수요변동 안정 — "수요가 불안정해서 쌓았다"는 변명을 막는 근거라 초록으로 */
 .rv-b-good   { background: var(--good-wash, #e6f0ea); color: var(--good);
                border: 1px solid var(--good); }
-/* 진단 배지가 여러 개 붙으므로 줄바꿈을 허용한다 */
-.rv-th-cause { min-width: 260px; }
-.rv-tbl tbody td.rv-band:has(.rv-badge) { white-space: normal; padding: 6px 10px; }
+.rv-badge b     { font-weight: 800; }
+.rv-badge small { font-weight: 600; opacity: .8; }
+
+/* 증가 원인 — 배지가 여러 개 붙으므로 줄바꿈을 허용하고, 셀 안에서 가운데 정렬 */
+.rv-cause-cell { white-space: normal !important; padding: 7px 10px !important;
+                 text-align: center; }
+.rv-cause-cell .rv-badge { margin: 2px 3px; }
 
 .rv-spark { vertical-align: middle; }
 
