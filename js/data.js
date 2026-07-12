@@ -193,6 +193,9 @@ function mapTargetInvRows(rows) {
     var moqCol   = findGroupCol(function(hv) { return hv === "MOQ"; });
     var cycleCol = findGroupCol(function(hv) { return hv.indexOf("공급주기") >= 0; });
     var avgOutCol= findGroupCol(function(hv) { return hv.indexOf("12개월 평균") >= 0; });
+    // 수요변동(CV) = 표준편차 ÷ 12개월 평균 출고.
+    // "수요가 불안정해서 재고를 쌓았다"는 변명을 이 숫자 하나가 막는다.
+    var sdCol    = findGroupCol(function(hv) { return hv === "표준편차"; });
     if (optCol < 0) break; // 이 레이아웃 아님 → 기존 로직으로
     // 서브헤더 행(월라벨 "YY.M"·S/F평균)도 "내역/자재" 행 자체에 있을 수도, 바로 다음 행에 있을 수도 있음 —
     // 월라벨 패턴이 실제로 있는 쪽을 채택.
@@ -256,6 +259,7 @@ function mapTargetInvRows(rows) {
         moq:          moqCol >= 0 ? cleanNumber(row[moqCol]) : null,
         cycleMonths:  cycleCol >= 0 ? cleanNumber(row[cycleCol]) : null,
         avg12OutQty:  avgOutCol >= 0 ? cleanNumber(row[avgOutCol]) : null,
+        stdDev:       sdCol >= 0 ? cleanNumber(row[sdCol]) : null,   // 수요 표준편차 → CV 산출용
       };
     }).filter(function(r) { return r !== null; });
   }

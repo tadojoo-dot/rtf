@@ -52,6 +52,10 @@
          border-left: 4px solid var(--warn); border-radius: 0 10px 10px 0;
          padding: 14px 18px; font-size: 14.5px; line-height: 1.75; color: var(--ink-2); }
 .rv-op b { color: var(--ink); font-weight: 800; }
+/* "이것만 보면 된다" — 4시간에 500품목을 다 볼 수 없다. AI가 먼저 골라준다. */
+.rv-op-focus { display: block; margin-top: 8px; padding-top: 8px;
+               border-top: 1px dashed var(--line); color: var(--brand); font-weight: 600; }
+.rv-op-focus b { color: var(--brand); }
 
 /* ── 차트 ── */
 .rv-card-hd { padding: 14px 18px 12px; border-bottom: 1px solid var(--line);
@@ -197,6 +201,12 @@
 /* 공용 자재 — 소요량 최대 품목군에 전액 귀속했음을 드러낸다 (마우스 올리면 사용처 전체) */
 .rv-b-shared { background: var(--surface-2); color: var(--muted);
                border: 1px solid var(--line-2); cursor: help; }
+/* 수요변동 안정 — "수요가 불안정해서 쌓았다"는 변명을 막는 근거라 초록으로 */
+.rv-b-good   { background: var(--good-wash, #e6f0ea); color: var(--good);
+               border: 1px solid var(--good); }
+/* 진단 배지가 여러 개 붙으므로 줄바꿈을 허용한다 */
+.rv-th-cause { min-width: 260px; }
+.rv-tbl tbody td.rv-band:has(.rv-badge) { white-space: normal; padding: 6px 10px; }
 
 .rv-spark { vertical-align: middle; }
 

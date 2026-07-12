@@ -316,6 +316,144 @@ function reviewForecastCogs() {
   return byMonth.map(function(v) { return v > 0 ? v * COGS_COVERAGE_K : null; });
 }
 
+// ── 증가 원인 진단 ────────────────────────────────────────────────────────────
+//
+// 증감 = 입고 − 출고.  그러니 원인은 둘뿐이다: 많이 들어왔거나, 안 팔렸거나.
+// 각각의 "왜"를 가진 데이터로 증명한다. 담당자가 설명하기 전에 화면이 이미 답을 말한다.
+//
+//   입고 측  ① 입고급증 — 6월 입고가 최근 3개월 평균의 N배
+//            ② MOQ 제약 — 최소발주단위가 월 판매의 N개월치라 안 쌓일 수가 없다
+//            ③ 신규진입 — 1월 재고 0에서 시작
+//   출고 측  ④ 판매부진 — 판매계획 대비 실적 미달 (판매계획 파일 1~6월 계획 vs 실적)
+//            ⑤ 계획없음 — 하반기 판매계획이 아예 없다
+//   근거     ⑥ 수요변동% — CV(표준편차÷평균). "수요가 불안정해서 쌓았다"는 변명을 막는다
+//
+// 원인이 안 잡히면 비워둔다. "원인 미상"이라고 쓰면 AI가 모른다는 뜻이 되어 신뢰가 깎인다.
+// 코스트센터출고는 재고를 '줄이는' 출고라 증가 원인이 아니다 — 여기서 다루지 않는다.
+
+var CAUSE_SURGE_X   = 2.0;   // 입고급증: 최근 3개월 평균의 2배 초과
+var CAUSE_ACH_LOW   = 0.8;   // 판매부진: 계획 대비 달성률 80% 미만
+var CAUSE_MOQ_M     = 1.5;   // MOQ 제약: 월 판매의 1.5개월치 초과
+var CV_STABLE       = 0.20;  // 수요변동 20% 이하 = 안정
+var CV_VOLATILE     = 0.50;  // 50% 초과 = 불안정
+
+var _causeCache = null, _causeEpoch = -1;
+
+function buildCauseMap() {
+  if (_causeCache && _causeEpoch === (window._renderEpoch || 0)) return _causeCache;
+
+  // 적정재고_RAW — MOQ · 12개월 평균 출고 · 표준편차
+  var ti = new Map();
+  (state.mappedData.target_inv || []).forEach(function(r) {
+    if (r.itemCode) ti.set(r.itemCode, r);
+  });
+
+  // 판매계획 파일 1~6월 계획 vs 실적 (sales_history) — 최근 3개월(4·5·6월) 달성률
+  var RECENT = ["2026-04", "2026-05", "2026-06"];
+  var ach = new Map();   // code → { plan, act }
+  (state.mappedData.sales_history || []).forEach(function(r) {
+    if (!r.itemCode || RECENT.indexOf(r.month) < 0) return;
+    var a = ach.get(r.itemCode);
+    if (!a) { a = { plan: 0, act: 0 }; ach.set(r.itemCode, a); }
+    if (Number.isFinite(r.planQty))   a.plan += r.planQty;
+    if (Number.isFinite(r.actualQty)) a.act  += r.actualQty;
+  });
+
+  // 하반기 판매계획 유무
+  var hasPlan712 = new Set();
+  (state.mappedData.plan_monthly || []).forEach(function(r) {
+    if (r.itemCode && FCST_MONTHS.indexOf(r.month) >= 0 && cleanNumber(r.salesQty) > 0)
+      hasPlan712.add(r.itemCode);
+  });
+
+  var map = new Map();
+  (buildReviewItems() || []).forEach(function(it) {
+    var t = ti.get(it.itemCode) || {};
+    var c = { causes: [], cv: null, ach: null, surge: null, moqM: null };
+
+    // 수요변동 (CV) — 근거로 항상 계산
+    if (t.stdDev > 0 && t.avg12OutQty > 0) c.cv = t.stdDev / t.avg12OutQty;
+
+    // 증가한 품목만 원인을 따진다 (감소는 원인 진단 대상이 아니다)
+    if (it.delta > 3e8) {
+      // ① 입고급증 — 6월 입고가 최근 3개월(3·4·5월) 평균의 몇 배인가
+      var cl = state.closing && state.closing.items.get(it.itemCode);
+      if (cl) {
+        var inSum = 0, inCnt = 0;
+        for (var i = 2; i <= 4; i++) {
+          var mm = cl.mon[i];
+          if (mm) { inSum += mm.buyIn + mm.prodIn; inCnt++; }
+        }
+        var inAvg = inCnt ? inSum / inCnt : 0;
+        var in6   = it.buy6 + it.prod6;
+        if (inAvg > 0 && in6 / inAvg >= CAUSE_SURGE_X) c.surge = in6 / inAvg;
+      }
+      if (c.surge) c.causes.push({ k: "surge", label: "입고급증 " + c.surge.toFixed(1) + "배" });
+
+      // ③ 신규진입
+      if (Number.isFinite(it.hist[0]) && it.hist[0] === 0 && it.end6 > 0)
+        c.causes.push({ k: "new", label: "신규진입" });
+
+      // ④ 판매부진
+      var a = ach.get(it.itemCode);
+      if (a && a.plan > 0) {
+        c.ach = a.act / a.plan;
+        if (c.ach < CAUSE_ACH_LOW)
+          c.causes.push({ k: "under", label: "판매부진 " + Math.round(c.ach * 100) + "%" });
+      }
+
+      // ② MOQ 제약 — 월평균 판매 대비 몇 개월치인가
+      if (t.moq > 0 && t.avg12OutQty > 0) {
+        c.moqM = t.moq / t.avg12OutQty;
+        if (c.moqM > CAUSE_MOQ_M)
+          c.causes.push({ k: "moq", label: "MOQ " + c.moqM.toFixed(1) + "개월치" });
+      }
+
+      // ⑤ 하반기 계획 없음
+      if (it.isFg && !hasPlan712.has(it.itemCode))
+        c.causes.push({ k: "noplan", label: "하반기 계획없음" });
+    }
+    map.set(it.itemCode, c);
+  });
+
+  _causeCache = map;
+  _causeEpoch = (window._renderEpoch || 0);
+  return map;
+}
+
+// 수요변동 배지 — % 로 쓴다. "CV 0.06"은 설명이 필요하지만 "수요변동 6%"는 그냥 읽힌다.
+function revCvBadge(cv) {
+  if (!Number.isFinite(cv)) return "";
+  var pct = Math.round(cv * 100);
+  var tag = cv <= CV_STABLE ? "안정" : (cv > CV_VOLATILE ? "불안정" : "보통");
+  var cls = cv <= CV_STABLE ? "rv-b-good" : (cv > CV_VOLATILE ? "rv-b-shared" : "rv-b-shared");
+  return "<span class='rv-badge " + cls + "' title='수요 표준편차 ÷ 12개월 평균 출고'>" +
+    "수요변동 " + pct + "% · " + tag + "</span>";
+}
+
+// 진단 문장 — 표에는 배지, 팝업·소견에는 문장. 배지는 스캔용, 문장은 설명용.
+function revCauseSentence(it, c) {
+  if (!c || !c.causes.length) return "";
+  var s = [];
+  if (c.surge) s.push("6월 입고가 최근 3개월 평균의 <b>" + c.surge.toFixed(1) + "배</b>입니다");
+  if (c.ach !== null && c.ach < CAUSE_ACH_LOW)
+    s.push("최근 3개월 판매계획 대비 실적이 <b>" + Math.round(c.ach * 100) + "%</b>에 그쳤습니다");
+  if (c.moqM !== null && c.moqM > CAUSE_MOQ_M)
+    s.push("최소발주단위(MOQ)가 월평균 판매의 <b>" + c.moqM.toFixed(1) + "개월치</b>라 필요한 만큼만 발주해도 쌓입니다");
+  if (c.causes.some(function(x) { return x.k === "noplan"; }))
+    s.push("<b>하반기 판매계획이 없습니다</b>");
+  var tail = "";
+  if (Number.isFinite(c.cv)) {
+    var pct = Math.round(c.cv * 100);
+    tail = c.cv <= CV_STABLE
+      ? " 수요변동은 <b>" + pct + "%</b>로 안정적입니다 — 수요가 흔들려서 쌓였다고 보기 어렵습니다."
+      : (c.cv > CV_VOLATILE
+          ? " 다만 수요변동이 <b>" + pct + "%</b>로 커서 어느 정도의 안전재고는 합리적일 수 있습니다."
+          : " 수요변동은 <b>" + pct + "%</b>입니다.");
+  }
+  return s.join(". ") + "." + tail;
+}
+
 // ── AI 진단 ───────────────────────────────────────────────────────────────────
 // 결산 6개월 시계열로 "왜 늘었나"를 특정한다. 판정 근거는 전부 실측값.
 function reviewDiagnosis() {
@@ -331,7 +469,6 @@ function reviewDiagnosis() {
     dormantAmt: 0, dormantCnt: 0,    // 최근 3개월 무출고 → 소진 불가(∞)
     longMosAmt: 0, longMosCnt: 0,    // 재고월수 12개월 초과
     unusedAmt: 0,  unusedCnt: 0,     // BOM 미사용 자재 = 불용 (처분 검토)
-    ccHeavy: [],                     // 코스트센터출고 > 판매×2 → 팔린 게 아니라 비용 처리
   };
 
   items.forEach(function(it) {
@@ -350,8 +487,6 @@ function reviewDiagnosis() {
       if (it.mos3 === Infinity) { d.dormantAmt += it.end6; d.dormantCnt++; }
       else if (it.mos3 > 12)    { d.longMosAmt += it.end6; d.longMosCnt++; }
     }
-    if (it.isFg && it.cc6 > it.sale6 * 2 && it.cc6 > 1e8) d.ccHeavy.push(it);
-
     // BOM 어디에도 안 걸리는 자재 = 쓸 데가 없다. 감축이 아니라 처분 결정 대상.
     // BOM이 아예 안 실렸으면 판정하지 않는다 (전 자재가 불용으로 잡히는 허위 경보 방지).
     if (!it.isFg && bomOk && it.group === MAT_UNUSED_GROUP && it.end6 > 0) {
@@ -362,8 +497,6 @@ function reviewDiagnosis() {
   d.topGroups = Array.from(d.byGroup.entries())
     .sort(function(a, b) { return b[1].delta - a[1].delta; })
     .slice(0, 8);
-  d.ccHeavy.sort(function(a, b) { return b.cc6 - a.cc6; });
-  d.ccAmt = d.ccHeavy.reduce(function(s, x) { return s + x.cc6; }, 0);
   return d;
 }
 
@@ -627,8 +760,9 @@ function revOpinionCell(n) {
 
 // ── 요약 뷰 ───────────────────────────────────────────────────────────────────
 function revSumTable(tree, T) {
-  var byId  = new Map(tree.map(function(x) { return [x.id, x]; }));
-  var total = T.hist[5] || 1;
+  var byId   = new Map(tree.map(function(x) { return [x.id, x]; }));
+  var causes = buildCauseMap();
+  var total  = T.hist[5] || 1;
   // 증가 기여도의 분모 = 헤드라인 증감(공시기준 전월대비). 관리기준 증감을 쓰면
   // 소견 문장과 어긋난다 ("183억 늘었고 그 84%가…" ← 84%는 다른 분모).
   var headDelta = (Number.isFinite(T.hist[5]) && Number.isFinite(T.hist[4]))
@@ -655,20 +789,27 @@ function revSumTable(tree, T) {
     else if (n.level === 1 && a.delta > 50e8)          cls = " rv-hot";
     else if (a.mos === Infinity && a.end > 10e8)       cls = " rv-crit";
 
-    // "왜 늘었나" — 구매입고인지 생산입고인지가 답이다
+    // "왜 늘었나" — 담당자가 설명하기 전에 화면이 먼저 답한다
     var cause = "";
-    if (a.delta > 5e8) {
+    if (n.item) {
+      var c = causes.get(n.item.itemCode);
+      if (c && c.causes.length) {
+        cause += c.causes.map(function(x) {
+          var cls = x.k === "under" || x.k === "noplan" ? "rv-b-danger" : "rv-b-warn";
+          return "<span class='rv-badge " + cls + "'>" + escapeHtml(x.label) + "</span>";
+        }).join("");
+        if (Number.isFinite(c.cv)) cause += revCvBadge(c.cv);
+      }
+      // 공용 자재 — 소요량 최대 품목군에 전액 귀속했음을 드러낸다.
+      // 숨기지 않아야 "왜 여기 넣었냐"에 답할 수 있다.
+      if (n.item.sharedN > 1) {
+        cause += "<span class='rv-badge rv-b-shared' title='" +
+          escapeHtml(n.item.shared.join(" · ")) + "'>공용 " + n.item.sharedN + "</span>";
+      }
+    } else if (a.delta > 5e8) {
+      // 집계 행 — 구매입고인지 생산입고인지만
       var via = a.buy >= a.prod ? "구매" : "생산";
       cause += "<span class='rv-badge rv-b-warn'>" + via + "입고 " + revMoney(Math.max(a.buy, a.prod)) + "억</span>";
-    }
-    if (a.cc > a.sale && a.cc > 1e8) {
-      cause += "<span class='rv-badge rv-b-danger'>비판매출고 " + revMoney(a.cc) + "억</span>";
-    }
-    // 공용 자재 — 여러 품목군에 쓰이지만 소요량 최대 품목군에 전액 귀속했다.
-    // 숨기지 않고 배지로 드러내야 "왜 여기 넣었냐"에 답할 수 있다.
-    if (n.item && n.item.sharedN > 1) {
-      cause += "<span class='rv-badge rv-b-shared' title='" +
-        escapeHtml(n.item.shared.join(" · ")) + "'>공용 " + n.item.sharedN + "</span>";
     }
 
     rows += "<tr class='rv-l" + n.level + cls + "'>" + revRowHead(n, hasKid) +
@@ -923,8 +1064,6 @@ function renderInventoryReview() {
   var chips = [];
   if (topG) chips.push(revChip("hot", topName + " +" + revMoney(topG[1].delta) + "억",
                                "6월 증가의 " + Math.round(share) + "%"));
-  if (D.ccAmt > 1e8) chips.push(revChip("danger", "비판매출고 " + revMoney(D.ccAmt) + "억",
-                               D.ccHeavy.length + "품목 · 샘플·데모 등 비용처리"));
   chips.push(revChip("warn",   "계획없음 " + revMoney(D.noPlanAmt) + "억", D.noPlanCnt + "품목"));
   if (D.bomOk && D.unusedAmt > 1e8)
     chips.push(revChip("danger", "불용자재 " + revMoney(D.unusedAmt) + "억",
@@ -932,20 +1071,35 @@ function renderInventoryReview() {
   chips.push(revChip("danger", "소진불가 " + revMoney(D.dormantAmt) + "억", D.dormantCnt + "품목 · 3개월 무출고"));
   chips.push(revChip("",       "재고 12개월↑ " + revMoney(D.longMosAmt) + "억", D.longMosCnt + "품목"));
 
+  // ── AI 소견 ──
+  // 회의는 4시간이다. 500품목을 다 볼 수 없다. "이것만 보면 된다"를 AI가 먼저 말해준다.
   var opinion = "";
   if (topG) {
-    var g = topG[1];
-    var via = g.buy >= g.prod ? "구매입고" : "생산입고";
-    var viaAmt = Math.max(g.buy, g.prod);
+    var hd = jun - may;
+    // 증가의 90%를 설명하는 최소 품목군 집합 (최대 5개)
+    var acc = 0, focus = [];
+    (D.topGroups || []).forEach(function(g) {
+      if (g[1].delta <= 0 || focus.length >= 5) return;
+      if (focus.length && acc / hd >= 0.9) return;   // 이미 90% 설명 → 그만
+      acc += g[1].delta;
+      focus.push(g[0].split(" / ").pop());
+    });
+
+    var g0 = topG[1];
+    var via = g0.buy >= g0.prod ? "구매입고" : "생산입고";
+    var viaAmt = Math.max(g0.buy, g0.prod);
+
     opinion = "<div class='rv-op'><b>AI 소견</b> — 6월 총재고가 " + revMoney(may) + "억에서 " +
-      revMoney(jun) + "억으로 <b>" + revMoney(jun - may) + "억</b> 늘었고, 그 <b>" +
-      Math.round(share) + "%</b>가 <b>" + escapeHtml(topName) + "</b> 한 품목군입니다(+" +
-      revMoney(g.delta) + "억). 이 품목군은 6월에 <b>" + via + " " + revMoney(viaAmt) +
-      "억</b>이 들어왔는데 <b>판매는 " + revMoney(g.sale) + "억</b>입니다" +
-      (g.cc > g.sale
-        ? ". 그리고 <b>코스트센터출고가 " + revMoney(g.cc) +
-          "억</b>입니다 — 팔린 것이 아니라 샘플·데모 등으로 <b>비용 처리된 물량</b>입니다"
-        : "") + ".</div>";
+      revMoney(jun) + "억으로 <b>" + revMoney(hd) + "억</b> 늘었습니다. " +
+      "그 <b>" + Math.round(share) + "%</b>가 <b>" + escapeHtml(topName) + "</b> 한 품목군입니다(+" +
+      revMoney(g0.delta) + "억). 이 품목군은 6월에 <b>" + via + " " + revMoney(viaAmt) +
+      "억</b>이 들어왔는데 <b>판매는 " + revMoney(g0.sale) + "억</b>입니다." +
+      (focus.length
+        ? "<span class='rv-op-focus'>회의는 4시간입니다. <b>이 " + focus.length +
+          "개 품목군만 점검하면 이번 증가의 " + Math.round(acc / hd * 100) + "%</b>를 설명합니다 — " +
+          escapeHtml(focus.join(" · ")) + "</span>"
+        : "") +
+      "</div>";
   }
 
   // ── 3단 시나리오 스트립 ──
