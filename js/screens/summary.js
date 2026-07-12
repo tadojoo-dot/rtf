@@ -43,16 +43,21 @@ function renderHeadlineStrip() {
       }).join("") + "</div></div>";
   }
 
-  var arrow = "<div class='sum-hl-arrow'>→</div>";
+  // 카드 제목에 기준월을 박는다. 예전엔 "현재 계획"이라고만 써서, 12월말 전망(2,279억)을
+  // 지금 재고(6월말 2,714억)로 읽는 사람이 나왔다. "현재"라는 단어가 작은 기준 안내를 덮는다.
+  // 헤드라인의 목적은 "회의로 12월 재고를 얼마나 줄였나"이므로 12월 기준이 맞다 — 라벨만 고친다.
+  var mLabel = monthLabel(h.month) + "말";
+  var arrow  = "<div class='sum-hl-arrow'>→</div>";
   return "<div class='sum-card sum-hl-wrap'>" +
     "<div class='sum-hl-head'><h3>결과 헤드라인</h3>" +
-    "<span class='sum-hl-basis'>" + escapeHtml(monthLabel(h.month)) + "말 기준 · 회의 진행에 따라 ②·③ 확정</span></div>" +
+    "<span class='sum-hl-basis'>전부 <b>" + escapeHtml(mLabel) + " 전망</b>입니다 (지금 재고가 아닙니다) · " +
+      "회의 진행에 따라 ②·③ 확정</span></div>" +
     "<div class='sum-hl-strip'>" +
-      card("①", "현재 계획", h.base, null, "", false) +
+      card("①", "원계획대로 " + mLabel, h.base, null, "", false) +
       arrow +
-      card("②", "RTF 조정 후", h.rtf, h.base, "1부 품절방어 조정 확정 전", false) +
+      card("②", "RTF 조정 후 " + mLabel, h.rtf, h.base, "1부 품절방어 조정 확정 전", false) +
       arrow +
-      card("③", "감축 확정 후", h.fin, h.rtf || h.base, "2부 재고절감 확정 전", true) +
+      card("③", "감축 확정 후 " + mLabel, h.fin, h.rtf || h.base, "2부 재고절감 확정 전", true) +
     "</div></div>";
 }
 
