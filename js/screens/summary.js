@@ -222,6 +222,13 @@ var _scenChartInst = {}; // idPrefix → Chart 인스턴스 (회의안건 "sum" 
 
 var FONT = "'Pretendard Variable', Pretendard, 'Apple SD Gothic Neo', sans-serif";
 
+// 시나리오 증분 밴드/칩 색 — css/base.css 토큰과 동일(하드코딩은 캔버스 fillStyle 제약).
+// --warn #e98300 / --warn-ink #a85e00 (재고 증가=나쁨·경고), --good #16a34a (재고 감소=좋음).
+var FILL_WARN = "rgba(233,131,0,0.14)";
+var FILL_GOOD = "rgba(22,163,74,0.14)";
+var WARN_INK  = "#a85e00";
+var GOOD_INK  = "#16a34a";
+
 function _drawRoundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
   if (ctx.roundRect) {
@@ -393,6 +400,17 @@ function mountScenarioChart(idPrefix) {
     daysExcessData = buildDaysLine(fItems, matScenFinal);
   }
 
+  // 과잉조정 화면에 실제로 그려지는 RTF선(RTF조정 없으면 기존선과 동일 — 밴드 폭 0으로 자연히 사라짐)
+  var rtfPlotted = invRtfData || invBaseData;
+
+  // KPI 배너(renderScenarioKpiBanner)와 같은 문법의 델타 표기: "+7.1억"/"-11.4억", 반올림 0이면 null
+  function deltaTxt(deltaEok) {
+    if (!Number.isFinite(deltaEok)) return null;
+    if (Math.round(deltaEok) === 0) return null;
+    var sign = deltaEok >= 0 ? "+" : "";
+    return sign + formatMoney(deltaEok * 1e8);
+  }
+
   // ── 시나리오 버튼 연결 (idPrefix 스코프) ─────────────────────────────────
   document.querySelectorAll("[data-scenario-host=\"" + idPrefix + "\"] [data-scenario]").forEach(function(btn) {
     var s = btn.dataset.scenario;
@@ -439,7 +457,8 @@ function mountScenarioChart(idPrefix) {
       { label: "RTF 증분",       data: rtfDeltaData, backgroundColor: rtfDeltaBg,    borderColor:"transparent", borderRadius:3, order:2, stack:"sup" },
       { type:"line", label:"재고금액(실적)",   data: invActData,  borderColor:"#1e3a8a", backgroundColor:"transparent", borderWidth:2.5, pointRadius:4, tension:0.3, spanGaps:false, order:1 },
       { type:"line", label:"재고금액(기존)",   data: invBaseData, borderColor:"#d1d5db", backgroundColor:"transparent", borderWidth:1.5, borderDash:[5,4], pointRadius:2, tension:0.3, spanGaps:false, order:1 },
-      { type:"line", label:"재고금액(RTF조정)", data: invRtfData,  borderColor:"#1e3a8a", backgroundColor:"transparent", borderWidth:2.5, borderDash:[4,4], pointRadius:4, tension:0.3, spanGaps:false, order:1 },
+      { type:"line", label:"재고금액(RTF조정)", data: invRtfData,  borderColor:"#1e3a8a", backgroundColor:"transparent", borderWidth:2.5, borderDash:[4,4], pointRadius:4, tension:0.3, spanGaps:false, order:1,
+        fill: { target: 4, above: FILL_WARN, below: FILL_WARN } }, // 원계획→RTF조정: RTF는 품절방어로 공급을 늘리는 조정이라 항상 "증가=경고" 의미로 고정
     ];
     invActLineIdx   = 3;
     activeInvLineIdx = 5;
@@ -453,8 +472,10 @@ function mountScenarioChart(idPrefix) {
       { label: "RTF 증분",        data: rtfDeltaData || allMonths.map(function(){return null;}), backgroundColor: rtfDeltaBg, borderColor:"transparent", borderRadius:3, order:2, stack:"sup" },
       { type:"line", label:"재고금액(실적)",    data: invActData,   borderColor:"#1e3a8a", backgroundColor:"transparent", borderWidth:2.5, pointRadius:4, tension:0.3, spanGaps:false, order:1 },
       { type:"line", label:"재고금액(기존)",    data: invBaseData,  borderColor:"#d1d5db", backgroundColor:"transparent", borderWidth:1.5, borderDash:[5,4], pointRadius:2, tension:0.3, spanGaps:false, order:1 },
-      { type:"line", label:"재고금액(RTF조정)", data: invRtfData || invBaseData, borderColor:"#6b7280", backgroundColor:"transparent", borderWidth:1.5, borderDash:[4,4], pointRadius:2, tension:0.3, spanGaps:false, order:1 },
-      { type:"line", label:"재고금액(과잉조정)", data: invExcessData, borderColor:"#16a34a", backgroundColor:"transparent", borderWidth:2.5, pointRadius:4, tension:0.3, spanGaps:false, order:1 },
+      { type:"line", label:"재고금액(RTF조정)", data: rtfPlotted, borderColor:"#6b7280", backgroundColor:"transparent", borderWidth:1.5, borderDash:[4,4], pointRadius:2, tension:0.3, spanGaps:false, order:1,
+        fill: hasRtfAdj ? { target: 4, above: FILL_WARN, below: FILL_WARN } : false }, // 원계획→RTF조정 밴드(RTF조정 없으면 폭 0)
+      { type:"line", label:"재고금액(과잉조정)", data: invExcessData, borderColor:"#16a34a", backgroundColor:"transparent", borderWidth:2.5, pointRadius:4, tension:0.3, spanGaps:false, order:1,
+        fill: { target: 5, above: FILL_WARN, below: FILL_GOOD } }, // RTF조정→과잉조정: 보통 감축=녹색(감소)이지만 자재 반작용으로 오히려 늘면 above가 걸려 경고색으로 뒤집힌다
     ];
     invActLineIdx   = 3;
     activeInvLineIdx = 6;
@@ -479,7 +500,19 @@ function mountScenarioChart(idPrefix) {
     if (sc === "기존")      lgItems.push(leg("sum-leg-inv-base",   "재고금액(기존)"));
     if (sc === "RTF조정")   lgItems.push(leg("sum-leg-inv-rtf",    "재고금액(RTF조정)"));
     if (sc === "과잉조정") { lgItems.push(leg("sum-leg-inv-rtf", "RTF조정")); lgItems.push(leg("sum-leg-inv-excess", "과잉조정")); }
-    legendEl.innerHTML = lgItems.join("");
+
+    // 조정 총량 한 줄(기준월=12월 · 계획 마지막 달) — 시나리오 토글과 무관하게 항상 같은 총합을 보여준다
+    var decIdx = allMonths.length - 1;
+    var rtfTotalTxt = hasRtfAdj ? deltaTxt(invRtfData[decIdx] - invBaseData[decIdx]) : null;
+    var cutTotalTxt = hasCut    ? deltaTxt(invExcessData[decIdx] - rtfPlotted[decIdx]) : null;
+    var totalParts = [];
+    if (rtfTotalTxt) totalParts.push("<span class=\"sum-chart-legend-total-item warn\">RTF 조정 " + rtfTotalTxt + "</span>");
+    if (cutTotalTxt) totalParts.push("<span class=\"sum-chart-legend-total-item good\">과잉감축 " + cutTotalTxt + "</span>");
+    var totalHtml = totalParts.length
+      ? "<div class=\"sum-chart-legend-total\">" + totalParts.join("<span class=\"sum-chart-legend-total-sep\">·</span>") + "</div>"
+      : "";
+
+    legendEl.innerHTML = lgItems.join("") + totalHtml;
   }
 
   // ── 막대 숫자 레이블 플러그인 ─────────────────────────────────────────────
@@ -525,11 +558,54 @@ function mountScenarioChart(idPrefix) {
         var el   = meta.data[i];
         if (!el) return;
 
+        // 월별 델타 칩(전망 구간·활성 시나리오만) — RTF증분/감축증분을 KPI 배너와 같은 문법으로 표시
+        var chipLines = [];
+        if (isFcst) {
+          if (sc === "RTF조정" && hasRtfAdj) {
+            var dR = (Number.isFinite(invRtfData[i]) && Number.isFinite(invBaseData[i])) ? invRtfData[i] - invBaseData[i] : null;
+            var tR = dR !== null ? deltaTxt(dR) : null;
+            if (tR) chipLines.push({ text: tR, up: dR >= 0 });
+          } else if (sc === "과잉조정") {
+            if (hasRtfAdj) {
+              var dR2 = (Number.isFinite(rtfPlotted[i]) && Number.isFinite(invBaseData[i])) ? rtfPlotted[i] - invBaseData[i] : null;
+              var tR2 = dR2 !== null ? deltaTxt(dR2) : null;
+              if (tR2) chipLines.push({ text: tR2, up: dR2 >= 0 });
+            }
+            if (hasCut) {
+              var dC = (Number.isFinite(invExcessData[i]) && Number.isFinite(rtfPlotted[i])) ? invExcessData[i] - rtfPlotted[i] : null;
+              var tC = dC !== null ? deltaTxt(dC) : null;
+              if (tC) chipLines.push({ text: tC, up: dC >= 0 });
+            }
+          }
+        }
+
+        // 칩 블록 높이만큼 금액 레이블을 위로 밀어 칩이 그 사이 공간에 들어가게 한다(재고일수 뱃지는 선 아래라 원래도 안 겹침).
+        // 위로 밀린 레이블이 차트 상단을 넘어서면(기존 daysTagsPlugin의 경계 가드와 같은 패턴) 칩을 포기하고 원위치로.
+        var CHIP_H = 13;
+        var chipBlockH = chipLines.length * CHIP_H;
+        var amtY = el.y - 8 - chipBlockH;
+        if (chipBlockH > 0 && amtY - 20 < chart.chartArea.top) {
+          chipLines = [];
+          chipBlockH = 0;
+          amtY = el.y - 8;
+        }
+
         // 재고금액 레이블 (선 위)
         ctx.font         = "bold 16px " + FONT;
         ctx.fillStyle    = isFcst ? (sc === "기존" ? "#9ca3af" : "#1e3a8a") : "#1e3a8a";
         ctx.textBaseline = "bottom";
-        ctx.fillText(Math.round(lineVal).toLocaleString() + "억", el.x, el.y - 8);
+        ctx.fillText(Math.round(lineVal).toLocaleString() + "억", el.x, amtY);
+
+        // 델타 칩 (금액 레이블 바로 아래·점 위). up=true(증가)면 경고색, false(감소)면 녹색 —
+        // 자재 반작용으로 감축인데 재고가 늘면 up이 true가 되어 그대로 경고색으로 뒤집힌다.
+        if (chipLines.length) {
+          ctx.font = "bold 11px " + FONT;
+          chipLines.forEach(function(c, k) {
+            ctx.fillStyle = c.up ? WARN_INK : GOOD_INK;
+            ctx.fillText(c.text, el.x, amtY + (k + 1) * CHIP_H);
+          });
+          ctx.font = "bold 16px " + FONT; // 이후 재고일수 태그 측정 전, 폰트 상태 정리(측정용 15px는 아래서 별도 지정)
+        }
 
         // 재고일수 태그 (선 아래)
         var dv = activeDaysData ? activeDaysData[i] : null;

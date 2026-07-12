@@ -123,6 +123,15 @@
   font-size: 13px; color: var(--ink-2); background: var(--surface); cursor: pointer; height: 32px;
 }
 .exc-plant-filter:focus { outline: none; border-color: #6366f1; }
+/* 검색 — 재고진단(review.css .rv-search)과 동일 패턴 */
+.exc-search { position: relative; display: flex; align-items: center; }
+.exc-search input { width: 240px; padding: 5px 12px; font: inherit; font-size: 13px;
+                     border: 1px solid var(--line-2); border-radius: 8px;
+                     background: var(--surface); color: var(--ink); height: 32px; box-sizing: border-box; }
+.exc-search input:focus { outline: none; border-color: #6366f1; }
+.exc-search-n { position: absolute; right: 30px; font-size: 11px; font-weight: 700; color: var(--muted); }
+.exc-search-x { position: absolute; right: 6px; border: 0; background: transparent;
+                color: var(--muted); cursor: pointer; font-size: 12px; padding: 2px 4px; }
 .exc-reset-all-btn {
   padding: 5px 14px; border: 1px solid #fca5a5; border-radius: 8px;
   background: var(--surface); color: #dc2626; font-size: 12px; font-weight: 600; cursor: pointer;

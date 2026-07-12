@@ -318,6 +318,20 @@
 .sum-leg-inv-rtf::before    { background: transparent; border-top: 2px dashed var(--data); height: 0; }
 .sum-leg-inv-excess::before { background: var(--good); height: 3px; }
 
+/* 범례 아래 조정 총량 한 줄(기준월=12월) */
+.sum-chart-legend-total {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.sum-chart-legend-total-item.warn { color: var(--warn-ink); }
+.sum-chart-legend-total-item.good { color: var(--good); }
+.sum-chart-legend-total-sep { color: var(--muted-2); font-weight: 400; }
+
 /* 재고일수 행 */
 .sum-days-row   { display: flex; align-items: center; gap: 8px; padding: 8px 0 2px; border-top: 1px solid var(--bg); }
 .sum-days-label { font-size: 11px; font-weight: 700; color: var(--muted); white-space: nowrap; min-width: 52px; }

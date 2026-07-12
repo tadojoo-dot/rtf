@@ -684,6 +684,32 @@ function renderExcBannerSection() {
     "</div>";
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 검색 — 재고진단(inventory-review.js state.revSearch)과 동일 패턴.
+// 매칭 대상: 품목코드(normalizeCode 비교)·품목명·품목군, 대소문자 무시·부분일치.
+// ═══════════════════════════════════════════════════════════════════════════
+function excSearchQuery() {
+  return (state.excSearch || "").trim().toLowerCase();
+}
+function excMatchesSearch(q, code, name, grp) {
+  if (!q) return true;
+  var nc = normalizeCode(code || "").toLowerCase();
+  var nn = String(name || "").toLowerCase();
+  var ng = String(grp  || "").toLowerCase();
+  return nc.indexOf(q) >= 0 || nn.indexOf(q) >= 0 || ng.indexOf(q) >= 0;
+}
+// matchCount: 검색어가 있을 때만 "N품목" 배지 표시 (rv-search와 동일)
+function renderExcSearchBox(matchCount) {
+  var q = state.excSearch || "";
+  return "<div class='exc-search'>" +
+    "<input id='excSearch' value='" + escapeHtml(q) + "' placeholder='품목코드 · 품목명 · 품목군 검색' />" +
+    (q
+      ? "<span class='exc-search-n'>" + matchCount + "품목</span>" +
+        "<button class='exc-search-x' id='excSearchX'>✕</button>"
+      : "") +
+  "</div>";
+}
+
 function renderExcessAdjustment() {
   excProfReset();
   var _t0 = performance.now();
@@ -712,6 +738,7 @@ function _renderExcessAdjustmentInner() {
   var months       = getRtfMonths();
   var plantFilter  = state.excessPlant    || "all";
   var mgrFilter    = state.excessManager  || "all";
+  var excQ         = excSearchQuery();
   var showOnlyExcess = state.excessShowOnly === true; // 기본값: 전체 표시
 
   var targetMap = new Map();
@@ -740,6 +767,8 @@ function _renderExcessAdjustmentInner() {
   var allFgItems = rtfItems.filter(function(item) {
     if (plantFilter !== "all" && item.plantCode !== plantFilter) return false;
     if (mgrFilter !== "all" && itemManager(item.itemCode, item.plantCode) !== mgrFilter) return false;
+    if (excQ && !excMatchesSearch(excQ, item.itemCode, item.itemName, (item.itemGroup || "") + " " + (item.typeGroup || "")))
+      return false;
     return true;
   }).map(function(item) {
     var td  = targetMap.get(item.itemCode) || null;
@@ -805,6 +834,7 @@ function _renderExcessAdjustmentInner() {
     "</div>" +
     "<select class='exc-plant-filter'>" + plantOpts + "</select>" +
     "<select class='exc-plant-filter exc-manager-filter'>" + managerOptions(mgrFilter) + "</select>" +
+    renderExcSearchBox(displayItems.length) +
     (hasAnyAdj ? "<button class='exc-reset-all-btn'>↺ 초기화</button>" : "") +
     targetWarn +
   "</div>";
@@ -3007,11 +3037,13 @@ function renderExcessFgFlatTable(displayItems, months, globalPlanMap) {
 
 // 원부자재 탭 테이블
 function renderExcessMatTable(months) {
+  var excQ = excSearchQuery();
   var rows = calcMatFlowRows(state.excessAdj, state.matExcessAdj);
   if (!rows) {
     return "<div class='exc-mat-empty'>BOM 전개가 필요합니다 — 공급원인 화면에서 BOM 전개를 먼저 실행하세요.</div>";
   }
   // 표시 대상: 정합 OK + (첫 월 180일 초과 or 조정 존재). 정합 의심 건수는 별도 안내
+  // 검색어가 있으면 그 조건 대신 검색 매칭 품목만 남긴다(180일 미만이어도 회의 중 조회 가능해야 함).
   var insaneCnt = rows.filter(function(r) { return !r.sane; }).length;
   var shown = rows.filter(function(r) { return r.sane; }).map(function(r) {
     var over = Number.isFinite(r.days[0]) && r.days[0] > MAT_TARGET_DAYS;
@@ -3022,8 +3054,12 @@ function renderExcessMatTable(months) {
     var overAmt = (over && Number.isFinite(r.flow.unitVal) && daily0 > 0)
       ? Math.max(0, (r.ending[0] - MAT_TARGET_DAYS * daily0)) * r.flow.unitVal : 0;
     return Object.assign({ _over: over, _hasAdj: hasAdj, _overAmt: overAmt }, r);
-  }).filter(function(r) { return r._over || r._hasAdj; })
-    .sort(function(a, b) { return b._overAmt - a._overAmt; });
+  }).filter(function(r) {
+    if (excQ) return excMatchesSearch(excQ, r.flow.componentCode, r.flow.componentName, r.flow.category);
+    return r._over || r._hasAdj;
+  }).sort(function(a, b) { return b._overAmt - a._overAmt; });
+
+  var searchBar = "<div class='exc-controls'>" + renderExcSearchBox(shown.length) + "</div>";
 
   // 헤더 클릭 정렬: 자재명 / 월별 재고일수 — 기본은 초과금액 내림차순
   var msort = state.excessMatSort || null;
@@ -3088,9 +3124,10 @@ function renderExcessMatTable(months) {
     "</div><span class='exc-table-hd-hint'>입고 칸 수정 = 입고 취소·축소 (소비는 BOM 연동 자동계산)</span></div>";
 
   if (!shown.length) {
-    return hd + "<div class='exc-mat-empty'>" + MAT_TARGET_DAYS + "일 초과 자재가 없습니다.</div>";
+    var emptyMsg = excQ ? "검색 결과가 없습니다." : (MAT_TARGET_DAYS + "일 초과 자재가 없습니다.");
+    return searchBar + hd + "<div class='exc-mat-empty'>" + emptyMsg + "</div>";
   }
-  return hd +
+  return searchBar + hd +
     "<div class='exc-mat-scroll'><table class='exc-mat-table'>" +
     "<thead><tr><th rowspan='2' class='exc-mat-name-hd exc-sort-th' data-sorttab='mat' data-sort='name' title='자재명 정렬'>자재" + mArrow("name") + "</th><th rowspan='2'></th>" + monthHd + "</tr>" +
     "<tr>" + subHd + "</tr></thead>" +
@@ -3286,6 +3323,28 @@ function bindExcessAdjustment() {
     mgrSel.addEventListener("change", function() {
       state.excessManager = mgrSel.value || "all";
       render("inventory-variance");
+    });
+  }
+
+  // 검색 — 입력할 때마다 걸러진다. 재고진단(revSearch)과 동일 방식: 전체 재렌더 후
+  // 커서 위치를 되돌려 타이핑이 끊기지 않게 한다. fg/mat 탭 어느 쪽이든 #excSearch는 하나뿐.
+  var esb = root.querySelector("#excSearch");
+  if (esb) {
+    esb.addEventListener("input", function() {
+      state.excSearch = esb.value;
+      var pos = esb.selectionStart;
+      render("inventory-variance");
+      var nb = document.getElementById("excSearch");
+      if (nb) { nb.focus(); nb.setSelectionRange(pos, pos); }
+      if (typeof saveMeetingState === "function") saveMeetingState();
+    });
+  }
+  var esx = root.querySelector("#excSearchX");
+  if (esx) {
+    esx.addEventListener("click", function() {
+      state.excSearch = "";
+      render("inventory-variance");
+      if (typeof saveMeetingState === "function") saveMeetingState();
     });
   }
 

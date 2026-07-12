@@ -27,6 +27,7 @@ function collectMeetingState() {
     decisions: state.aiDecisions   || {},   // 과잉감축 판정 (수용/조정/불가/보류)
     secApplied:state.aiSecApplied  || {},   // 섹션 일괄 적용 여부
     excessAdj: state.excessAdj     || {},   // 과잉감축 조정 공급량
+    excSearch: state.excSearch     || "",   // 과잉감축 검색어 (재고진단 드릴다운 연동)
     matSimAdj: state.matSimAdj     || {},   // 자재 조정
     fgProdAdj: state.fgProdAdj     || {},   // 완제품 생산계획 조정
     goodsSupplyAdj: state.goodsSupplyAdj || {},
@@ -41,6 +42,7 @@ function applyMeetingState(d) {
   state.aiDecisions    = d.decisions  || {};
   state.aiSecApplied   = d.secApplied || {};
   state.excessAdj      = d.excessAdj  || {};
+  state.excSearch      = d.excSearch  || "";
   state.matSimAdj      = d.matSimAdj  || {};
   state.fgProdAdj      = d.fgProdAdj  || {};
   state.goodsSupplyAdj = d.goodsSupplyAdj || {};

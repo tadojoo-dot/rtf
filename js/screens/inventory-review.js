@@ -1079,10 +1079,10 @@ function revSumTable(tree, T, wf) {
   var byId   = new Map(tree.map(function(x) { return [x.id, x]; }));
   var causes = buildCauseMap();
   var total  = T.hist[5] || 1;
-  // 증가 기여도의 분모 = 증가 요인 합계(posSum, reviewWaterfall). 순증(헤드라인 증감)을 분모로
-  // 쓰면 감소 행이 상쇄한 만큼 증가 행 비중이 100%를 넘어(예: 101%) "오류 아니냐"는 말이 나온다.
-  // posSum은 유형 레벨에서 한 번만 계산해 하위(품목군·품목) 행에도 그대로 쓴다.
-  var posSum = wf.pos;
+  // 기여도의 분모 = 변동 총량(|증가| + |감소|). 왜 이 분모인지는 reviewWaterfall 주석 참고.
+  // 유형 레벨에서 한 번만 계산해 하위(품목군·품목) 행에도 같은 분모를 쓴다 —
+  // 행마다 분모가 달라지면 % 끼리 비교가 안 된다.
+  var posSum = wf.abs;
   var rows  = "";
 
   tree.forEach(function(n, i) {
@@ -1095,7 +1095,8 @@ function revSumTable(tree, T, wf) {
       : revAgg(n.items);
 
     var pct = a.end / total * 100;
-    // 증가 기여도 = 그 행의 증감 ÷ 증가 요인 합계. 감소한 행은 음수로 표시한다.
+    // 변동 기여도 = 그 행의 증감 ÷ 변동 총량. 감소한 행은 음수로 표시한다.
+    // 모든 행의 절대 기여도를 더하면 정확히 100%가 된다.
     var contrib = (posSum !== 0 && Math.abs(a.delta) >= 5e7) ? a.delta / posSum * 100 : null;
     var cls = "";
     // BOM 어디에도 안 걸리고 출고도 없는 자재 = 불용. 감축이 아니라 처분 결정 대상.
@@ -1126,13 +1127,13 @@ function revSumTable(tree, T, wf) {
     "<th class='rv-th-name'>구분</th>" +
     revTh("end",     "6월말 재고금액 (억)", "rv-gsep rv-th-amt") +
     revTh("delta",   "전월대비") +
-    revTh("contrib", "증가 기여도", "rv-th-pct") +
+    revTh("contrib", "변동 기여도", "rv-th-pct") +
     revTh("share",   "재고금액 비중") +
     revTh("days",    "재고일수", "rv-gsep rv-band rv-th-days") +
     "<th class='rv-band rv-th-cause'>6월 증가 원인</th>" +
     "<th class='rv-band rv-th-op'>의견</th>" +
     "<th class='rv-gsep'>1~6월 추이</th></tr></thead>" +
-    "<tbody>" + rows + revFooterSum(T, posSum) + "</tbody></table>";
+    "<tbody>" + rows + revFooterSum(T, wf) + "</tbody></table>";
 }
 
 // ── 월별 뷰 ───────────────────────────────────────────────────────────────────
@@ -1220,10 +1221,17 @@ function revMonthTable(tree, T) {
     "</tr></thead><tbody>" + rows + tot + "</tbody></table>";
 }
 
-// 헤드라인 순증(183.0억) = 표에 렌더되는 모든 최상위 행(유형 레벨 + 조정행 4종)의 delta 합.
-// 증가 요인(posSum, 예 212.7억)과 감소 요인(negSum, 예 −29.7억)이 상쇄해서 순증이 나온다.
-// 기여도의 분모를 순증(헤드라인)으로 쓰면 증가 행끼리만 더해도 100%를 넘어(예 101%)
-// "오류 아니냐"는 말이 나온다 — 분모를 증가 요인 합계로 바꾸면 어떤 행도 100%를 넘지 않는다.
+// 기여도의 분모를 무엇으로 둘 것인가 — 세 번 갈아엎은 자리라 기록해 둔다.
+//
+//   ① 순증(183.0억)을 분모로       → 상품 184.3 / 183.0 = 100.7% → 화면에 101%.
+//                                    감소 행이 상쇄한 만큼 증가 행이 100%를 넘는다. "오류 아니냐"가 나온다.
+//   ② 증가 요인 합계(212.7억)      → 증가 행끼리는 100%가 되지만, 총계 행이 183/212.7 = 86%가 된다.
+//                                    총계가 100%가 아니면 그것도 오류로 읽힌다.
+//   ③ 절대값 합(242.3억)  ← 현재    → |증가 212.7| + |감소 29.6|. 이번 달에 "실제로 움직인 총량"이다.
+//                                    모든 행의 |기여도|를 더하면 정확히 100%. 총계 행도 100%.
+//                                    뜻도 곧다: "재고가 242억 움직였고 그중 상품이 76%다."
+//
+// 컷오프(5천만원 미만)는 표 렌더 기준과 같아야 한다 — 다르면 합이 100%에서 어긋난다.
 function reviewWaterfall(items, T) {
   var A = T.adj;
   var byType = {};
@@ -1239,7 +1247,7 @@ function reviewWaterfall(items, T) {
     if (!Number.isFinite(d) || Math.abs(d) < 5e7) return;   // 노이즈 컷오프 — 표 렌더 기준과 동일
     if (d > 0) pos += d; else neg += d;
   });
-  return { pos: pos, neg: neg };
+  return { pos: pos, neg: neg, abs: pos + Math.abs(neg) };   // abs = 기여도의 분모
 }
 
 // ── 합계 + 조정행 — 표를 다 더하면 헤드라인(공시기준)이 나온다 ────────────────
@@ -1258,23 +1266,43 @@ function revAdjRow(label, cur, prev, total, posSum, note) {
 }
 // 조정행 4개(재공품·나보타·미착품·평가충당금)가 다 있어야 표가 닫힌다.
 // 하나라도 빠지면 증가 행 기여도 합이 100%가 안 된다 — 실제로 재공품이 빠져 9.9억이 안 맞았다.
-function revFooterSum(T, posSum) {
+//
+// 표를 워터폴로 닫는다 — 증가 요인 → 감소 요인 → 총재고.
+// 기여도의 분모는 변동 총량(|증가| + |감소|)이므로, 증가 소계 %와 감소 소계 %의 절대값을 더하면
+// 정확히 100%가 되고, 총재고 행의 기여도도 100%다 (= 모든 행의 절대 기여도 합).
+function revFooterSum(T, wf) {
   var A = T.adj;
-  var total = T.hist[5] || 1;
-  var hd = T.hist[5] - T.hist[4];
-  var hdPct = posSum !== 0 ? (hd / posSum * 100).toFixed(1) + "%" : "-";
-  return revAdjRow("재공품", A.wip[5], A.wip[4], total, posSum, "공정 중 재고 (별도 수불)") +
-    revAdjRow("나보타 (통합관리)", A.nabota[5], A.nabota[4], total, posSum,
+  var total  = T.hist[5] || 1;
+  var absSum = wf.abs, posSum = wf.pos, negSum = wf.neg;
+  var hd     = T.hist[5] - T.hist[4];
+  var pctOf  = function(v) { return absSum !== 0 ? (v / absSum * 100).toFixed(1) + "%" : "-"; };
+
+  function subtotal(label, amt, note, cls) {
+    return "<tr class='rv-sub" + (cls || "") + "'><td class='rv-name'>" + label + "</td>" +
+      "<td class='rv-n rv-gsep rv-mut'>-</td>" +
+      "<td class='rv-n'>" + revDelta(amt) + "</td>" +
+      "<td class='rv-n'><b>" + pctOf(amt) + "</b></td>" +
+      "<td class='rv-n rv-mut'>-</td>" +
+      "<td colspan='4' class='rv-mut rv-l-note rv-gsep'>" + note + "</td></tr>";
+  }
+
+  return revAdjRow("재공품", A.wip[5], A.wip[4], total, absSum, "공정 중 재고 (별도 수불)") +
+    revAdjRow("나보타 (통합관리)", A.nabota[5], A.nabota[4], total, absSum,
               "품목 전개 없음 — 총액만 관리") +
-    revAdjRow("미착품", A.michak[5], A.michak[4], total, posSum, "공시 조정 항목") +
-    revAdjRow("평가충당금", A.allowance[5], A.allowance[4], total, posSum, "공시 조정 항목") +
+    revAdjRow("미착품", A.michak[5], A.michak[4], total, absSum, "공시 조정 항목") +
+    revAdjRow("평가충당금", A.allowance[5], A.allowance[4], total, absSum, "공시 조정 항목") +
+    subtotal("증가 요인", posSum, "위 행들 중 <b>늘어난 것</b>만 합산", " rv-sub-pos") +
+    subtotal("감소 요인", negSum, "위 행들 중 <b>줄어든 것</b>만 합산", " rv-sub-neg") +
     "<tr class='rv-total'><td class='rv-name'>총재고 (공시기준)</td>" +
       "<td class='rv-n rv-gsep'>" + revMoney(T.hist[5]) + "</td>" +
       "<td class='rv-n'>" + revDelta(hd) + "</td>" +
-      "<td class='rv-n'><b>" + hdPct + "</b></td>" +
+      "<td class='rv-n'><b>100%</b></td>" +
       "<td class='rv-n'><b>100%</b></td>" +
       "<td class='rv-n rv-gsep'>" + (T.histDays[5] ? T.histDays[5].toFixed(0) + "일" : "-") + "</td>" +
-      "<td colspan='3' class='rv-mut'>결산_RAW 합계와 일치 · 증가 행 기여도 합계 100%</td></tr>";
+      "<td colspan='3' class='rv-mut'>결산_RAW 합계와 일치 · " +
+        "변동 총량 <b>" + revMoney(absSum) + "억</b> (증가 " + revMoney(posSum) +
+        " + 감소 " + revMoney(Math.abs(negSum)) + ") = 기여도의 분모 · " +
+        "순증 " + revMoney(hd) + "억</td></tr>";
 }
 
 // ── 메인 렌더 ─────────────────────────────────────────────────────────────────
@@ -1713,6 +1741,9 @@ function openRevItemPopup(itemCode) {
         "<input class='rv-pop-op-in' data-rvpopop='" + escapeHtml(opKey) + "' value='" +
           escapeHtml(opVal) + "' placeholder='의견 입력 — 전략비축·최소운영재고 등 AI가 모르는 맥락' />" +
       "</div>" +
+      "<div class='rv-pop-sec rv-pop-goexc'>" +
+        "<button class='exc-diag-save rv-pop-goexc-btn' type='button'>과잉감축에서 조정하기 →</button>" +
+      "</div>" +
     "</div>";
   document.body.appendChild(ov);
   _revPopupEl = ov;
@@ -1732,6 +1763,19 @@ function openRevItemPopup(itemCode) {
     opIn.addEventListener("change", function() {
       if (typeof saveMeetingState === "function") saveMeetingState();
       render("inventory-forecast");   // 표의 의견 셀 갱신 — 팝업은 body 직속이라 사라지지 않는다
+    });
+  }
+
+  // 재고진단 → 과잉감축 드릴다운 — 그 품목이 검색된 채로 해당 탭(제·상품/원부자재)을 연다.
+  // 과잉감축에 해당 품목이 없으면(적정재고 대상 아님 등) 검색 결과 없음 화면이 자연스럽게 뜬다.
+  var goExcBtn = ov.querySelector(".rv-pop-goexc-btn");
+  if (goExcBtn) {
+    goExcBtn.addEventListener("click", function() {
+      state.excSearch = itemCode;
+      state.excessTab = it.isFg ? "fg" : "mat";
+      closeRevItemPopup();
+      render("inventory-variance");
+      if (typeof saveMeetingState === "function") saveMeetingState();
     });
   }
 }

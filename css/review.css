@@ -126,12 +126,14 @@
                    text-align: center; vertical-align: middle; white-space: nowrap;
                    border-bottom: 1px solid var(--line);
                    border-left: 1px solid var(--line); }
-.rv-tbl tbody td:first-child { text-align: left; border-left: 0; background: var(--surface); }
+/* 구분 컬럼: 배경을 못박지 않는다. 못박으면 행 음영(rv-l0)이 이 칸에만 안 깔려
+   "구분만 비어 보인다". 행 규칙이 그대로 넘어오게 둔다. */
+.rv-tbl tbody td:first-child { text-align: left; border-left: 0; }
 .rv-n { font-variant-numeric: tabular-nums; }
 
-/* 컬럼 그룹 구분 — 세로 영역이 안 갈리면 눈이 행을 놓친다 */
+/* 컬럼 그룹 구분 — 세로 영역이 안 갈리면 눈이 행을 놓친다.
+   경계선으로만 가른다. 컬럼 음영을 쓰면 행 음영(유형)과 섞여 규칙이 안 읽힌다. */
 .rv-gsep { border-left: 2px solid var(--line-2) !important; }
-.rv-band { background: var(--surface-2); }
 
 /* 전망 구간 — "전망" 글자를 7월에만 붙이면 그 컬럼만 헤더가 높아져 줄이 틀어진다.
    글자 대신 색으로 구분한다. */
@@ -144,24 +146,34 @@
 .rv-lg-act { background: var(--surface); }
 .rv-lg-fc  { background: var(--brand-wash); border-color: var(--brand) !important; }
 
-/* 위계: 유형(lv0) → 품목군(lv1) → 품목(lv2) */
+/* 위계: 유형(lv0) → 품목군(lv1) → 품목(lv2)
+   음영 규칙은 하나다 — 유형 행만 음영. 품목군·품목은 음영 없음.
+   위계는 굵기·크기·들여쓰기로 읽히면 된다. 음영을 여러 규칙으로 겹치면
+   (컬럼 밴드 + 조건부 하이라이트 + 행 위계) 무엇이 무엇을 뜻하는지 안 읽힌다. */
 .rv-l0 td { background: var(--surface-2); font-weight: 800; font-size: 15px; height: 48px;
             border-top: 2px solid var(--line-2); }
-.rv-l0 td:first-child { background: var(--surface-2); }
 .rv-l1 td { font-weight: 600; }
 .rv-l1 td:first-child { padding-left: 30px; }
 .rv-l2 td { color: var(--ink-2); font-size: 13px; height: 38px; }
 .rv-l2 td:first-child { padding-left: 58px; }
 
-.rv-hot  td, .rv-hot  td:first-child { background: #fdf1e3; }
-.rv-hot  td:first-child { box-shadow: inset 4px 0 0 var(--warn); }
-.rv-crit td, .rv-crit td:first-child { background: #fbe9e9; }
-.rv-crit td:first-child { box-shadow: inset 4px 0 0 var(--danger); }
+/* 조건부 하이라이트(rv-hot / rv-crit)는 전부 걷어냈다 — 음영도 액센트 바도 없다.
+   음영은 유형 행 하나뿐이어야 규칙이 읽힌다.
+   위험 신호는 증가원인 배지(적정초과 13.6배 · 소진불가 · MOQ 8.3개월치)가 금액과 함께
+   이미 말하고 있다. 표시를 두 겹으로 하면 둘 다 흐려진다.
+   JS는 여전히 rv-hot/rv-crit 클래스를 붙이지만 칠하지 않는다(되살릴 때 여기만 고치면 된다). */
 
-.rv-adj td   { color: var(--muted); font-size: 13px; background: var(--surface); }
+.rv-adj td   { color: var(--muted); font-size: 13px; }
 .rv-l-note   { text-align: left !important; }
+
+/* 워터폴 소계 — 증가 요인(100%) → 감소 요인 → 순증. 기여도의 분모가 어디인지 눈으로 보인다.
+   음영은 유형 행 하나뿐이라는 규칙을 지킨다: 배경 없이 위 경계선으로만 구분한다. */
+.rv-sub td { font-weight: 700; font-size: 13.5px; height: 40px;
+             border-top: 1px dashed var(--line-2); }
+.rv-sub-pos td { border-top: 2px solid var(--line-2); }
+
 .rv-total td { font-weight: 800; font-size: 15px; height: 52px;
-               background: var(--surface); border-top: 3px solid var(--ink); border-bottom: 0; }
+               border-top: 3px solid var(--ink); border-bottom: 0; }
 
 .rv-tw  { display: inline-flex; align-items: center; gap: 8px; }
 .rv-tog { width: 18px; height: 18px; flex: none; display: inline-flex;
