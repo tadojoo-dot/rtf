@@ -136,6 +136,9 @@
             padding: 3px 8px; border-radius: 6px; margin-right: 5px; white-space: nowrap; }
 .rv-b-warn   { background: #fdf1e3; color: var(--warn-ink); border: 1px solid var(--warn); }
 .rv-b-danger { background: #fbe9e9; color: var(--danger);   border: 1px solid var(--danger); }
+/* 공용 자재 — 소요량 최대 품목군에 전액 귀속했음을 드러낸다 (마우스 올리면 사용처 전체) */
+.rv-b-shared { background: var(--surface-2); color: var(--muted);
+               border: 1px solid var(--line-2); cursor: help; }
 
 .rv-spark { vertical-align: middle; }
 

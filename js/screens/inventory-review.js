@@ -55,6 +55,9 @@ function buildReviewItems() {
     });
   });
 
+  // 원부자재는 기준정보로 못 붙는다(매핑률 16.4%) → BOM 역전개로 품목군을 귀속시킨다
+  var matGroups = buildMatGroupMap();
+
   var items = [];
   c.items.forEach(function(it) {
     var m6 = it.mon[5];
@@ -62,6 +65,17 @@ function buildReviewItems() {
     var hist = it.mon.map(function(m) { return m ? m.end : null; });
     var end6 = m6.end;
     var isFg = REV_FG.indexOf(it.type) >= 0;
+
+    // 품목군: 제·상품은 기준정보, 원부자재는 BOM 역전개
+    var grp = "", shared = [], sharedN = 0;
+    if (isFg) {
+      grp = (it.businessUnit ? it.businessUnit + " / " : "") + (it.itemGroup || "(미분류)");
+    } else {
+      var mg = matGroups.get(it.itemCode);
+      grp     = mg ? mg.group  : MAT_UNUSED_GROUP;
+      shared  = mg ? mg.shared : [];
+      sharedN = mg ? mg.n      : 0;
+    }
 
     // 소진 속도의 분모는 유형에 따라 다르다.
     //  · 제·상품  → 3평판 = 최근 3개월 평균 '판매(금액)'. 코스트센터출고(샘플·데모)는 판매가 아니다.
@@ -85,7 +99,9 @@ function buildReviewItems() {
     items.push({
       itemCode: it.itemCode, itemName: it.itemName,
       type: it.type, isFg: isFg,
-      businessUnit: it.businessUnit, itemGroup: it.itemGroup || "(미분류)",
+      businessUnit: it.businessUnit,
+      group: grp,                       // 트리의 품목군 축 (제·상품=기준정보 / 원부자재=BOM 역전개)
+      shared: shared, sharedN: sharedN, // 공용 자재의 사용처
       hist: hist, end6: end6,
       delta: m6.end - m6.base,
       sale6: m6.sale, cc6: m6.ccOut, buy6: m6.buyIn, prod6: m6.prodIn, prodOut6: m6.prodOut,
@@ -99,6 +115,116 @@ function buildReviewItems() {
   _reviewCache = items;
   _reviewCacheEpoch = (window._renderEpoch || 0);
   return items;
+}
+
+// ── BOM 역전개: 원부자재 → 품목군 귀속 ───────────────────────────────────────
+// 왜 필요한가: 기준정보(품목구분1)로 원부자재를 매핑하면 금액 기준 16.4%밖에 안 붙는다.
+// 기준정보는 애초에 제·상품 위주로 만들어진 파일이다. 원부자재의 품목군은 BOM으로
+// "이 자재가 어느 완제품에 들어가는가"를 거꾸로 타고 올라가야만 알 수 있다.
+//
+// 귀속 규칙 (스펙 §4)
+//   · 전용 (조상 품목군 1개)   → 그 품목군에 귀속
+//   · 공용 (2개 이상)          → 금액을 쪼개지 않고 소요량 최대 품목군에 전액 귀속 +
+//                                [공용 N] 배지로 사용처를 드러낸다. 금액 분할은 자의적이라
+//                                회의에서 "왜 여기 넣었냐"는 반박을 막을 수 없다.
+//   · 미사용 (BOM에 없음)      → "BOM 미사용 · 불용" 별도 그룹. 처분 검토 대상.
+//
+// 공용의 실체: 펙수프라잔염산염은 펙수클루/생동·허가용/기타품목 3개 품목군에 걸리지만
+// 실질은 같은 브랜드가 사업부·규격으로 쪼개진 것뿐이다. 그래서 대표 귀속이 정당하다.
+
+var MAT_UNUSED_GROUP = "BOM 미사용 · 불용";
+var _matGroupCache = null, _matGroupSig = null;
+
+function buildMatGroupMap() {
+  var boms = state.mappedData.bom_components || [];
+  var sig  = boms.length + "|" + (state.bomResult ? "exp" : "raw");
+  if (_matGroupCache && _matGroupSig === sig) return _matGroupCache;
+
+  // 제·상품의 품목군 (조상이 여기 닿으면 그게 답이다)
+  var fgGroup = new Map();
+  (state.mappedData.item_master || []).forEach(function(m) {
+    if (m.itemCode && m.itemGroup)
+      fgGroup.set(m.itemCode, (m.businessUnit ? m.businessUnit + " / " : "") + m.itemGroup);
+  });
+
+  // child → set(parent). BOM 행의 root는 그 BOM을 소유한 완제품/반제품이다.
+  var parents = new Map();
+  boms.forEach(function(b) {
+    if (!b.componentCode || !b.rootItemCode) return;
+    if (b.componentCode === b.rootItemCode) return;
+    var s = parents.get(b.componentCode);
+    if (!s) { s = new Set(); parents.set(b.componentCode, s); }
+    s.add(b.rootItemCode);
+  });
+
+  // 소요량 가중치 — BOM 전개가 끝났으면 실제 소요량(7~12월), 아니면 제·상품 재고금액으로 대용.
+  // 가중치는 "공용일 때 어느 품목군을 대표로 삼을지"에만 쓰인다.
+  var weight = new Map();   // "품목군" → 가중치
+  var flows  = state.bomResult && state.bomResult.matFlows;
+  if (flows) {
+    flows.forEach(function(f) {
+      (f.parents || []).forEach(function(p) {
+        var g = fgGroup.get(p.code);
+        if (!g) return;
+        var q = 0;
+        Object.keys(p.monthly || {}).forEach(function(m) {
+          if (FCST_MONTHS.indexOf(m) >= 0) q += (p.monthly[m].reqQty || 0);
+        });
+        weight.set(g, (weight.get(g) || 0) + q);
+      });
+    });
+  }
+  if (!weight.size && state.closing) {
+    state.closing.items.forEach(function(it) {
+      if (REV_FG.indexOf(it.type) < 0 || !it.itemGroup) return;
+      var g = (it.businessUnit ? it.businessUnit + " / " : "") + it.itemGroup;
+      var m6 = it.mon[5];
+      if (m6) weight.set(g, (weight.get(g) || 0) + m6.end);
+    });
+  }
+
+  // 상향 전개 — 자재에서 출발해 조상 제·상품의 품목군을 모은다 (사이클 방어)
+  var memo = new Map();
+  function ancestors(code, seen) {
+    if (memo.has(code)) return memo.get(code);
+    seen = seen || new Set();
+    if (seen.has(code)) return new Set();
+    seen.add(code);
+
+    var out = new Set();
+    var own = fgGroup.get(code);
+    if (own) out.add(own);                       // 자기 자신이 제·상품이면 그 품목군
+    var ps = parents.get(code);
+    if (ps) ps.forEach(function(p) {
+      if (p === code) return;
+      ancestors(p, seen).forEach(function(g) { out.add(g); });
+    });
+    if (seen.size < 400) memo.set(code, out);
+    return out;
+  }
+
+  // 대표 귀속에서 후순위로 미는 그룹 — "기타품목"·"생동/의동/허가용"은 실제 브랜드가 아니라
+  // 잡다한 것을 담는 통이다. 이런 데로 귀속되면 회의에서 아무 의미가 없다.
+  // (예: 소마트로핀 원액 18.5억이 '기타/기타품목'으로 가버리면 담당이 없어진다)
+  function isCatchAll(g) {
+    return /기타품목|생동|의동|허가용|미분류/.test(g);
+  }
+
+  var map = new Map();   // 자재코드 → { group, shared[], n }
+  (state.closing ? Array.from(state.closing.items.keys()) : []).forEach(function(code) {
+    var gs = Array.from(ancestors(code));
+    if (!gs.length) { map.set(code, { group: MAT_UNUSED_GROUP, shared: [], n: 0 }); return; }
+    gs.sort(function(a, b) {
+      var ca = isCatchAll(a), cb = isCatchAll(b);
+      if (ca !== cb) return ca ? 1 : -1;                       // 잡다 그룹은 뒤로
+      return (weight.get(b) || 0) - (weight.get(a) || 0);      // 그다음 소요량(또는 재고) 순
+    });
+    map.set(code, { group: gs[0], shared: gs, n: gs.length });
+  });
+
+  _matGroupCache = map;
+  _matGroupSig   = sig;
+  return map;
 }
 
 // ── 조정행 (나보타 · 미착품 · 평가충당금) ─────────────────────────────────────
@@ -156,6 +282,7 @@ function reviewDiagnosis() {
     noPlanAmt: 0,  noPlanCnt: 0,     // 판매계획 없는 제·상품
     dormantAmt: 0, dormantCnt: 0,    // 최근 3개월 무출고 → 소진 불가(∞)
     longMosAmt: 0, longMosCnt: 0,    // 재고월수 12개월 초과
+    unusedAmt: 0,  unusedCnt: 0,     // BOM 미사용 자재 = 불용 (처분 검토)
     ccHeavy: [],                     // 코스트센터출고 > 판매×2 → 팔린 게 아니라 비용 처리
   };
 
@@ -163,7 +290,7 @@ function reviewDiagnosis() {
     d.totalDelta += it.delta;
 
     if (it.isFg) {
-      var key = (it.businessUnit || "-") + " / " + it.itemGroup;
+      var key = it.group;
       var g = d.byGroup.get(key);
       if (!g) { g = { delta: 0, buy: 0, prod: 0, sale: 0, cc: 0, end: 0 }; d.byGroup.set(key, g); }
       g.delta += it.delta; g.buy += it.buy6; g.prod += it.prod6;
@@ -176,6 +303,11 @@ function reviewDiagnosis() {
       else if (it.mos3 > 12)    { d.longMosAmt += it.end6; d.longMosCnt++; }
     }
     if (it.isFg && it.cc6 > it.sale6 * 2 && it.cc6 > 1e8) d.ccHeavy.push(it);
+
+    // BOM 어디에도 안 걸리는 자재 = 쓸 데가 없다. 감축이 아니라 처분 결정 대상.
+    if (!it.isFg && it.group === MAT_UNUSED_GROUP && it.end6 > 0) {
+      d.unusedAmt += it.end6; d.unusedCnt++;
+    }
   });
 
   d.topGroups = Array.from(d.byGroup.entries())
@@ -308,10 +440,7 @@ function buildReviewTree(items, tab) {
     nodes.push({ id: "t|" + type, parent: null, level: 0, label: type, items: ti });
 
     var groups = {};
-    ti.forEach(function(it) {
-      var g = (it.businessUnit ? it.businessUnit + " / " : "") + it.itemGroup;
-      (groups[g] = groups[g] || []).push(it);
-    });
+    ti.forEach(function(it) { (groups[it.group] = groups[it.group] || []).push(it); });
     Object.keys(groups)
       .sort(function(a, b) { return revAgg(groups[b]).end - revAgg(groups[a]).end; })
       .forEach(function(g) {
@@ -360,8 +489,10 @@ function revSumTable(tree, T) {
 
     var pct = a.end / total * 100;
     var cls = "";
-    if (n.level === 1 && a.delta > 50e8)          cls = " rv-hot";
-    else if (a.mos === Infinity && a.end > 10e8)  cls = " rv-crit";
+    // BOM 어디에도 안 걸리고 출고도 없는 자재 = 불용. 감축이 아니라 처분 결정 대상.
+    if (n.level === 1 && n.label === MAT_UNUSED_GROUP) cls = " rv-crit";
+    else if (n.level === 1 && a.delta > 50e8)          cls = " rv-hot";
+    else if (a.mos === Infinity && a.end > 10e8)       cls = " rv-crit";
 
     // "왜 늘었나" — 구매입고인지 생산입고인지가 답이다
     var cause = "";
@@ -371,6 +502,12 @@ function revSumTable(tree, T) {
     }
     if (a.cc > a.sale && a.cc > 1e8) {
       cause += "<span class='rv-badge rv-b-danger'>비판매출고 " + revMoney(a.cc) + "억</span>";
+    }
+    // 공용 자재 — 여러 품목군에 쓰이지만 소요량 최대 품목군에 전액 귀속했다.
+    // 숨기지 않고 배지로 드러내야 "왜 여기 넣었냐"에 답할 수 있다.
+    if (n.item && n.item.sharedN > 1) {
+      cause += "<span class='rv-badge rv-b-shared' title='" +
+        escapeHtml(n.item.shared.join(" · ")) + "'>공용 " + n.item.sharedN + "</span>";
     }
 
     rows += "<tr class='rv-l" + n.level + cls + "'>" + revRowHead(n, hasKid) +
@@ -538,6 +675,9 @@ function renderInventoryReview() {
   if (D.ccAmt > 1e8) chips.push(revChip("danger", "비판매출고 " + revMoney(D.ccAmt) + "억",
                                D.ccHeavy.length + "품목 · 샘플·데모 등 비용처리"));
   chips.push(revChip("warn",   "계획없음 " + revMoney(D.noPlanAmt) + "억", D.noPlanCnt + "품목"));
+  if (D.unusedAmt > 1e8)
+    chips.push(revChip("danger", "불용자재 " + revMoney(D.unusedAmt) + "억",
+                       D.unusedCnt + "품목 · BOM 미사용 → 처분 검토"));
   chips.push(revChip("danger", "소진불가 " + revMoney(D.dormantAmt) + "억", D.dormantCnt + "품목 · 3개월 무출고"));
   chips.push(revChip("",       "재고 12개월↑ " + revMoney(D.longMosAmt) + "억", D.longMosCnt + "품목"));
 
