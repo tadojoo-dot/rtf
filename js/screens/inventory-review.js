@@ -857,6 +857,83 @@ function reviewTotals() {
   };
 }
 
+// ── 원부자재 전망의 범위 — "왜 실적보다 작냐"에 대한 답 ───────────────────────
+// 회의에서 반드시 나온다: "6월까진 1,100억인데 7월부터 왜 876억이냐?"
+// 답은 원부자재의 BOM 커버리지다. 각주로 박아둔다 — 숫자는 하드코딩하지 않고 계산한다.
+//
+// 네 갈래로 나뉘고, 액션 오너가 다르다. 뭉쳐 놓으면 "저건 우리 게 아닌데요"가 나온다.
+//   ① 전망에 잡힘        BOM 소요·입고계획으로 흐름 계산이 된다          정상
+//   ② 하반기 계획 없음    그 자재를 쓰는 완제품에 생산계획이 없다          사업부 확인
+//   ③ BOM 미사용·불용     BOM에 아예 없고 6월 출고도 0 — 안 쓰인다        처분 검토
+//   ④ 기준정보 오류       단위 환산 불가 / 현재고 미연결                  기준정보 수정
+function reviewMatCoverage() {
+  var cl = state.closing;
+  if (!cl || !cl.items) return null;
+
+  var inFlow = new Set(), noCalc = new Set();
+  if (typeof calcMatFlowRows === "function") {
+    (calcMatFlowRows(null, null) || []).forEach(function(r) { inFlow.add(r.flow.componentCode); });
+  }
+  ((state.bomResult && state.bomResult.matFlows) || []).forEach(function(f) {
+    // matFlows엔 있는데 흐름 계산에서 빠진 것 = 현재고 미연결 / 단위 환산 불가
+    if (!inFlow.has(f.componentCode) && (f.baseQty === null || f.unitOk === false))
+      noCalc.add(f.componentCode);
+  });
+  var inBomRaw = new Set();
+  (state.mappedData.bom_components || []).forEach(function(b) {
+    if (b.componentCode) inBomRaw.add(b.componentCode);
+  });
+
+  var g = {
+    ok:     { n: 0, end: 0, out: 0 },
+    noPlan: { n: 0, end: 0, out: 0 },
+    unused: { n: 0, end: 0, out: 0 },
+    badRef: { n: 0, end: 0, out: 0 },
+  };
+  cl.items.forEach(function(it) {
+    if (REV_FG.indexOf(it.type) >= 0) return;
+    var m6 = it.mon[5];
+    if (!m6 || !(m6.end > 0)) return;
+    var b = inFlow.has(it.itemCode)   ? g.ok
+          : noCalc.has(it.itemCode)   ? g.badRef
+          : inBomRaw.has(it.itemCode) ? g.noPlan    // BOM엔 있는데 소요가 0
+          :                             g.unused;   // BOM에 아예 없다
+    b.n++; b.end += m6.end; b.out += (m6.prodOut || 0);
+  });
+  return g;
+}
+
+function revMatCoverageNote() {
+  var g = (typeof reviewMatCoverage === "function") ? reviewMatCoverage() : null;
+  if (!g) return "";
+  var tot    = g.ok.n + g.noPlan.n + g.unused.n + g.badRef.n;
+  var totEnd = g.ok.end + g.noPlan.end + g.unused.end + g.badRef.end;
+  if (!tot) return "";
+
+  function row(label, v, action) {
+    return "<tr><td class='rv-l-note'>" + label + "</td>" +
+      "<td class='rv-n'>" + v.n.toLocaleString("ko-KR") + "</td>" +
+      "<td class='rv-n'>" + revMoney(v.end) + "억</td>" +
+      "<td class='rv-n'>" + revMoney(v.out) + "억</td>" +
+      "<td class='rv-l-note'>" + action + "</td></tr>";
+  }
+  return "<div class='rv-note-cov'>" +
+    "<div class='rv-note-cov-h'>원부자재 전망의 범위 — 6월말 재고가 있는 <b>" +
+      tot.toLocaleString("ko-KR") + "품목 · " + revMoney(totEnd) + "억</b>" +
+      "<span>7월부터 판매·공급 막대가 실적보다 낮은 이유입니다</span></div>" +
+    "<table class='rv-cov-tbl'><thead><tr>" +
+      "<th>구분</th><th>품목</th><th>6월말 재고</th><th>6월 출고</th><th>다음 액션</th>" +
+    "</tr></thead><tbody>" +
+      row("전망에 잡힘",       g.ok,     "BOM 소요·입고계획으로 흐름이 계산된다") +
+      row("하반기 계획 없음",  g.noPlan, "그 자재를 쓰는 완제품에 생산계획이 없다 → <b>사업부 확인</b>") +
+      row("BOM 미사용 · 불용", g.unused, "BOM에 없고 6월 출고도 0 — 안 쓰인다 → <b>처분 검토</b>") +
+      row("기준정보 오류",     g.badRef, "단위 환산 불가 · 현재고 미연결 → <b>기준정보 수정</b>") +
+    "</tbody></table>" +
+    "<div class='rv-note-cov-f'><b>재공품</b>(6월 출고 76억)은 별도 수불이라 BOM 전개 대상이 아니어서 " +
+      "막대에 안 잡힙니다. 다만 <b>총재고에는 조정행으로 정확히 포함</b>됩니다 — 재고금액은 틀리지 않습니다.</div>" +
+  "</div>";
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 렌더
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1561,6 +1638,7 @@ function renderInventoryReview() {
         "재고금액 = 결산 자재수불 기말 · <b>나보타(플랜트 1220)는 총액만</b> · 유형 = CN열 · " +
         "제·상품 품목군 = 기준정보 품목구분1 / 원부자재 = <b>BOM 역전개</b>(공용은 소요량 최대 품목군에 전액 귀속) · " +
         "<b>판매계획이 없는 재고는 0이 아니라 그대로 이월(flat)</b>되어 12월까지 수평선으로 남습니다." +
+        revMatCoverageNote() +
       "</div>" +
     "</div></div>";
 }
@@ -1597,9 +1675,272 @@ function revWfLine(label, won) {
 }
 
 var _revPopupEl = null;
+var _revItemChartInst = null;
 function closeRevItemPopup() {
+  if (_revItemChartInst) { try { _revItemChartInst.destroy(); } catch (e) {} _revItemChartInst = null; }
   if (_revPopupEl && _revPopupEl.parentNode) _revPopupEl.parentNode.removeChild(_revPopupEl);
   _revPopupEl = null;
+}
+
+// ── ③ 7~12월은 어떻게 되나 — 그 품목 하나의 1~12월 미니 차트(팝업 전용) ─────────────
+// summary.js의 mountScenarioChart와 같은 문법(막대+라인+선 위 금액 라벨+선 아래 재고일수 뱃지)을
+// 그 품목 하나 · 더 작은 캔버스(200px)로 축소한 버전. 계산은 하지 않고 buildReviewItems가
+// 이미 만들어 둔 it.fBase/fRtf/fExc/needWon/covDays와 결산 mon[]만 읽어 그린다.
+function mountRevItemChart(it, cl) {
+  var canvas = document.getElementById("rvPopChartCanvas");
+  if (!canvas || !window.Chart) return;
+  if (_revItemChartInst) { try { _revItemChartInst.destroy(); } catch (e) {} _revItemChartInst = null; }
+
+  var fontFam = (typeof FONT !== "undefined") ? FONT
+    : "'Pretendard Variable', Pretendard, 'Apple SD Gothic Neo', sans-serif";
+  var allMonths = REVIEW_MONTHS.concat(FCST_MONTHS);   // 2026-01~12 (12개월)
+
+  // ── 실적(1~6월, idx0~5) — 결산 mon[0..5] ────────────────────────────────────
+  var outAll = allMonths.map(function() { return null; });   // 판매(제·상품) / 생산출고(원부자재)
+  var supAll = allMonths.map(function() { return null; });   // 구매입고+생산입고
+  var invActLine = allMonths.map(function() { return null; });
+  var daysAll = allMonths.map(function() { return null; });  // 그 달 재고÷그 달 출고×그 달 일수 (실적 구간 뱃지)
+
+  for (var i = 0; i < 6; i++) {
+    var mm = cl && cl.mon[i];
+    if (!mm) continue;
+    var out = it.isFg ? mm.sale : mm.prodOut;
+    outAll[i] = Number.isFinite(out) ? out / 1e8 : null;
+    supAll[i] = ((mm.buyIn || 0) + (mm.prodIn || 0)) / 1e8;
+    invActLine[i] = Number.isFinite(mm.end) ? mm.end / 1e8 : null;
+    if (Number.isFinite(mm.end)) {
+      if (out > 0) daysAll[i] = mm.end / out * monthDays(REVIEW_MONTHS[i]);
+      else if (mm.end > 0) daysAll[i] = Infinity;
+    }
+  }
+  // 6월 앵커 — 재고금액 라인이 실적↔전망 경계에서 끊기지 않도록 전망 라인에도 공유점으로 심는다
+  // (summary.js buildInvLine과 같은 방식).
+  var anchorEok = invActLine[5];
+
+  // ── 전망(7~12월) 판매·공급 막대 — 제·상품만(computeRtfItems). 원부자재는 없다(생략) ───
+  var hasPlanBars = false;
+  if (it.isFg && typeof computeRtfItems === "function") {
+    var rtfItems = computeRtfItems();
+    var matched = rtfItems.filter(function(r) { return r.itemCode === it.itemCode; });
+    if (matched.length) {
+      for (var mi = 0; mi < 6; mi++) {
+        (function(mi) {
+          var saleWon = 0, supWon = 0, any = false;
+          matched.forEach(function(r) {
+            var ms = r.monthlyStatus && r.monthlyStatus[mi];
+            if (ms && r.hasCost) {
+              if (Number.isFinite(ms.salesQty))  { saleWon += ms.salesQty  * r.standardCost; any = true; }
+              if (Number.isFinite(ms.supplyQty)) { supWon  += ms.supplyQty * r.standardCost; any = true; }
+            }
+          });
+          if (any) {
+            outAll[6 + mi] = saleWon / 1e8;
+            supAll[6 + mi] = supWon / 1e8;
+            hasPlanBars = true;
+          }
+        })(mi);
+      }
+    }
+  }
+
+  // 각주 — 막대를 생략한 경우 "데이터 없음"으로 오해하지 않도록 이유를 명시한다.
+  var footEl = document.querySelector(".rv-pop-chart-foot");
+  if (footEl) {
+    var footTxt;
+    if (it.isFg && hasPlanBars) {
+      footTxt = "1~6월 실적(결산) · 7~12월 계획(판매계획·공급계획 × 표준원가)";
+    } else if (it.isFg) {
+      footTxt = "1~6월 실적(결산) · 7~12월 판매·공급계획이 연결되지 않아 막대를 생략합니다.";
+    } else {
+      footTxt = "1~6월 실적(결산) · 7~12월 BOM 소요. 원부자재는 판매·공급 계획이 없어 막대를 생략합니다.";
+    }
+    footEl.textContent = footTxt;
+  }
+
+  // ── 재고금액 라인(3단) — 6월 공유 앵커점 + 7~12월 전망 ────────────────────────
+  function buildLine(fArr) {
+    var arr = allMonths.map(function() { return null; });
+    for (var j = 0; j < 5; j++) arr[j] = invActLine[j];
+    arr[5] = anchorEok;
+    for (var mi2 = 0; mi2 < 6; mi2++) arr[6 + mi2] = Number.isFinite(fArr[mi2]) ? fArr[mi2] / 1e8 : null;
+    return arr;
+  }
+  // 0.05억 미만 차이는 같은 값으로 본다(표 컷오프와 동일 감성) — 겹쳐서 지저분해지는 걸 막는다.
+  function sameArr(a, b) {
+    for (var mi3 = 0; mi3 < 6; mi3++) { if (Math.abs((a[mi3] || 0) - (b[mi3] || 0)) >= 5e6) return false; }
+    return true;
+  }
+  var invBaseLine = buildLine(it.fBase);
+  var hasRtfLine  = !sameArr(it.fBase, it.fRtf);
+  var hasExcLine  = !sameArr(it.fRtf, it.fExc);
+  var invRtfLine  = hasRtfLine ? buildLine(it.fRtf) : null;
+  var invExcLine  = hasExcLine ? buildLine(it.fExc) : null;
+
+  // ── 전망 재고일수 뱃지 — 선행 커버리지(it.covDays, 단일값을 전망 구간 전체에 표시) ─────
+  var covTxt = null;
+  if (Number.isFinite(it.covDays)) {
+    covTxt = Math.round(it.covDays) + "일";
+  } else if (it.covDays === Infinity) {
+    covTxt = (Number.isFinite(it.covFallback) && it.covFallback > 0)
+      ? "∞(~" + Math.round(it.covFallback) + "일)" : "∞";
+  }
+
+  // ── 막대 배경색(실적=진하게 / 전망=연하게) — summary.js와 동일 톤(남색=판매·회색=공급) ──
+  var salesBg  = allMonths.map(function(m, i2) { return i2 < 6 ? "rgba(30,58,138,0.85)" : "rgba(30,58,138,0.28)"; });
+  var supplyBg = allMonths.map(function(m, i2) { return i2 < 6 ? "rgba(55,65,81,0.85)"  : "rgba(55,65,81,0.28)"; });
+
+  var datasets = [
+    { label: it.isFg ? "판매금액" : "생산출고금액", data: outAll, backgroundColor: salesBg,
+      borderColor: "transparent", borderRadius: 3, order: 2 },
+    { label: "공급금액", data: supAll, backgroundColor: supplyBg,
+      borderColor: "transparent", borderRadius: 3, order: 2 },
+    { type: "line", label: "재고금액(실적)", data: invActLine, borderColor: "#1e3a8a", backgroundColor: "transparent",
+      borderWidth: 2.5, pointRadius: 3, tension: 0.3, spanGaps: false, order: 1 },
+  ];
+  var invActLineIdx = 2;
+
+  // 조정이 없으면(원계획 하나뿐) summary.js "기존" 톤, 조정이 쌓일수록 뒤 라인일수록 진하게
+  // — summary.js의 기존/RTF조정/과잉조정 3단계 톤을 그대로 따른다.
+  var baseStyle = (!hasRtfLine && !hasExcLine)
+    ? { borderColor: "#9ca3af", borderDash: [6, 3], borderWidth: 2, pointRadius: 2 }
+    : { borderColor: "#d1d5db", borderDash: [5, 4], borderWidth: 1.5, pointRadius: 1.5 };
+  datasets.push(Object.assign({ type: "line", label: "재고금액(원계획)", data: invBaseLine,
+    backgroundColor: "transparent", tension: 0.3, spanGaps: false, order: 1 }, baseStyle));
+  var primaryLineIdx = datasets.length - 1;
+
+  if (hasRtfLine) {
+    var rtfStyle = hasExcLine
+      ? { borderColor: "#6b7280", borderDash: [4, 4], borderWidth: 1.5, pointRadius: 1.5 }
+      : { borderColor: "#1e3a8a", borderDash: [4, 4], borderWidth: 2.5, pointRadius: 3 };
+    datasets.push(Object.assign({ type: "line", label: "재고금액(RTF 조정후)", data: invRtfLine,
+      backgroundColor: "transparent", tension: 0.3, spanGaps: false, order: 1 }, rtfStyle));
+    primaryLineIdx = datasets.length - 1;
+  }
+  if (hasExcLine) {
+    datasets.push({ type: "line", label: "재고금액(과잉감축 후)", data: invExcLine,
+      borderColor: "#16a34a", backgroundColor: "transparent", borderWidth: 2.5, pointRadius: 3,
+      tension: 0.3, spanGaps: false, order: 1 });
+    primaryLineIdx = datasets.length - 1;
+  }
+
+  // ── 막대 값 레이블 — summary.js datalabelsPlugin과 같은 문법(작은 캔버스라 폰트만 축소) ──
+  var barLabelsPlugin = {
+    afterDatasetsDraw: function(chart) {
+      var ctx = chart.ctx;
+      ctx.save();
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      chart.data.datasets.forEach(function(ds, di) {
+        if (ds.type === "line") return;
+        var meta = chart.getDatasetMeta(di);
+        if (meta.hidden) return;
+        meta.data.forEach(function(el, i2) {
+          var val = ds.data[i2];
+          if (!val || val <= 0) return;
+          ctx.font = "bold 10px " + fontFam;
+          ctx.fillStyle = "#6b7280";
+          ctx.fillText(Math.round(val).toLocaleString(), el.x, el.y - 3);
+        });
+      });
+      ctx.restore();
+    },
+  };
+
+  // ── 재고금액 값 레이블 + 재고일수 뱃지 — summary.js daysTagsPlugin과 같은 문법·경계 가드 ──
+  var lineTagsPlugin = {
+    afterDraw: function(chart) {
+      var ctx = chart.ctx;
+      var metaAct = chart.getDatasetMeta(invActLineIdx);
+      var metaPri = chart.getDatasetMeta(primaryLineIdx);
+      var priData = datasets[primaryLineIdx].data;
+
+      // 좁은 팝업 — 점 간격이 뱃지 폭보다 좁으면 뱃지 전체를 생략한다(겹치면 생략).
+      var xStep = metaAct.data.length > 1 ? Math.abs(metaAct.data[1].x - metaAct.data[0].x) : 0;
+      var canBadge = xStep >= 30;
+
+      ctx.save();
+      ctx.textAlign = "center";
+
+      allMonths.forEach(function(m, i2) {
+        var isFcst  = i2 >= 6;
+        var lineVal = isFcst ? priData[i2] : invActLine[i2];
+        if (lineVal === null || lineVal === undefined) return;
+        var meta = isFcst ? metaPri : metaAct;
+        var el = meta.data[i2];
+        if (!el) return;
+
+        // 금액 레이블(선 위)
+        ctx.font = "bold 12px " + fontFam;
+        ctx.fillStyle = "#1e3a8a";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(Math.round(lineVal).toLocaleString() + "억", el.x, el.y - 6);
+
+        // 재고일수 뱃지(선 아래) — 실적은 그 달 회전일수, 전망은 선행 커버리지(단일값)
+        if (!canBadge) return;
+        var dText = isFcst ? covTxt : (function() {
+          var d = daysAll[i2];
+          if (d === null || d === undefined) return null;
+          if (d === Infinity) return "∞";
+          return Math.round(d) + "일";
+        })();
+        if (!dText) return;
+
+        ctx.font = "bold 10.5px " + fontFam;
+        var tw = ctx.measureText(dText).width + 12;
+        var th = 17;
+        var tx = el.x - tw / 2;
+        var ty = el.y + 5;
+        if (ty + th > chart.chartArea.bottom - 1) return;   // 경계 가드(summary.js와 같은 패턴)
+
+        if (typeof _drawRoundRect === "function") {
+          ctx.fillStyle = "rgba(15,118,110,0.12)";
+          _drawRoundRect(ctx, tx, ty, tw, th, 4);
+          ctx.fill();
+          ctx.strokeStyle = "rgba(15,118,110,0.35)";
+          ctx.lineWidth = 1;
+          _drawRoundRect(ctx, tx, ty, tw, th, 4);
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = "rgba(15,118,110,0.12)";
+          ctx.fillRect(tx, ty, tw, th);
+        }
+
+        ctx.fillStyle = "#0f766e";
+        ctx.textBaseline = "middle";
+        ctx.fillText(dText, el.x, ty + th / 2);
+      });
+
+      ctx.restore();
+    },
+  };
+
+  _revItemChartInst = new Chart(canvas.getContext("2d"), {
+    type: "bar",
+    data: { labels: allMonths.map(monthLabel), datasets: datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      layout: { padding: { top: 16 } },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              if (ctx.raw === null || ctx.raw === undefined) return null;
+              return ctx.dataset.label + ": " + Math.round(ctx.raw).toLocaleString() + "억";
+            },
+          },
+        },
+      },
+      scales: {
+        x: { grid: { color: "#f3f4f6" }, ticks: { font: { family: fontFam, size: 10.5 } } },
+        y: {
+          grid: { color: "#f3f4f6" },
+          ticks: { font: { family: fontFam, size: 10.5 }, callback: function(v) { return Math.round(v).toLocaleString() + "억"; } },
+        },
+      },
+    },
+    plugins: [barLabelsPlugin, lineTagsPlugin],
+  });
 }
 
 function openRevItemPopup(itemCode) {
@@ -1760,6 +2101,15 @@ function openRevItemPopup(itemCode) {
             }).join("") + "</div>" +
           "</div>"
         : "") +
+      (window.Chart
+        ? "<div class='rv-pop-sec'>" +
+            "<div class='rv-pop-h'>③ 7~12월은 어떻게 되나</div>" +
+            "<div class='exc-diag-chartbox'>" +
+              "<div class='rv-pop-chart-wrap'><canvas id='rvPopChartCanvas'></canvas></div>" +
+            "</div>" +
+            "<div class='rv-pop-chart-foot rv-mut'></div>" +
+          "</div>"
+        : "") +
       "<div class='exc-diag-opinion'><span class='exc-diag-opinion-tag'>🤖 AI 소견</span>" + opinionHtml + "</div>" +
       "<div class='rv-pop-sec'>" +
         "<span class='rv-pop-oplabel'>담당자 의견</span>" +
@@ -1772,6 +2122,9 @@ function openRevItemPopup(itemCode) {
     "</div>";
   document.body.appendChild(ov);
   _revPopupEl = ov;
+
+  // 팝업이 문서에 붙은 뒤에야 canvas가 실제 크기를 갖는다 — 붙기 전엔 Chart.js가 그릴 수 없다.
+  if (window.Chart) mountRevItemChart(it, cl);
 
   ov.addEventListener("click", function(e) { if (e.target === ov) closeRevItemPopup(); });
   var closeBtn = ov.querySelector(".exc-diag-close");
