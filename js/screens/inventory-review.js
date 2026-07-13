@@ -861,11 +861,27 @@ function reviewTotals() {
 // 회의에서 반드시 나온다: "6월까진 1,100억인데 7월부터 왜 876억이냐?"
 // 답은 원부자재의 BOM 커버리지다. 각주로 박아둔다 — 숫자는 하드코딩하지 않고 계산한다.
 //
-// 네 갈래로 나뉘고, 액션 오너가 다르다. 뭉쳐 놓으면 "저건 우리 게 아닌데요"가 나온다.
-//   ① 전망에 잡힘        BOM 소요·입고계획으로 흐름 계산이 된다          정상
-//   ② 하반기 계획 없음    그 자재를 쓰는 완제품에 생산계획이 없다          사업부 확인
-//   ③ BOM 미사용·불용     BOM에 아예 없고 6월 출고도 0 — 안 쓰인다        처분 검토
-//   ④ 기준정보 오류       단위 환산 불가 / 현재고 미연결                  기준정보 수정
+// 액션 오너가 다르다. 뭉쳐 놓으면 "저건 우리 게 아닌데요"가 나온다.
+//
+// BOM 소요 = 완제품 '공급계획(생산계획)' × BOM 계수 (computeBomExpansion의 demandField 기본값
+// = "supplyQty"). 소요가 0이라는 건 '판매계획'이 아니라 '생산계획'이 없다는 뜻이다.
+//
+// 그런데 "판매계획은 있는데 공급계획이 0"이 곧 품절 위험은 아니다 —
+// 완제품 보유재고로 대응 가능하면 안 만드는 게 정상이다. 그걸 이미 판정하는 게 RTF다.
+// 그래서 두 기준으로 가른다:
+//   ① 그 자재가 최근 3개월 실제로 출고됐나 (= 매달 쓰던 자재인가)
+//   ② 그 자재의 부모 완제품이 RTF에서 공급부족인가 (= 재고로도 못 버티는가)
+//
+//   전망에 잡힘        BOM 소요·입고계획으로 흐름 계산이 된다              정상
+//   계획 누락 의심      과거 매달 썼는데 하반기 소요 0 + 부모가 RTF 부족    ★ 확인 필요
+//   재고로 대응        과거 썼지만 부모가 RTF 부족이 아니다 → 안 만들어도 됨  정상
+//   안 쓴다           최근 3개월 출고 0                                 정상
+//   BOM 미사용·불용    BOM에 아예 없고 출고도 0                          처분 검토
+//   기준정보 오류      단위 환산 불가 / 현재고 미연결                      기준정보 수정
+//
+// 실측: 계획 누락 의심 48품목이 전부 소화효소제 원료(Pancellase·Lipase·Pancreatin 등)이고
+// 부모가 8000005·8000026·8300972로 같다 — 완제품 몇 개의 생산계획이 안 올라온 것이
+// 자재 48개로 퍼진 것이다.
 function reviewMatCoverage() {
   var cl = state.closing;
   if (!cl || !cl.items) return null;
@@ -879,25 +895,52 @@ function reviewMatCoverage() {
     if (!inFlow.has(f.componentCode) && (f.baseQty === null || f.unitOk === false))
       noCalc.add(f.componentCode);
   });
-  var inBomRaw = new Set();
+
+  // 자재 → 그 자재를 쓰는 상위 품목(BOM root)
+  var inBomRaw = new Set(), parentsOf = new Map();
   (state.mappedData.bom_components || []).forEach(function(b) {
-    if (b.componentCode) inBomRaw.add(b.componentCode);
+    if (!b.componentCode) return;
+    inBomRaw.add(b.componentCode);
+    if (!parentsOf.has(b.componentCode)) parentsOf.set(b.componentCode, new Set());
+    if (b.rootItemCode) parentsOf.get(b.componentCode).add(b.rootItemCode);
   });
 
+  // 부모 완제품이 RTF에서 공급부족인가 (= 보유재고로도 못 버틴다)
+  var shortFg = new Set();
+  if (typeof computeRtfItems === "function" && typeof STATUS !== "undefined") {
+    computeRtfItems().forEach(function(it) {
+      if ((it.monthlyStatus || []).some(function(m) { return m && m.status === STATUS.SHORTAGE; }))
+        shortFg.add(it.itemCode);
+    });
+  }
+
   var g = {
-    ok:     { n: 0, end: 0, out: 0 },
-    noPlan: { n: 0, end: 0, out: 0 },
-    unused: { n: 0, end: 0, out: 0 },
-    badRef: { n: 0, end: 0, out: 0 },
+    ok:      { n: 0, end: 0, out: 0 },
+    missing: { n: 0, end: 0, out: 0 },   // ★ 계획 누락 의심
+    covered: { n: 0, end: 0, out: 0 },   // 재고로 대응 가능
+    notUsed: { n: 0, end: 0, out: 0 },   // 안 쓴다
+    unused:  { n: 0, end: 0, out: 0 },   // BOM 미사용 · 불용
+    badRef:  { n: 0, end: 0, out: 0 },   // 기준정보 오류
   };
   cl.items.forEach(function(it) {
     if (REV_FG.indexOf(it.type) >= 0) return;
     var m6 = it.mon[5];
     if (!m6 || !(m6.end > 0)) return;
-    var b = inFlow.has(it.itemCode)   ? g.ok
-          : noCalc.has(it.itemCode)   ? g.badRef
-          : inBomRaw.has(it.itemCode) ? g.noPlan    // BOM엔 있는데 소요가 0
-          :                             g.unused;   // BOM에 아예 없다
+
+    var b;
+    if (inFlow.has(it.itemCode))          b = g.ok;
+    else if (noCalc.has(it.itemCode))     b = g.badRef;
+    else if (!inBomRaw.has(it.itemCode))  b = g.unused;
+    else {
+      // BOM엔 있는데 소요가 0 → "실제로 쓰던 자재인가" + "부모가 RTF 부족인가"로 가른다
+      var out3 = 0;
+      for (var i = 3; i <= 5; i++) { var mm = it.mon[i]; if (mm) out3 += (mm.prodOut || 0); }
+      var parentShort = false;
+      (parentsOf.get(it.itemCode) || new Set()).forEach(function(p) {
+        if (shortFg.has(p)) parentShort = true;
+      });
+      b = (out3 <= 0) ? g.notUsed : (parentShort ? g.missing : g.covered);
+    }
     b.n++; b.end += m6.end; b.out += (m6.prodOut || 0);
   });
   return g;
@@ -906,8 +949,9 @@ function reviewMatCoverage() {
 function revMatCoverageNote() {
   var g = (typeof reviewMatCoverage === "function") ? reviewMatCoverage() : null;
   if (!g) return "";
-  var tot    = g.ok.n + g.noPlan.n + g.unused.n + g.badRef.n;
-  var totEnd = g.ok.end + g.noPlan.end + g.unused.end + g.badRef.end;
+  // 합계는 그룹 키를 순회해서 낸다 — 분류가 바뀌어도 합이 어긋나지 않는다
+  var tot = 0, totEnd = 0;
+  Object.keys(g).forEach(function(k) { tot += g[k].n; totEnd += g[k].end; });
   if (!tot) return "";
 
   function row(label, v, action) {
@@ -920,17 +964,24 @@ function revMatCoverageNote() {
   return "<div class='rv-note-cov'>" +
     "<div class='rv-note-cov-h'>원부자재 전망의 범위 — 6월말 재고가 있는 <b>" +
       tot.toLocaleString("ko-KR") + "품목 · " + revMoney(totEnd) + "억</b>" +
-      "<span>7월부터 판매·공급 막대가 실적보다 낮은 이유입니다</span></div>" +
+      "<span>7월부터 판매·공급 막대가 실적보다 낮은 이유입니다. " +
+      "BOM 소요 = 완제품 <b>생산계획</b> × BOM 계수 — 판매계획이 아닙니다.</span></div>" +
     "<table class='rv-cov-tbl'><thead><tr>" +
       "<th>구분</th><th>품목</th><th>6월말 재고</th><th>6월 출고</th><th>다음 액션</th>" +
     "</tr></thead><tbody>" +
-      row("전망에 잡힘",       g.ok,     "BOM 소요·입고계획으로 흐름이 계산된다") +
-      row("하반기 계획 없음",  g.noPlan, "그 자재를 쓰는 완제품에 생산계획이 없다 → <b>사업부 확인</b>") +
-      row("BOM 미사용 · 불용", g.unused, "BOM에 없고 6월 출고도 0 — 안 쓰인다 → <b>처분 검토</b>") +
-      row("기준정보 오류",     g.badRef, "단위 환산 불가 · 현재고 미연결 → <b>기준정보 수정</b>") +
+      row("전망에 잡힘",        g.ok,      "BOM 소요·입고계획으로 흐름이 계산된다") +
+      row("★ 계획 누락 의심",    g.missing, "매달 쓰던 자재인데 하반기 소요가 0이고, " +
+                                           "부모 완제품이 <b>RTF 공급부족</b> → <b>생산계획 확인</b>") +
+      row("재고로 대응",        g.covered, "과거엔 썼지만 완제품 재고로 버틴다 — 안 만드는 게 정상") +
+      row("안 쓴다",           g.notUsed, "최근 3개월 출고 0 — 하반기에도 안 쓴다") +
+      row("BOM 미사용 · 불용",  g.unused,  "BOM에 없고 6월 출고도 0 → <b>처분 검토</b>") +
+      row("기준정보 오류",      g.badRef,  "단위 환산 불가 · 현재고 미연결 → <b>기준정보 수정</b>") +
     "</tbody></table>" +
-    "<div class='rv-note-cov-f'><b>재공품</b>(6월 출고 76억)은 별도 수불이라 BOM 전개 대상이 아니어서 " +
-      "막대에 안 잡힙니다. 다만 <b>총재고에는 조정행으로 정확히 포함</b>됩니다 — 재고금액은 틀리지 않습니다.</div>" +
+    "<div class='rv-note-cov-f'>" +
+      "<b>판매계획이 있는데 생산계획이 0</b>이라고 곧 품절은 아닙니다 — 완제품 보유재고로 대응 가능하면 " +
+      "안 만드는 게 정상입니다. 그래서 <b>부모 완제품이 RTF에서 실제로 공급부족인지</b>로 갈랐습니다.<br>" +
+      "<b>재공품</b>(6월 출고 76억)은 별도 수불이라 BOM 전개 대상이 아니어서 막대에 안 잡힙니다. " +
+      "다만 <b>총재고에는 조정행으로 정확히 포함</b>됩니다 — 재고금액은 틀리지 않습니다.</div>" +
   "</div>";
 }
 

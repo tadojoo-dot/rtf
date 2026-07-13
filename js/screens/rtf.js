@@ -438,7 +438,16 @@ function computeRtfItems(bomMapArg, allTypes, goodsAdj) {
         endingQty = Math.max(availableQty - salesQty, 0);
         rtfAmount = amountWithCost(rtfQty, item);
         shortageAmount = shortageQty > 0 ? amountWithCost(shortageQty, item) : 0;
-        endingAmount = amountWithCost(endingQty, item);
+        // 재고 '잔고'는 장부단가(unitInvValue = 기초금액 ÷ 기초수량)로 평가한다.
+        // 흐름(판매·공급·부족)은 표준원가가 맞지만 잔고는 아니다 — 결산 재고금액이 장부단가 기준이라
+        // 표준원가로 평가하면 6→7월에 금액이 절벽처럼 끊긴다.
+        //   예) 7000843 세비카정: 장부단가 14,761원 vs 표준원가 8,600원
+        //       6월말 340,034개 = 50.2억(결산)  →  7월말 347,115개인데 29.9억(표준원가)  ← 수량은 느는데 금액이 준다
+        //       장부단가로 평가하면 51.2억 — 결산과 이어진다.
+        // totalInvAmountWon(총재고)은 이미 unitInvValue를 쓴다. 품목 레벨만 어긋나 있었다.
+        endingAmount = (endingQty !== null && Number.isFinite(item.unitInvValue) && item.unitInvValue > 0)
+          ? endingQty * item.unitInvValue
+          : amountWithCost(endingQty, item);
         endingRevenue = amountWithPrice(endingQty, item);
         // 매출(판가) 기준 값 — 판매/RTF/매출차질 컬럼용
         rtfRevenue      = amountWithPrice(rtfQty, item);
