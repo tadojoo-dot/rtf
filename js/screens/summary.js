@@ -307,25 +307,55 @@ function mountScenarioChart(idPrefix) {
     return null;
   }
 
-  // ── 판매·공급 막대(전 시나리오 공통, 기존 로직 유지) ────────────────────────
+  // ── 판매·공급 막대 ─────────────────────────────────────────────────────────
+  // 실적(결산)과 전망(계획)이 같은 것을 담아야 한다. 예전엔 안 그랬다:
+  //   실적 판매금액 1,119억 = 완제품·상품 641 + 원부자재 사내소비 478 (+ 나보타 포함)
+  //   전망 판매금액   494억 = 완제품·상품 판매계획만
+  // → 같은 축에 그리니 7월에 절벽처럼 떨어져 "판매가 반토막난다"로 읽혔다. 사실이 아니다.
+  //
+  // 전망도 실적과 같은 정의로 채운다:
+  //   판매금액 = 완제품·상품 판매계획 + 원부자재 소비(BOM 소요) + 나보타 출고
+  //   공급금액 = 완제품·상품 공급계획 + 원부자재 입고(입고계획) + 나보타 입고
+  // 원부자재는 calcMatFlowRows가 이미 cons(BOM 소요)·intake(입고계획)를 갖고 있다.
+  // 나보타는 비점검(총액만 관리)이라 계획 파일에 0품목이지만, 나보타_RAW에 7~12월 입출고가
+  // 있으므로 총액으로 얹는다 — 실적 막대에도 이미 섞여 있어 빼면 오히려 정의가 어긋난다.
+  var matFlowBase = (typeof calcMatFlowRows === "function") ? calcMatFlowRows(null, null) : null;
+  var nabotaMap   = (typeof getNabotaInv === "function") ? getNabotaInv() : {};
+
+  // 원부자재 월별 소요·입고 (억) — 없으면 0 (BOM 미전개)
+  function matAmt(ri, field) {
+    if (!matFlowBase) return 0;
+    var t = 0;
+    matFlowBase.forEach(function(r) {
+      if (!Number.isFinite(r.flow.unitVal)) return;
+      t += (r[field][ri] || 0) * r.flow.unitVal;
+    });
+    return t / 1e8;
+  }
+  // 나보타 총액 (억) — 나보타_RAW는 이미 억 단위
+  function nabotaAmt(m, field) {
+    var r = nabotaMap[m];
+    return (r && Number.isFinite(r[field])) ? r[field] : 0;
+  }
+
   var salesData = allMonths.map(function(m) {
     if (!months.includes(m)) return getActuals(m, "salesAmt");
-    var ri = months.indexOf(m), total = 0, has = false;
+    var ri = months.indexOf(m), fg = 0;
     rtfItemsArr.forEach(function(item) {
       var ms = item.monthlyStatus[ri];
-      if (ms && item.hasCost && Number.isFinite(ms.salesQty)) { total += ms.salesQty * item.standardCost; has = true; }
+      if (ms && item.hasCost && Number.isFinite(ms.salesQty)) fg += ms.salesQty * item.standardCost;
     });
-    return has ? total / 100000000 : 0;
+    return fg / 1e8 + matAmt(ri, "cons") + nabotaAmt(m, "outAmt");
   });
 
   var supplyData = allMonths.map(function(m) {
     if (!months.includes(m)) return getActuals(m, "supplyAmt");
-    var ri = months.indexOf(m), total = 0, has = false;
+    var ri = months.indexOf(m), fg = 0;
     rtfItemsArr.forEach(function(item) {
       var ms = item.monthlyStatus[ri];
-      if (ms && item.hasCost && Number.isFinite(ms.supplyQty)) { total += ms.supplyQty * item.standardCost; has = true; }
+      if (ms && item.hasCost && Number.isFinite(ms.supplyQty)) fg += ms.supplyQty * item.standardCost;
     });
-    return has ? total / 100000000 : 0;
+    return fg / 1e8 + matAmt(ri, "intake") + nabotaAmt(m, "intakeAmt");
   });
 
   var invActData = allMonths.map(function(m) {
