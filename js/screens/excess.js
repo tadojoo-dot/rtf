@@ -2065,6 +2065,11 @@ function calcMatFlowRows(fgAdj, matAdj) {
   bomRes.matFlows.forEach(function(f) {
     if (f.baseQty === null) return; // 현재고 미연결 → 계산 불가
     if (f.unitOk === false) return; // 단위 불일치(BOM/재고/입고계획) → 흐름 계산 불가
+    // 단위 환산 — 기초재고·입고계획·BOM소요를 전부 '재고 단위'로 맞춘다.
+    // BOM이 KG인데 재고가 G면 소요를 1,000배 해야 뺄 수 있다 (constraint-engine.js bomUnitScale).
+    var bomScale  = Number.isFinite(f.bomScale)  && f.bomScale  > 0 ? f.bomScale  : 1;
+    var planScale = Number.isFinite(f.planScale) && f.planScale > 0 ? f.planScale : 1;
+
     // 소비량: 부모 완제품 생산(공급)계획 비례 — 제상품 감축 시 소요도 비례 감소
     var cons = months.map(function(m) {
       var total = 0;
@@ -2078,7 +2083,7 @@ function calcMatFlowRows(fgAdj, matAdj) {
         }
         total += req;
       });
-      return total;
+      return total * bomScale;
     });
     // 자체 생산품(반제품 등)은 구매 발주계획이 없다 — 쓴 만큼 만든다.
     // 기본 입고 = BOM 소요량(= 완제품 생산계획 × BOM 계수).
@@ -2089,9 +2094,10 @@ function calcMatFlowRows(fgAdj, matAdj) {
     // (computeAiMatExcessPlan에서 제외 — 취소할 구매 발주가 애초에 없다).
     var selfProd   = matIsSelfProduced(f.componentCode);
     var origIntake = selfProd
-      ? cons.slice()
-      : months.map(function(m) { return f.intakeByMonth[m] || 0; });
+      ? cons.slice()   // 이미 재고 단위로 환산돼 있다
+      : months.map(function(m) { return (f.intakeByMonth[m] || 0) * planScale; });
     var intake = months.map(function(m, mi) {
+      // 담당자가 입력한 조정값은 화면에 보이는 단위(= 재고 단위) 그대로 쓴다 — 환산하지 않는다.
       var k = f.componentCode + "|" + f.plant + "|" + m;
       return (matAdj && k in matAdj) ? matAdj[k] : origIntake[mi];
     });

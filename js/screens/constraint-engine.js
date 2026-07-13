@@ -100,6 +100,24 @@ function shortNoteLabel(note) {
   }).join(" / ");
 }
 
+// ── 단위 환산 ─────────────────────────────────────────────────────────────────
+// BOM·재고·입고계획이 서로 다른 단위를 쓰는 자재가 50품목 있다. 실측해 보니 대부분
+// KG↔G(1,000배)라 환산 계수가 명확했다. BOM이 시스템 기준이므로 BOM 소요량을 재고 단위로
+// 환산해서 쓴다 — 예전엔 이런 자재를 흐름 계산에서 통째로 뺐다(재고 33억·월 출고 15억 누락).
+//
+// 반환: 배율(from → to). 같은 단위면 1. 환산 불가면 null.
+//   질량(mg·g·kg·t)끼리만 환산한다. 부피↔질량(G↔ML), 롤↔개(ROL↔EA)는 밀도·입수를
+//   모르므로 지어내지 않는다 — 그런 자재는 unitOk=false 로 계산에서 뺀다 (3품목, 출고 0억).
+var MASS_UNIT_G = { mg: 0.001, g: 1, kg: 1000, t: 1000000, ton: 1000000 };
+function bomUnitScale(from, to) {
+  var a = String(from || "").trim().toLowerCase();
+  var b = String(to   || "").trim().toLowerCase();
+  if (!a || !b) return 1;              // 한쪽을 모르면 환산하지 않는다 (기존 동작 유지)
+  if (a === b) return 1;
+  if (MASS_UNIT_G[a] && MASS_UNIT_G[b]) return MASS_UNIT_G[a] / MASS_UNIT_G[b];
+  return null;                         // 환산 불가
+}
+
 // ── BOM 전개 엔진 ─────────────────────────────────────────────────────────────
 // demandField: 완제품 수요 기준 컬럼. 기본 "supplyQty"(공급계획=생산계획, 화면 전개용).
 // 요청양식 다운로드는 공급계획 회신 전 단계라 "salesQty"(판매계획)로 소요량을 선전개한다.
@@ -497,12 +515,21 @@ function computeBomExpansion(demandField, prodOverrides) {
       pi.monthly.forEach(function(v, month) { pm[month] = { prodQty: v.prodQty, reqQty: v.reqQty }; });
       _parents.push({ code: pi.code, plant: pi.plant, monthly: pm });
     });
-    // 단위 정합: BOM·재고·입고계획 단위가 (알려진 것끼리) 모두 일치해야 흐름 계산 신뢰 가능
-    // (예: 재고 KG · 입고계획 TB 혼재 시 소비/입고 비교 불가 → 과잉 판단에서 제외)
-    var _units = [comp.bomUnit, invUnit, firstSupplyUnit]
-      .filter(function(u) { return u; })
-      .map(function(u) { return String(u).toLowerCase(); });
-    var unitOk = new Set(_units).size <= 1;
+    // ── 단위 정합 ─────────────────────────────────────────────────────────────
+    // 흐름 계산(기초 + 입고 − 소요)은 세 값이 같은 단위여야 성립한다.
+    //   기초재고(baseQty)  ← 기초재고_자재_RAW  (예: G)
+    //   입고계획(intake)   ← 판매계획_공급계획_RAW 원부자재 (예: G)
+    //   BOM 소요(reqQty)   ← BOM_RAW            (예: KG)
+    //
+    // 예전엔 셋이 다르면 unitOk=false 로 흐름 계산에서 통째로 뺐다. 그런데 실측해 보니
+    // 대부분이 KG↔G(1,000배)라 환산이 명확했다 — 50품목 중 45품목(재고 33억·월 출고 15억).
+    // BOM이 시스템 기준이므로 BOM 소요량을 재고 단위로 환산해서 쓴다.
+    //   환산 전 BOM소요/실출고 = 0.0004배 (1,000배 어긋남)
+    //   환산 후                = 0.32배   (같은 자릿수) ← 실측 검증
+    // 환산 불가한 것만(부피↔질량 G/ML, 롤↔개 ROL/EA) 계산에서 뺀다 — 3품목, 출고 0억.
+    var _bomScale  = bomUnitScale(comp.bomUnit,   invUnit);          // BOM 소요 → 재고 단위
+    var _planScale = bomUnitScale(firstSupplyUnit, invUnit);         // 입고계획 → 재고 단위
+    var unitOk = (_bomScale !== null) && (_planScale !== null);
     matFlows.push({
       componentCode: comp.componentCode,
       componentName: comp.componentName,
@@ -510,6 +537,10 @@ function computeBomExpansion(demandField, prodOverrides) {
       category:      categoryDisplay,
       unit:          resolvedUnit,
       unitOk:        unitOk,
+      // 환산 계수 (1 = 단위 동일). calcMatFlowRows가 소요·입고에 곱해 재고 단위로 맞춘다.
+      bomScale:      Number.isFinite(_bomScale)  ? _bomScale  : 1,
+      planScale:     Number.isFinite(_planScale) ? _planScale : 1,
+      baseUnit:      invUnit || resolvedUnit,
       baseQty:       baseQty, // 현재고 (미연결이면 null)
       unitVal:       _unitVal(comp.componentCode, comp.plant),
       intakeByMonth: _intake,
