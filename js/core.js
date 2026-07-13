@@ -67,6 +67,8 @@ const state = {
   revOpinion: {},         // 담당자 의견: 품목코드 → 문자열. 회의 전에 미리 채운다.
   rtfExpanded: false,
   expandedItemGroups: new Set(),
+  rtfSearch: "",            // RTF판정 매트릭스 품목 검색 (품목코드·품목명)
+  rtfShortOnly: false,      // RTF판정 매트릭스: 공급부족 품목만 보기
   rtfDisplayMode: "qty",
   rtfSectionMode: "business",
   bomStatus: "idle",

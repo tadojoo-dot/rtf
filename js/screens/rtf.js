@@ -912,8 +912,40 @@ function mergeKeyForColumn(node, col, mode) {
   return "";
 }
 
+// ── 매트릭스 필터 (품목 검색 · 부족만 보기) ───────────────────────────────────
+// 회의에서 "세비카정 찾아주세요"를 스크롤로 뒤지고 있었다. 품목 행을 보려면 ①확대 모드로 바꾸고
+// ②품목군을 펼쳐야 한다 — 두 번 클릭이다. 검색·필터가 켜지면 그 두 단계를 건너뛴다.
+//
+// 필터는 items 배열에 적용한다 (노드 트리가 아니라). buildHierarchy가 살아남은 품목으로만
+// 트리를 다시 짜므로 상위 집계(사업부·품목군·총합계)도 자동으로 필터된 값이 된다 —
+// "필터를 걸었는데 합계가 안 변하면 표를 못 믿는다".
+function rtfFilterActive() {
+  return !!((state.rtfSearch || "").trim() || state.rtfShortOnly);
+}
+function rtfFilterItems(items) {
+  var q = (state.rtfSearch || "").trim().toLowerCase();
+  var shortOnly = !!state.rtfShortOnly;
+  if (!q && !shortOnly) return items;
+  return (items || []).filter(function(it) {
+    if (shortOnly) {
+      var hasShort = (it.monthlyStatus || []).some(function(m) {
+        return m && m.status === STATUS.SHORTAGE;
+      });
+      if (!hasShort) return false;
+    }
+    if (q) {
+      var hay = String(it.itemCode || "") + " " + String(it.itemName || "");
+      if (hay.toLowerCase().indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+}
+
 function isVisibleRtfNode(node, compressed) {
   if (node.kind === "total") return true;
+  // 검색·필터 중에는 축약 모드와 펼침 상태를 무시하고 살아남은 행을 전부 보여준다.
+  // state.rtfExpanded / expandedItemGroups는 건드리지 않는다 — 필터를 지우면 원래대로 돌아간다.
+  if (rtfFilterActive()) return true;
   if (compressed) return node.level === 0;
   return !(node.kind === "item" && !state.expandedItemGroups.has(node.parentId));
 }
@@ -950,7 +982,9 @@ function renderHierarchyRow(node, leftColDefs, compressed, mode, rowspanMap) {
   const isItem      = node.kind === "item";
   const isItemGroup = node.kind === "itemGroup";
   const item        = isItem ? node.items[0] : null;
-  const isHidden    = isTotal ? false : (compressed ? node.level > 0 : (isItem && !state.expandedItemGroups.has(node.parentId)));
+  // 검색·필터 중에는 숨기지 않는다 (isVisibleRtfNode와 같은 규칙)
+  const isHidden    = isTotal ? false : (rtfFilterActive() ? false
+    : (compressed ? node.level > 0 : (isItem && !state.expandedItemGroups.has(node.parentId))));
   const monthCols   = getVisibleMonthColumns();
   const cells = getRtfMonths().map((month, mIdx) => {
     const monthRow  = isItem ? item.monthlyStatus[mIdx] : aggregateMonth(node.items, mIdx);
@@ -1960,10 +1994,18 @@ function renderRtf() {
   ).join("") : "";
   // 나보타(비점검) 완결 행을 매트릭스에만 주입 (KPI·요약·카드·인스펙션 화면은 미영향)
   const nabotaItem  = buildNabotaMatrixItem(months);
-  const matrixItems = nabotaItem ? items.concat([nabotaItem]) : items;
-  const sectionHtml = state.rtfExpanded
-    ? renderMatrixSection(activeSection.title, activeSection.mode, matrixItems, activeSection.sectionId)
-    : RTF_SECTION_OPTIONS.map((option) => renderMatrixSection(option.title, option.mode, matrixItems, option.sectionId)).join("");
+  const allMatrixItems = nabotaItem ? items.concat([nabotaItem]) : items;
+  // 검색·부족만 필터는 매트릭스 표에만 적용한다. 상단 배너(3단 KPI)는 항상 전체 기준이다.
+  const matrixItems = rtfFilterItems(allMatrixItems);
+  const filterOn    = rtfFilterActive();
+  const sectionHtml = (filterOn && matrixItems.length === 0)
+    ? `<section class="rtf-card"><div class="rtf-nodata">${escapeHtml(
+        state.rtfShortOnly && !(state.rtfSearch || "").trim()
+          ? "공급부족 품목이 없습니다."
+          : "검색 결과가 없습니다.")}</div></section>`
+    : state.rtfExpanded
+      ? renderMatrixSection(activeSection.title, activeSection.mode, matrixItems, activeSection.sectionId)
+      : RTF_SECTION_OPTIONS.map((option) => renderMatrixSection(option.title, option.mode, matrixItems, option.sectionId)).join("");
 
   // 공유 3시나리오 배너 — 공급원인·과잉감축·재고진단·회의안건과 완전히 같은 숫자.
   // (state.rtfViewMode 전/후 토글은 아래 매트릭스 표에만 적용된다. 상단 배너는 항상 3단 전부를
@@ -1981,8 +2023,17 @@ function renderRtf() {
         ${(state.mappedData.sales_actual || []).length ? `<button type="button" class="rtf-mode-btn ${state.rtfDisplayMode === "revenue" ? "active" : ""}" data-rtf-mode="revenue">매출</button>` : ""}
       </div>
       <button type="button" id="rtfExpandToggle" class="rtf-extra-toggle ${state.rtfExpanded ? "active" : ""}">${state.rtfExpanded ? "축소" : "확대"}</button>
+      <button type="button" id="rtfShortOnly" class="rtf-extra-toggle ${state.rtfShortOnly ? "active" : ""}">부족 품목만${shortageCount > 0 ? ` (${shortageCount})` : ""}</button>
+      <div class="rtf-search">
+        <input id="rtfSearch" value="${escapeHtml(state.rtfSearch || "")}" placeholder="품목코드 · 품목명 검색" />
+        ${(state.rtfSearch || "").trim()
+          ? `<span class="rtf-search-n">${rtfFilterItems(items).length}품목</span><button type="button" class="rtf-search-x" id="rtfSearchX">✕</button>`
+          : ""}
+      </div>
       <button type="button" id="rtfGoConstraintBtn" class="rtf-go-constraint-btn">공급원인 분석 →</button>
-      <span class="rtf-toolbar-hint">${state.rtfExpanded ? "분석용 상세 · 보기 기준 탭 선택" : "발표용 기본 · 사업부/플랜트/유형 전체 표시"}</span>
+      <span class="rtf-toolbar-hint">${filterOn
+        ? "필터 중 — 품목 행이 자동으로 펼쳐집니다"
+        : (state.rtfExpanded ? "분석용 상세 · 보기 기준 탭 선택" : "발표용 기본 · 사업부/플랜트/유형 전체 표시")}</span>
     </div>
     ${adjPanelHtml}
     ${sectionHtml}
@@ -1996,6 +2047,29 @@ function bindRtf() {
     state.expandedItemGroups.clear();
     render("rtf");
   });
+
+  // 부족 품목만 보기 — 켜면 축약 모드·펼침과 무관하게 부족 품목 행이 바로 보인다
+  document.querySelector("#rtfShortOnly")?.addEventListener("click", () => {
+    state.rtfShortOnly = !state.rtfShortOnly;
+    render("rtf");
+  });
+
+  document.querySelector("#rtfSearchX")?.addEventListener("click", () => {
+    state.rtfSearch = "";
+    render("rtf");
+  });
+
+  // 검색 — 입력할 때마다 걸러진다. 렌더 후 커서를 되돌려야 타이핑이 끊기지 않는다.
+  var rsb = document.getElementById("rtfSearch");
+  if (rsb) {
+    rsb.addEventListener("input", function() {
+      state.rtfSearch = rsb.value;
+      var pos = rsb.selectionStart;
+      render("rtf");
+      var nb = document.getElementById("rtfSearch");
+      if (nb) { nb.focus(); nb.setSelectionRange(pos, pos); }
+    });
+  }
 
   document.querySelectorAll("[data-rtf-mode]").forEach((btn) => btn.addEventListener("click", () => {
     if (state.rtfDisplayMode === btn.dataset.rtfMode) return;

@@ -427,6 +427,16 @@
 
 .rtf-extra-toggle:hover  { background: var(--line); }
 .rtf-extra-toggle.active { background: var(--brand); border-color: var(--brand); color: var(--surface); font-weight: 800; }
+
+/* 품목 검색 — 재고진단(.rv-search)과 같은 구조·같은 치수. 회의에서 품목을 스크롤로 뒤지지 않게 한다. */
+.rtf-search { position: relative; display: flex; align-items: center; margin-left: auto; }
+.rtf-search input { width: 240px; padding: 6px 12px; font: inherit; font-size: 13px;
+                    border: 1px solid var(--line); border-radius: 8px;
+                    background: var(--bg); color: var(--ink); }
+.rtf-search input:focus { outline: none; border-color: var(--brand); background: var(--surface); }
+.rtf-search-n { position: absolute; right: 34px; font-size: 12px; font-weight: 700; color: var(--muted); }
+.rtf-search-x { position: absolute; right: 8px; border: 0; background: transparent;
+                color: var(--muted); cursor: pointer; font-size: 13px; padding: 2px 4px; }
 .rtf-go-constraint-btn {
   padding: 5px 14px; border-radius: 6px; border: 1px solid var(--part1);
   background: var(--part1); color: var(--surface); font-size: 13px; font-weight: 700;
