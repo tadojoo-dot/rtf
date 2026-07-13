@@ -2012,6 +2012,41 @@ function renderAiDiagCharts(it, isCut, ov) {
 // ═══════════════════════════════════════════════════════════════════════════
 // 원부자재 과잉 관리 (180일 기준) — BOM matFlows 기반
 // ═══════════════════════════════════════════════════════════════════════════
+
+// ── 자체 생산품(사서 넣는 게 아니라 만들어 넣는 자재) 판정 ────────────────────
+// 판매계획_공급계획_RAW [원부자재] 시트에는 '구매 발주계획'만 있다. 반제품처럼 사내에서
+// 생산하는 자재는 애초에 발주 계획이 없다 — 없는 게 정상이다.
+// 그런데 흐름을 (기초 + 구매입고계획 − BOM소요)로 계산하면 반제품은 입고가 0이라
+// 계속 빠져나가기만 해서 바닥난다. 실제로는 쓴 만큼 만들어 재고가 유지된다.
+//
+//   결산 실적(1~6월) 반제품:  구매입고 0억 · 생산입고 1,059억 · 기말재고 147 → 162억 (유지)
+//   그런데 전망은:            BOM기초 138억 → 12월 9억 (클램프 전 −941억)  ← 거짓
+//
+// 판정은 추측이 아니라 결산 실적으로 한다: 6개월간 구매입고 = 0 이고 생산입고 > 0 이면
+// 자체 생산품이다. (반제품 = 생산 100% / 구매반제품 = 구매 100% — 데이터로 정확히 갈린다)
+// 자체 생산품의 입고 = BOM 소요량 그 자체 = 완제품 생산계획 × BOM 계수. 즉 쓴 만큼 만든다.
+// 원료 소비는 BOM이 완제품 → 반제품 → 원료로 다단계 전개하므로 이미 반영돼 있다(이중계상 없음).
+var _selfProdCache = null, _selfProdRef = null;
+function matIsSelfProduced(code) {
+  var cl = state.closing;
+  if (!cl || !cl.items) return false;
+  if (!_selfProdCache || _selfProdRef !== cl) {
+    _selfProdCache = new Set();
+    _selfProdRef   = cl;
+    cl.items.forEach(function(it) {
+      var buy = 0, prod = 0;
+      for (var i = 0; i < 6; i++) {
+        var m = it.mon[i];
+        if (!m) continue;
+        buy  += m.buyIn  || 0;
+        prod += m.prodIn || 0;
+      }
+      if (prod > 0 && buy === 0) _selfProdCache.add(it.itemCode);
+    });
+  }
+  return _selfProdCache.has(code);
+}
+
 // 자재 월별 흐름 계산: 소비(BOM 소요, 제상품 감축 비례 반영) / 입고(matExcessAdj 반영)
 var _baseMatFlowCache = null, _baseMatFlowRef = null; // 무조정(base) 자재흐름 — BOM 안 바뀌면 재사용
 function calcMatFlowRows(fgAdj, matAdj) {
@@ -2045,7 +2080,17 @@ function calcMatFlowRows(fgAdj, matAdj) {
       });
       return total;
     });
-    var origIntake = months.map(function(m) { return f.intakeByMonth[m] || 0; });
+    // 자체 생산품(반제품 등)은 구매 발주계획이 없다 — 쓴 만큼 만든다.
+    // 기본 입고 = BOM 소요량(= 완제품 생산계획 × BOM 계수).
+    // 완제품을 감축하면 소요가 줄고 생산도 따라 줄어든다(cons가 이미 fgAdj를 반영하므로 자동).
+    //
+    // 담당자가 공급원인에서 직접 입력한 조정(matAdj)은 자체 생산품에도 그대로 적용한다 —
+    // "반제품을 8월에 더 만들자"는 유효한 결정이다. 막는 것은 AI의 자동 발주 취소뿐이다
+    // (computeAiMatExcessPlan에서 제외 — 취소할 구매 발주가 애초에 없다).
+    var selfProd   = matIsSelfProduced(f.componentCode);
+    var origIntake = selfProd
+      ? cons.slice()
+      : months.map(function(m) { return f.intakeByMonth[m] || 0; });
     var intake = months.map(function(m, mi) {
       var k = f.componentCode + "|" + f.plant + "|" + m;
       return (matAdj && k in matAdj) ? matAdj[k] : origIntake[mi];
@@ -2098,6 +2143,9 @@ function computeAiMatExcessPlan(fgAdj) {
   rows.forEach(function(r) {
     if (!r.sane) return; // 정합 의심 자재는 AI 제외
     if (!Number.isFinite(r.flow.unitVal)) return;
+    // 자체 생산품(반제품 등)은 구매 발주계획이 없다 → 취소할 발주가 없다.
+    // 감축하려면 상위 완제품 생산계획을 줄여야 하고, 그건 제·상품 감축이 이미 하고 있다.
+    if (matIsSelfProduced(r.flow.componentCode)) return;
     var ending = r.ending.slice(), intake = r.intake.slice();
     var changed = false;
     var itemCutQty = 0, itemCutAmt = 0, itemKeys = [], itemPlanVals = {}, itemCutByKey = {};
