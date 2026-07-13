@@ -255,14 +255,19 @@ function _drawRoundRect(ctx, x, y, w, h, r) {
 
 // ── 연간 수급 추이 카드 (HTML만) — idPrefix로 canvas/legend id·버튼 host를 구분해
 //    회의안건("sum")과 재고진단("rv")이 완전히 같은 차트를 공유한다.
+// 시나리오 표기는 KPI 배너·재고진단 3단 카드와 같은 말을 써야 한다.
+// state.chartScenario의 값("기존"/"RTF조정"/"과잉조정")은 저장된 회의 상태와 맞물려 있으므로
+// 값은 그대로 두고 화면에 보이는 라벨만 통일한다.
+var SCEN_LABEL = { "기존": "원계획", "RTF조정": "RTF 조정후", "과잉조정": "과잉감축 후" };
+
 function renderScenarioChartCard(idPrefix) {
   return "<div class=\"sum-card sum-chart-card\">" +
       "<div class=\"sum-chart-header\">" +
         "<h3>연간 수급 추이</h3>" +
         "<div class=\"sum-scenario-btns\" data-scenario-host=\"" + idPrefix + "\">" +
-          "<button class=\"sum-scen-btn\" data-scenario=\"기존\">기존</button>" +
-          "<button class=\"sum-scen-btn\" data-scenario=\"RTF조정\">RTF조정</button>" +
-          "<button class=\"sum-scen-btn\" data-scenario=\"과잉조정\">과잉조정</button>" +
+          "<button class=\"sum-scen-btn\" data-scenario=\"기존\">" + SCEN_LABEL["기존"] + "</button>" +
+          "<button class=\"sum-scen-btn\" data-scenario=\"RTF조정\">" + SCEN_LABEL["RTF조정"] + "</button>" +
+          "<button class=\"sum-scen-btn\" data-scenario=\"과잉조정\">" + SCEN_LABEL["과잉조정"] + "</button>" +
         "</div>" +
       "</div>" +
       "<div class=\"sum-chart-wrap\"><canvas id=\"" + idPrefix + "InvChart\"></canvas></div>" +
@@ -479,7 +484,7 @@ function mountScenarioChart(idPrefix) {
       { label: "판매금액",       data: salesData,   backgroundColor: salesBg,     borderColor: "transparent", borderRadius: 3, order: 2 },
       { label: "공급금액",       data: supplyData,  backgroundColor: supplyBgFull, borderColor: "transparent", borderRadius: 3, order: 2 },
       { type:"line", label:"재고금액(실적)", data: invActData,  borderColor:"#1e3a8a", backgroundColor:"transparent", borderWidth:2.5, pointRadius:4, tension:0.3, spanGaps:false, order:1 },
-      { type:"line", label:"재고금액(기존)", data: invBaseData, borderColor:"#9ca3af", backgroundColor:"transparent", borderWidth:2, borderDash:[6,3], pointRadius:3, tension:0.3, spanGaps:false, order:1 },
+      { type:"line", label:"재고금액(원계획)", data: invBaseData, borderColor:"#9ca3af", backgroundColor:"transparent", borderWidth:2, borderDash:[6,3], pointRadius:3, tension:0.3, spanGaps:false, order:1 },
     ];
     invActLineIdx   = 2;
     activeInvLineIdx = 3;
@@ -489,11 +494,11 @@ function mountScenarioChart(idPrefix) {
   } else if (sc === "RTF조정") {
     datasets = [
       { label: "판매금액",       data: salesData,    backgroundColor: salesBg,      borderColor:"transparent", borderRadius:3, order:2 },
-      { label: "공급금액(기존)", data: supplyData,   backgroundColor: supplyBgLight, borderColor:"transparent", borderRadius:3, order:2, stack:"sup" },
-      { label: "RTF 증분",       data: rtfDeltaData, backgroundColor: rtfDeltaBg,    borderColor:"transparent", borderRadius:3, order:2, stack:"sup" },
+      { label: "공급금액(원계획)", data: supplyData,   backgroundColor: supplyBgLight, borderColor:"transparent", borderRadius:3, order:2, stack:"sup" },
+      { label: "공급금액(RTF 증분)",       data: rtfDeltaData, backgroundColor: rtfDeltaBg,    borderColor:"transparent", borderRadius:3, order:2, stack:"sup" },
       { type:"line", label:"재고금액(실적)",   data: invActData,  borderColor:"#1e3a8a", backgroundColor:"transparent", borderWidth:2.5, pointRadius:4, tension:0.3, spanGaps:false, order:1 },
-      { type:"line", label:"재고금액(기존)",   data: invBaseData, borderColor:"#d1d5db", backgroundColor:"transparent", borderWidth:1.5, borderDash:[5,4], pointRadius:2, tension:0.3, spanGaps:false, order:1 },
-      { type:"line", label:"재고금액(RTF조정)", data: invRtfData,  borderColor:"#1e3a8a", backgroundColor:"transparent", borderWidth:2.5, borderDash:[4,4], pointRadius:4, tension:0.3, spanGaps:false, order:1,
+      { type:"line", label:"재고금액(원계획)",   data: invBaseData, borderColor:"#d1d5db", backgroundColor:"transparent", borderWidth:1.5, borderDash:[5,4], pointRadius:2, tension:0.3, spanGaps:false, order:1 },
+      { type:"line", label:"재고금액(RTF 조정후)", data: invRtfData,  borderColor:"#1e3a8a", backgroundColor:"transparent", borderWidth:2.5, borderDash:[4,4], pointRadius:4, tension:0.3, spanGaps:false, order:1,
         fill: { target: 4, above: FILL_WARN, below: FILL_WARN } }, // 원계획→RTF조정: RTF는 품절방어로 공급을 늘리는 조정이라 항상 "증가=경고" 의미로 고정
     ];
     invActLineIdx   = 3;
@@ -504,13 +509,13 @@ function mountScenarioChart(idPrefix) {
   } else { // 과잉조정
     datasets = [
       { label: "판매금액",        data: salesData,    backgroundColor: salesBg,      borderColor:"transparent", borderRadius:3, order:2 },
-      { label: "공급금액(기존)",  data: supplyData,   backgroundColor: supplyBgLight, borderColor:"transparent", borderRadius:3, order:2, stack:"sup" },
-      { label: "RTF 증분",        data: rtfDeltaData || allMonths.map(function(){return null;}), backgroundColor: rtfDeltaBg, borderColor:"transparent", borderRadius:3, order:2, stack:"sup" },
+      { label: "공급금액(원계획)",  data: supplyData,   backgroundColor: supplyBgLight, borderColor:"transparent", borderRadius:3, order:2, stack:"sup" },
+      { label: "공급금액(RTF 증분)",        data: rtfDeltaData || allMonths.map(function(){return null;}), backgroundColor: rtfDeltaBg, borderColor:"transparent", borderRadius:3, order:2, stack:"sup" },
       { type:"line", label:"재고금액(실적)",    data: invActData,   borderColor:"#1e3a8a", backgroundColor:"transparent", borderWidth:2.5, pointRadius:4, tension:0.3, spanGaps:false, order:1 },
-      { type:"line", label:"재고금액(기존)",    data: invBaseData,  borderColor:"#d1d5db", backgroundColor:"transparent", borderWidth:1.5, borderDash:[5,4], pointRadius:2, tension:0.3, spanGaps:false, order:1 },
-      { type:"line", label:"재고금액(RTF조정)", data: rtfPlotted, borderColor:"#6b7280", backgroundColor:"transparent", borderWidth:1.5, borderDash:[4,4], pointRadius:2, tension:0.3, spanGaps:false, order:1,
+      { type:"line", label:"재고금액(원계획)",    data: invBaseData,  borderColor:"#d1d5db", backgroundColor:"transparent", borderWidth:1.5, borderDash:[5,4], pointRadius:2, tension:0.3, spanGaps:false, order:1 },
+      { type:"line", label:"재고금액(RTF 조정후)", data: rtfPlotted, borderColor:"#6b7280", backgroundColor:"transparent", borderWidth:1.5, borderDash:[4,4], pointRadius:2, tension:0.3, spanGaps:false, order:1,
         fill: hasRtfAdj ? { target: 4, above: FILL_WARN, below: FILL_WARN } : false }, // 원계획→RTF조정 밴드(RTF조정 없으면 폭 0)
-      { type:"line", label:"재고금액(과잉조정)", data: invExcessData, borderColor:"#16a34a", backgroundColor:"transparent", borderWidth:2.5, pointRadius:4, tension:0.3, spanGaps:false, order:1,
+      { type:"line", label:"재고금액(과잉감축 후)", data: invExcessData, borderColor:"#16a34a", backgroundColor:"transparent", borderWidth:2.5, pointRadius:4, tension:0.3, spanGaps:false, order:1,
         fill: { target: 5, above: FILL_WARN, below: FILL_GOOD } }, // RTF조정→과잉조정: 보통 감축=녹색(감소)이지만 자재 반작용으로 오히려 늘면 above가 걸려 경고색으로 뒤집힌다
     ];
     invActLineIdx   = 3;
@@ -525,25 +530,34 @@ function mountScenarioChart(idPrefix) {
   }
   var legendEl = document.querySelector("#" + idPrefix + "ChartLegend");
   if (legendEl) {
+    // 범례는 데이터셋 라벨(툴팁에 뜨는 말)과 같은 용어를 써야 한다.
+    // 예전엔 범례가 "실적 판매"인데 툴팁은 "판매금액"이라 두 이름으로 불렸다.
+    // 시나리오 이름도 KPI 배너·재고진단과 통일: 기존→원계획 / RTF조정→RTF 조정후 / 과잉조정→과잉감축 후
     var lgItems = [
-      leg("sum-leg-sales-act",   "실적 판매"),
-      leg("sum-leg-sales-fcst",  "전망 판매"),
-      leg("sum-leg-supply-act",  "실적 공급"),
-      leg("sum-leg-supply-fcst", "전망 공급"),
+      leg("sum-leg-sales-act",   "판매금액 (실적)"),
+      leg("sum-leg-sales-fcst",  "판매금액 (전망)"),
+      leg("sum-leg-supply-act",  "공급금액 (실적)"),
+      leg("sum-leg-supply-fcst", "공급금액 (전망)"),
     ];
-    if (sc !== "기존") lgItems.push(leg("sum-leg-rtf-delta", "RTF 증분"));
-    lgItems.push(leg("sum-leg-inv-act",  "재고금액 실적"));
-    if (sc === "기존")      lgItems.push(leg("sum-leg-inv-base",   "재고금액(기존)"));
-    if (sc === "RTF조정")   lgItems.push(leg("sum-leg-inv-rtf",    "재고금액(RTF조정)"));
-    if (sc === "과잉조정") { lgItems.push(leg("sum-leg-inv-rtf", "RTF조정")); lgItems.push(leg("sum-leg-inv-excess", "과잉조정")); }
+    if (sc !== "기존") lgItems.push(leg("sum-leg-rtf-delta", "공급금액 (RTF 증분)"));
+    lgItems.push(leg("sum-leg-inv-act", "재고금액 (실적)"));
+    if (sc === "기존")      lgItems.push(leg("sum-leg-inv-base", "재고금액 (원계획)"));
+    if (sc === "RTF조정") { lgItems.push(leg("sum-leg-inv-base", "재고금액 (원계획)"));
+                            lgItems.push(leg("sum-leg-inv-rtf",  "재고금액 (RTF 조정후)")); }
+    if (sc === "과잉조정") { lgItems.push(leg("sum-leg-inv-base",   "재고금액 (원계획)"));
+                            lgItems.push(leg("sum-leg-inv-rtf",    "재고금액 (RTF 조정후)"));
+                            lgItems.push(leg("sum-leg-inv-excess", "재고금액 (과잉감축 후)")); }
 
-    // 조정 총량 한 줄(기준월=12월 · 계획 마지막 달) — 시나리오 토글과 무관하게 항상 같은 총합을 보여준다
-    var decIdx = allMonths.length - 1;
-    var rtfTotalTxt = hasRtfAdj ? deltaTxt(invRtfData[decIdx] - invBaseData[decIdx]) : null;
-    var cutTotalTxt = hasCut    ? deltaTxt(invExcessData[decIdx] - rtfPlotted[decIdx]) : null;
+    // 조정 총량 한 줄 — 기준월 = 전망 첫 달(7월).
+    // KPI 배너·회의안건 헤드라인·재고진단 3단 카드와 같은 달이어야 한다. 여기만 12월이면
+    // "왜 숫자가 다르냐"가 된다. 시나리오 토글과 무관하게 항상 같은 총합을 보여준다.
+    var bIdx  = allMonths.indexOf(months[0]);
+    var bTxt  = monthLabel(months[0]);
+    var rtfTotalTxt = (hasRtfAdj && bIdx >= 0) ? deltaTxt(invRtfData[bIdx] - invBaseData[bIdx]) : null;
+    var cutTotalTxt = (hasCut    && bIdx >= 0) ? deltaTxt(invExcessData[bIdx] - rtfPlotted[bIdx]) : null;
     var totalParts = [];
-    if (rtfTotalTxt) totalParts.push("<span class=\"sum-chart-legend-total-item warn\">RTF 조정 " + rtfTotalTxt + "</span>");
-    if (cutTotalTxt) totalParts.push("<span class=\"sum-chart-legend-total-item good\">과잉감축 " + cutTotalTxt + "</span>");
+    if (rtfTotalTxt) totalParts.push("<span class=\"sum-chart-legend-total-item warn\">" + escapeHtml(bTxt) + " RTF 조정 " + rtfTotalTxt + "</span>");
+    if (cutTotalTxt) totalParts.push("<span class=\"sum-chart-legend-total-item good\">" + escapeHtml(bTxt) + " 과잉감축 " + cutTotalTxt + "</span>");
     var totalHtml = totalParts.length
       ? "<div class=\"sum-chart-legend-total\">" + totalParts.join("<span class=\"sum-chart-legend-total-sep\">·</span>") + "</div>"
       : "";
